@@ -6,16 +6,8 @@ import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.Executors
 
-/**
- * 聊天历史消息
- * @param id 稳定唯一标识(用于 LazyColumn key)
- * @param imageUriString 图片Uri字符串(可选,仅当前会话有效,历史记录中可能失效)
- * @param imageBase64 AI 生成的图片(base64,保存在历史中)
- * @param imageUrl AI 生成的图片(URL)
- * @param toolCalls 工具调用日志(仅 assistant 消息)
- */
 data class ChatMsg(
-    val role: String,       // "user" / "assistant"
+    val role: String,
     val content: String,
     val isError: Boolean = false,
     val time: Long,
@@ -23,30 +15,20 @@ data class ChatMsg(
     val imageBase64: String? = null,
     val imageUrl: String? = null,
     val toolCalls: List<String> = emptyList(),
-    val id: String = java.util.UUID.randomUUID().toString()
+    val id: String = UUID.randomUUID().toString()
 )
 
-/**
- * 一个聊天会话
- */
 data class ChatSession(
     val id: String,
-    val title: String,      // 第一条用户消息前 20 字
+    val title: String,
     val messages: List<ChatMsg>,
     val updateTime: Long
 )
 
-/**
- * 聊天历史管理(SharedPreferences + JSON)
- *
- * 写操作在单线程 IO Executor 中异步执行,避免阻塞主线程;
- * 单线程保证写操作串行化,避免竞态。
- */
 object ChatHistoryManager {
-
     private const val PREFS = "chat_history"
     private const val KEY = "sessions"
-    private const val MAX_SESSIONS = 50 // 最多保留 50 个会话
+    private const val MAX_SESSIONS = 50
 
     private val ioExecutor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "ChatHistoryIO").apply { isDaemon = true }
@@ -60,29 +42,36 @@ object ChatHistoryManager {
             val list = mutableListOf<ChatSession>()
             for (i in 0 until arr.length()) {
                 val obj = arr.getJSONObject(i)
+                val msgArr = obj.optJSONArray("messages") ?: JSONArray()
                 val msgs = mutableListOf<ChatMsg>()
-                val msgArr = obj.getJSONArray("messages")
                 for (j in 0 until msgArr.length()) {
                     val m = msgArr.getJSONObject(j)
-                    msgs.add(ChatMsg(
-                        role = m.getString("role"),
-                        content = m.getString("content"),
-                        isError = m.optBoolean("isError", false),
-                        time = m.getLong("time"),
-                        imageBase64 = m.optString("imageBase64", "").ifEmpty { null },
-                        imageUrl = m.optString("imageUrl", "").ifEmpty { null }
-                    ))
+                    msgs.add(
+                        ChatMsg(
+                            role = m.optString("role"),
+                            content = m.optString("content"),
+                            isError = m.optBoolean("isError", false),
+                            time = m.optLong("time", System.currentTimeMillis()),
+                            imageUriString = m.optString("imageUriString", "").ifEmpty { null },
+                            imageBase64 = m.optString("imageBase64", "").ifEmpty { null },
+                            imageUrl = m.optString("imageUrl", "").ifEmpty { null },
+                            toolCalls = m.optJSONArray("toolCalls")?.let { tools ->
+                                (0 until tools.length()).map { tools.optString(it) }
+                            }.orEmpty()
+                        )
+                    )
                 }
-                list.add(ChatSession(
-                    id = obj.getString("id"),
-                    title = obj.getString("title"),
-                    messages = msgs,
-                    updateTime = obj.getLong("updateTime")
-                ))
+                list.add(
+                    ChatSession(
+                        id = obj.optString("id", UUID.randomUUID().toString()),
+                        title = obj.optString("title", "新对话"),
+                        messages = msgs,
+                        updateTime = obj.optLong("updateTime", System.currentTimeMillis())
+                    )
+                )
             }
-            // 按时间倒序
             list.sortedByDescending { it.updateTime }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             emptyList()
         }
     }
@@ -90,12 +79,9 @@ object ChatHistoryManager {
     fun saveSession(context: Context, session: ChatSession) {
         ioExecutor.execute {
             val all = loadAll(context).toMutableList()
-            // 移除同 id 的旧会话
             all.removeAll { it.id == session.id }
             all.add(0, session)
-            // 限制数量
-            val trimmed = if (all.size > MAX_SESSIONS) all.subList(0, MAX_SESSIONS) else all
-            persist(context, trimmed)
+            persist(context, all.take(MAX_SESSIONS))
         }
     }
 
@@ -115,27 +101,35 @@ object ChatHistoryManager {
 
     private fun persist(context: Context, sessions: List<ChatSession>) {
         val arr = JSONArray()
-        for (s in sessions) {
+        sessions.forEach { session ->
             val msgArr = JSONArray()
-            for (m in s.messages) {
-                msgArr.put(JSONObject().apply {
-                    put("role", m.role)
-                    put("content", m.content)
-                    put("isError", m.isError)
-                    put("time", m.time)
-                    m.imageBase64?.let { put("imageBase64", it) }
-                    m.imageUrl?.let { put("imageUrl", it) }
-                })
+            session.messages.forEach { msg ->
+                msgArr.put(
+                    JSONObject().apply {
+                        put("role", msg.role)
+                        put("content", msg.content)
+                        put("isError", msg.isError)
+                        put("time", msg.time)
+                        msg.imageUriString?.let { put("imageUriString", it) }
+                        msg.imageBase64?.let { put("imageBase64", it) }
+                        msg.imageUrl?.let { put("imageUrl", it) }
+                        if (msg.toolCalls.isNotEmpty()) put("toolCalls", JSONArray(msg.toolCalls))
+                    }
+                )
             }
-            arr.put(JSONObject().apply {
-                put("id", s.id)
-                put("title", s.title)
-                put("messages", msgArr)
-                put("updateTime", s.updateTime)
-            })
+            arr.put(
+                JSONObject().apply {
+                    put("id", session.id)
+                    put("title", session.title)
+                    put("messages", msgArr)
+                    put("updateTime", session.updateTime)
+                }
+            )
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putString(KEY, arr.toString()).apply()
+            .edit()
+            .putString(KEY, arr.toString())
+            .apply()
     }
 
     fun newSession(): ChatSession = ChatSession(
@@ -147,6 +141,6 @@ object ChatHistoryManager {
 
     fun makeTitle(firstUserMsg: String): String {
         val t = firstUserMsg.trim().replace("\n", " ")
-        return if (t.length > 20) t.substring(0, 20) + "…" else t
+        return if (t.length > 20) t.substring(0, 20) + "..." else t
     }
 }

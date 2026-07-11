@@ -3,8 +3,6 @@ package go.examate.hyp
 import android.content.Context
 import android.net.Uri
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -23,7 +21,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -33,16 +30,17 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -63,6 +61,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import go.examate.hyp.agent.AgentOrchestrator
+import go.examate.hyp.agent.MemoryManager
 import go.examate.hyp.agent.QuickActions
 import go.examate.hyp.config.MyConfig
 import go.examate.hyp.config.PrefsManager
@@ -80,14 +79,14 @@ import go.examate.hyp.util.ChatHistoryManager
 import go.examate.hyp.util.ChatMsg
 import go.examate.hyp.util.ChatSession
 import go.examate.hyp.util.HttpUtils
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
 class ChatActivity : ComponentActivity() {
-
     companion object {
         const val EXTRA_LAUNCH_MODE = "launch_mode"
         const val MODE_CHAT_ONLY = 2
@@ -116,7 +115,6 @@ private fun ChatScreen(onBack: () -> Unit) {
     var isLoading by remember { mutableStateOf(false) }
     var loadingStatus by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
-    val handler = remember { Handler(Looper.getMainLooper()) }
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     var currentSession by remember { mutableStateOf(ChatHistoryManager.newSession()) }
     var showHistory by remember { mutableStateOf(false) }
@@ -138,8 +136,14 @@ private fun ChatScreen(onBack: () -> Unit) {
         if (messages.isNotEmpty()) {
             val title = if (currentSession.title == "新对话" && messages.any { it.role == "user" }) {
                 ChatHistoryManager.makeTitle(messages.first { it.role == "user" }.content)
-            } else currentSession.title
-            currentSession = currentSession.copy(messages = messages.toList(), title = title, updateTime = System.currentTimeMillis())
+            } else {
+                currentSession.title
+            }
+            currentSession = currentSession.copy(
+                messages = messages.toList(),
+                title = title,
+                updateTime = System.currentTimeMillis()
+            )
             ChatHistoryManager.saveSession(context, currentSession)
         }
     }
@@ -151,63 +155,52 @@ private fun ChatScreen(onBack: () -> Unit) {
             .imePadding()
             .statusBarsPadding()
     ) {
-        // ═══ 顶栏:返回 + 下拉选模型 + Agents开关 + 新聊天 + 历史 ═══
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Box(Modifier.size(40.dp).clickable { onBack() }, contentAlignment = Alignment.Center) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = TextPrimary, modifier = Modifier.size(22.dp))
             }
-            ModelSelector(
-                providers = providers,
-                selectedIndex = modelIndex,
-                onSelect = { modelIndex = it }
-            )
+            ModelSelector(providers = providers, selectedIndex = modelIndex, onSelect = { modelIndex = it })
             Spacer(Modifier.weight(1f))
-            // Agents 模式开关
+            ChatModeSwitch(
+                agentsMode = agentsMode,
+                onChange = { enabled ->
+                    agentsMode = enabled
+                    prefs.isAgentsMode = enabled
+                }
+            )
             Box(
-                Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(if (agentsMode) Color(0xFF5B8DEF) else Color(0xFFE5E7EB))
-                    .clickable {
-                        agentsMode = !agentsMode
-                        prefs.isAgentsMode = agentsMode
-                    }
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                Modifier.size(40.dp).clickable {
+                    messages.clear()
+                    currentSession = ChatHistoryManager.newSession()
+                },
                 contentAlignment = Alignment.Center
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        if (agentsMode) Icons.Filled.Star else Icons.Filled.Info,
-                        contentDescription = null,
-                        tint = if (agentsMode) Color.White else TextHint,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        if (agentsMode) "Agents" else "对话",
-                        color = if (agentsMode) Color.White else TextHint,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
+                Icon(Icons.Filled.Add, contentDescription = "新对话", tint = TextPrimary, modifier = Modifier.size(22.dp))
             }
-            Box(Modifier.size(40.dp).clickable {
-                messages.clear(); currentSession = ChatHistoryManager.newSession()
-            }, contentAlignment = Alignment.Center) {
-                Icon(Icons.Filled.Add, contentDescription = "新聊天", tint = TextPrimary, modifier = Modifier.size(22.dp))
-            }
-            Box(Modifier.size(40.dp).clickable {
-                context.startActivity(android.content.Intent(context, go.examate.hyp.AgentSettingsActivity::class.java))
-            }, contentAlignment = Alignment.Center) {
+            Box(
+                Modifier.size(40.dp).clickable {
+                    context.startActivity(android.content.Intent(context, AgentSettingsActivity::class.java))
+                },
+                contentAlignment = Alignment.Center
+            ) {
                 Icon(Icons.Filled.Settings, contentDescription = "设置", tint = TextPrimary, modifier = Modifier.size(20.dp))
             }
-            Box(Modifier.size(40.dp).clickable {
-                historyList = ChatHistoryManager.loadAll(context); showHistory = true
-            }, contentAlignment = Alignment.Center) {
+            Box(
+                Modifier.size(40.dp).clickable {
+                    historyList = ChatHistoryManager.loadAll(context)
+                    showHistory = true
+                },
+                contentAlignment = Alignment.Center
+            ) {
                 Icon(Icons.Filled.MoreVert, contentDescription = "历史", tint = TextPrimary, modifier = Modifier.size(20.dp))
             }
         }
 
-        // ═══ 快捷操作栏 ═══
         QuickActionsBar(
             agentsMode = agentsMode,
             onActionClick = { action ->
@@ -218,16 +211,27 @@ private fun ChatScreen(onBack: () -> Unit) {
             }
         )
 
-        // ═══ 消息列表 ═══
         LazyColumn(
-            Modifier.weight(1f).fillMaxWidth().padding(horizontal = 14.dp),
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp),
             state = listState,
             verticalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 14.dp)
         ) {
-            if (messages.isEmpty()) item(key = "empty") { EmptyHint(agentsMode) }
-            items(messages.size, key = { i -> messages[i].id }) { i ->
-                MessageBubble(messages[i], timeFmt, context)
+            if (messages.isEmpty()) {
+                item(key = "empty") { EmptyHint(agentsMode) }
+            }
+            items(messages, key = { it.id }) { message ->
+                MessageBubble(
+                    message,
+                    timeFmt,
+                    context,
+                    onQuickFollowUp = { source ->
+                        inputText = "继续追问这条回复：\n${source.take(800)}\n\n"
+                    }
+                )
             }
             if (isLoading) {
                 item(key = "loading") {
@@ -242,7 +246,6 @@ private fun ChatScreen(onBack: () -> Unit) {
             }
         }
 
-        // ═══ 动态输入栏 ═══
         DynamicInputBar(
             text = inputText,
             onTextChange = { inputText = it },
@@ -254,35 +257,101 @@ private fun ChatScreen(onBack: () -> Unit) {
                 val text = inputText.trim()
                 if (text.isEmpty() && pendingImageUri == null) return@DynamicInputBar
                 sendMessage(
-                    text = text, imageUri = pendingImageUri,
-                    providers = providers, modelIndex = modelIndex,
+                    text = text,
+                    imageUri = pendingImageUri,
+                    providers = providers,
+                    modelIndex = modelIndex,
                     messages = messages,
                     setLoading = { isLoading = it },
                     setLoadingStatus = { loadingStatus = it },
-                    scope = scope, context = context,
+                    scope = scope,
+                    context = context,
                     agentsMode = agentsMode,
-                    onSent = { inputText = ""; pendingImageUri = null }
+                    onSent = {
+                        inputText = ""
+                        pendingImageUri = null
+                    }
                 )
             }
         )
     }
 
-    // ═══ 历史聊天面板 ═══
-    AnimatedVisibility(visible = showHistory, enter = slideInVertically { it / 2 } + fadeIn(), exit = slideOutVertically { it / 2 } + fadeOut()) {
+    AnimatedVisibility(
+        visible = showHistory,
+        enter = slideInVertically { it / 2 } + fadeIn(),
+        exit = slideOutVertically { it / 2 } + fadeOut()
+    ) {
         HistoryPanel(
-            sessions = historyList, timeFmt = historyTimeFmt,
+            sessions = historyList,
+            timeFmt = historyTimeFmt,
             currentSessionId = currentSession.id,
-            onNewChat = { messages.clear(); currentSession = ChatHistoryManager.newSession(); showHistory = false },
-            onSessionClick = { session -> messages.clear(); messages.addAll(session.messages); currentSession = session; showHistory = false },
-            onDelete = { id -> ChatHistoryManager.deleteSession(context, id); historyList = ChatHistoryManager.loadAll(context) },
+            onNewChat = {
+                messages.clear()
+                currentSession = ChatHistoryManager.newSession()
+                showHistory = false
+            },
+            onSessionClick = { session ->
+                messages.clear()
+                messages.addAll(session.messages)
+                currentSession = session
+                showHistory = false
+            },
+            onDelete = { id ->
+                ChatHistoryManager.deleteSession(context, id)
+                historyList = ChatHistoryManager.loadAll(context)
+            },
             onDismiss = { showHistory = false }
         )
     }
 }
 
-// ════════════════════════════════════════════════
-//  Skills 技能栏(水平滚动)
-// ════════════════════════════════════════════════
+@Composable
+private fun ChatModeSwitch(agentsMode: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(Color(0xFFDEE3F0).copy(alpha = 0.7f))
+            .padding(3.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        ModeSegment(
+            text = "对话",
+            icon = Icons.Filled.Info,
+            selected = !agentsMode
+        ) { onChange(false) }
+        ModeSegment(
+            text = "Agents",
+            icon = Icons.Filled.Build,
+            selected = agentsMode
+        ) { onChange(true) }
+    }
+}
+
+@Composable
+private fun ModeSegment(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(17.dp))
+            .background(if (selected) Color(0xFF5B8DEF) else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = text,
+            tint = if (selected) Color.White else TextPrimary,
+            modifier = Modifier.size(14.dp)
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = text,
+            color = if (selected) Color.White else TextPrimary,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
 
 @Composable
 private fun QuickActionsBar(agentsMode: Boolean, onActionClick: (QuickActions.Action) -> Unit) {
@@ -316,17 +385,15 @@ private fun QuickActionsBar(agentsMode: Boolean, onActionClick: (QuickActions.Ac
     }
 }
 
-// ════════════════════════════════════════════════
-//  发送消息(支持 Agents 模式和普通模式)
-// ════════════════════════════════════════════════
-
 private fun sendMessage(
-    text: String, imageUri: Uri?,
-    providers: List<ModelProvider>, modelIndex: Int,
+    text: String,
+    imageUri: Uri?,
+    providers: List<ModelProvider>,
+    modelIndex: Int,
     messages: MutableList<ChatMsg>,
     setLoading: (Boolean) -> Unit,
     setLoadingStatus: (String) -> Unit,
-    scope: kotlinx.coroutines.CoroutineScope,
+    scope: CoroutineScope,
     context: Context,
     agentsMode: Boolean,
     onSent: () -> Unit
@@ -337,50 +404,60 @@ private fun sendMessage(
     setLoading(true)
     setLoadingStatus("")
 
+    if (providers.isEmpty() || modelIndex < 0 || modelIndex >= providers.size) {
+        setLoading(false)
+        appendAssistant(context, messages, "请先配置 API 提供商", isError = true)
+        return
+    }
     val provider = providers[modelIndex]
 
     scope.launch {
         try {
             if (imageUri != null) {
-                // 图片消息:走原有逻辑(vision)
                 setLoadingStatus("正在识别图片...")
-                val imageBytes = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val imageBytes = withContext(Dispatchers.IO) {
                     context.contentResolver.openInputStream(imageUri)?.use { it.readBytes() }
                 }
                 val response = HttpUtils.sendImageRequest(
-                    provider.requestUrl, provider.modelId, imageBytes,
-                    provider.apiKey, MyConfig.CHAT_SYSTEM_PROMPT, provider.endpointType
+                    provider.requestUrl,
+                    provider.modelId,
+                    imageBytes,
+                    provider.apiKey,
+                    MyConfig.CHAT_SYSTEM_PROMPT,
+                    provider.endpointType
                 )
                 setLoading(false)
                 if (response == null) {
-                    messages.add(ChatMsg("assistant", "请求失败，请检查网络或 API 配置", true, System.currentTimeMillis()))
+                    appendAssistant(context, messages, "请求失败，请检查网络或 API 配置", isError = true)
                 } else {
                     val content = HttpUtils.extractContent(response, provider.endpointType)
-                    messages.add(ChatMsg("assistant", if (content.isEmpty()) "解析失败:\n$response" else content, content.isEmpty(), System.currentTimeMillis()))
+                    appendAssistant(
+                        context,
+                        messages,
+                        if (content.isEmpty()) "解析失败:\n$response" else content,
+                        isError = content.isEmpty()
+                    )
                 }
             } else if (agentsMode) {
-                // Agents 模式:使用 AgentOrchestrator(支持工具调用)
                 val history = messages.map { it.role to it.content }.filter { it.first == "user" || it.first == "assistant" }
                 val result = AgentOrchestrator.execute(
                     context = context,
                     provider = provider,
                     userMessage = text,
-                    history = history.dropLast(1), // 去掉刚加的 user 消息(orchestrator 会加)
+                    history = history.dropLast(1),
                     agentsMode = true
                 ) { status -> setLoadingStatus(status) }
                 setLoading(false)
-                messages.add(ChatMsg(
-                    "assistant",
-                    result.text,
-                    result.isError,
-                    System.currentTimeMillis(),
-                    null,
-                    result.imageBase64,
-                    result.imageUrl,
-                    result.toolCallsLog
-                ))
+                appendAssistant(
+                    context = context,
+                    messages = messages,
+                    content = result.text,
+                    isError = result.isError,
+                    imageBase64 = result.imageBase64,
+                    imageUrl = result.imageUrl,
+                    toolCalls = result.toolCallsLog
+                )
             } else {
-                // 普通对话模式
                 setLoadingStatus("正在思考...")
                 val history = messages.map { it.role to it.content }.filter { it.first == "user" || it.first == "assistant" }
                 val content = AgentOrchestrator.simpleChat(
@@ -392,33 +469,77 @@ private fun sendMessage(
                 )
                 setLoading(false)
                 if (content.isNullOrEmpty()) {
-                    messages.add(ChatMsg("assistant", "请求失败，请检查网络或 API 配置", true, System.currentTimeMillis()))
+                    appendAssistant(context, messages, "请求失败，请检查网络或 API 配置", isError = true)
                 } else {
-                    messages.add(ChatMsg("assistant", content, false, System.currentTimeMillis()))
+                    appendAssistant(context, messages, content)
                 }
             }
         } catch (e: Exception) {
             setLoading(false)
-            messages.add(ChatMsg("assistant", "发生错误: ${e.message ?: "未知错误"}", true, System.currentTimeMillis()))
+            appendAssistant(context, messages, "发生错误: ${e.message ?: "未知错误"}", isError = true)
         }
     }
 }
 
-// ════════════════════════════════════════════════
-//  空状态提示
-// ════════════════════════════════════════════════
+private fun appendAssistant(
+    context: Context,
+    messages: MutableList<ChatMsg>,
+    content: String,
+    isError: Boolean = false,
+    imageBase64: String? = null,
+    imageUrl: String? = null,
+    toolCalls: List<String> = emptyList()
+) {
+    messages.add(
+        ChatMsg(
+            role = "assistant",
+            content = content,
+            isError = isError,
+            time = System.currentTimeMillis(),
+            imageBase64 = imageBase64,
+            imageUrl = imageUrl,
+            toolCalls = toolCalls
+        )
+    )
+    if (!isError) maybeCaptureMemory(context, messages)
+}
+
+private fun maybeCaptureMemory(context: Context, messages: List<ChatMsg>) {
+    val dialogMessages = messages.filter { it.role == "user" || it.role == "assistant" }
+    if (dialogMessages.size < 10) return
+
+    val userCount = dialogMessages.count { it.role == "user" }
+    val prefs = context.getSharedPreferences("agent_memory_policy", Context.MODE_PRIVATE)
+    val lastUserCount = prefs.getInt("last_user_count", 0)
+    val lastAt = prefs.getLong("last_at", 0L)
+    val now = System.currentTimeMillis()
+    if (userCount - lastUserCount < 8 && now - lastAt < 30 * 60 * 1000L) return
+
+    val lastUser = dialogMessages.lastOrNull { it.role == "user" }?.content.orEmpty()
+    val candidate = extractMemoryCandidate(lastUser) ?: return
+    val existing = MemoryManager.loadAll(context)
+    if (existing.size >= 30 || existing.any { it.content == candidate }) return
+
+    MemoryManager.add(context, candidate, "偏好")
+    prefs.edit()
+        .putInt("last_user_count", userCount)
+        .putLong("last_at", now)
+        .apply()
+}
+
+private fun extractMemoryCandidate(text: String): String? {
+    val normalized = text.trim().replace(Regex("\\s+"), " ")
+    if (normalized.length !in 8..160) return null
+    val preferenceSignals = listOf("以后", "下次", "记住", "我喜欢", "我不喜欢", "叫我", "称呼我", "用中文", "简洁", "详细", "不要")
+    if (preferenceSignals.none { normalized.contains(it) }) return null
+    if (normalized.endsWith("?") || normalized.endsWith("？")) return null
+    return normalized
+}
 
 @Composable
 private fun EmptyHint(agentsMode: Boolean) {
     Box(Modifier.fillMaxWidth().padding(top = 60.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(
-                if (agentsMode) Icons.Filled.Star else Icons.Filled.Info,
-                contentDescription = null,
-                tint = TextHint.copy(alpha = 0.5f),
-                modifier = Modifier.size(40.dp)
-            )
-            Spacer(Modifier.height(12.dp))
             Text(
                 if (agentsMode) "Agents 模式" else "与 AI 开始对话",
                 color = TextPrimary,
@@ -428,15 +549,14 @@ private fun EmptyHint(agentsMode: Boolean) {
             Spacer(Modifier.height(6.dp))
             Text(
                 if (agentsMode)
-                    "AI 可以调用工具查询成绩、课表等\n试试说「帮我查一下成绩」"
+                    "AI 可以调用工具查询成绩、课表等\n也支持 LaTeX、JSON、CSV 和分子结构渲染"
                 else
-                    "支持 Markdown、LaTeX 公式、图片\n顶部切换模型，开启 Agents 获得更多能力",
+                    "支持 Markdown、LaTeX、JSON、CSV、图片和分子结构\n顶部可切换对话与 Agents 模式",
                 color = TextHint,
                 fontSize = 12.sp,
                 lineHeight = 18.sp
             )
             Spacer(Modifier.height(16.dp))
-            // 快捷技能提示
             Row(
                 Modifier.padding(horizontal = 20.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)

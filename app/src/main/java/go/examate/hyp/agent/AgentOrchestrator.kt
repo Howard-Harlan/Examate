@@ -24,6 +24,13 @@ object AgentOrchestrator {
 
     private const val TAG = "AgentOrchestrator"
     private const val MAX_ITERATIONS = 5
+    private val RENDERING_PROMPT =
+        "\n\n## 可渲染内容输出规范\n" +
+            "- 数学公式：行内使用 `${'$'}...${'$'}`，独立公式使用 `${'$'}${'$'}...${'$'}${'$'}`。\n" +
+            "- JSON：必须输出合法 JSON，推荐放入 ```json 代码块。\n" +
+            "- CSV：表格数据需要可导出时，放入 ```csv 代码块，第一行写表头。\n" +
+            "- 有机化学结构：单个分子使用 ```smiles 代码块，例如 `c1ccccc1`；句中分子可写 `${'$'}smiles{CCO}`。\n" +
+            "- 有机反应使用 reaction SMILES：`反应物>条件>产物`，也放入 ```smiles 代码块。\n"
 
     /** Agent 回复结果 */
     data class AgentResponse(
@@ -51,7 +58,8 @@ object AgentOrchestrator {
 
         val systemPrompt = AgentTools.buildSystemPrompt(campusLoggedIn, agentsMode) +
                 SkillManager.buildSkillsPrompt(context) +
-                MemoryManager.buildMemoryPrompt(context)
+                MemoryManager.buildMemoryPrompt(context) +
+                RENDERING_PROMPT
 
         // 构建对话上下文(历史 + 当前消息),用简单的 Pair 格式(兼容所有 API)
         val messages = mutableListOf<Pair<String, String>>()
@@ -161,7 +169,8 @@ object AgentOrchestrator {
         }
         val fullPrompt = systemPrompt +
                 SkillManager.buildSkillsPrompt(context) +
-                MemoryManager.buildMemoryPrompt(context)
+                MemoryManager.buildMemoryPrompt(context) +
+                RENDERING_PROMPT
         messages.add("user" to userMessage)
 
         val result = HttpUtils.sendChatWithHistoryResult(
