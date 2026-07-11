@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root_container"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_float_30">
+
+    <!-- 标题栏 -->
+    <LinearLayout
+        android:id="@+id/title_bar"
+        android:layout_width="match_parent"
+        android:layout_height="36dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/bg_float_input_30"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp">
+
+        <TextView
+            android:id="@+id/title_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textStyle="bold"
+            android:textSize="12sp"
+            android:text="AI 解题"
+            android:textColor="@color/text_hint" />
+
+    </LinearLayout>
+
+    <!-- 内容 -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="160dp"
+        android:padding="8dp"
+        android:scrollbarThumbVertical="@color/bg_divider">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/userPrompt"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:focusable="true"
+                android:padding="3dp"
+                android:textIsSelectable="true"
+                android:text="User Prompt"
+                android:visibility="gone"
+                android:textColor="@color/text_hint"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/thinkOutput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:focusable="true"
+                android:padding="3dp"
+                android:textIsSelectable="true"
+                android:text="Chain of thinking"
+                android:visibility="gone"
+                android:textColor="@color/text_hint"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/contentOutput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:focusable="true"
+                android:padding="3dp"
+                android:textIsSelectable="true"
+                android:text="How can I help you today?"
+                android:textColor="@color/text_hint"
+                android:textSize="13sp"
+                android:lineSpacingExtra="3dp"
+                android:lineSpacingMultiplier="1.15" />
+
+            <TextView
+                android:id="@+id/errorOutput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:focusable="true"
+                android:padding="3dp"
+                android:textIsSelectable="true"
+                android:text="Error Output"
+                android:visibility="gone"
+                android:textColor="@color/warning"
+                android:textSize="12sp" />
+
+        </LinearLayout>
+
+    </ScrollView>
+
+    <!-- 输入框 -->
+    <EditText
+        android:id="@+id/contentInput"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:maxHeight="72dp"
+        android:focusable="true"
+        android:focusableInTouchMode="true"
+        android:hint="输入问题..."
+        android:inputType="textMultiLine"
+        android:scrollbars="vertical"
+        android:textColor="@color/text_hint"
+        android:textColorHint="#809CA3AF"
+        android:background="@drawable/bg_float_input_30"
+        android:padding="6dp"
+        android:layout_marginStart="6dp"
+        android:layout_marginEnd="6dp"
+        android:layout_marginBottom="4dp"
+        android:textSize="12sp"
+        android:singleLine="true"/>
+
+    <!-- 按钮 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingStart="6dp"
+        android:paddingEnd="6dp"
+        android:paddingBottom="6dp">
+
+        <Button
+            android:id="@+id/close_btn"
+            android:layout_width="0dp"
+            android:layout_height="30dp"
+            android:layout_weight="1"
+            android:background="@drawable/btn_float_white"
+            android:textColor="@color/text_hint"
+            android:textSize="11sp"
+            android:layout_marginEnd="3dp"
+            android:text="关闭"/>
+
+        <Button
+            android:id="@+id/submit_btn"
+            android:layout_width="0dp"
+            android:layout_height="30dp"
+            android:layout_weight="1"
+            android:background="@drawable/btn_float_white"
+            android:textColor="@color/text_hint"
+            android:textSize="11sp"
+            android:layout_marginStart="3dp"
+            android:layout_marginEnd="3dp"
+            android:text="发送"/>
+
+        <Button
+            android:id="@+id/stop_btn"
+            android:layout_width="0dp"
+            android:layout_height="30dp"
+            android:layout_weight="1"
+            android:background="@drawable/btn_float_white"
+            android:textColor="@color/text_hint"
+            android:textSize="11sp"
+            android:layout_marginStart="3dp"
+            android:layout_marginEnd="3dp"
+            android:visibility="gone"
+            android:text="停止"/>
+
+        <Button
+            android:id="@+id/copy_btn"
+            android:layout_width="0dp"
+            android:layout_height="30dp"
+            android:layout_weight="1"
+            android:background="@drawable/btn_float_white"
+            android:textColor="@color/text_hint"
+            android:textSize="11sp"
+            android:layout_marginStart="3dp"
+            android:text="选区"/>
+
+    </LinearLayout>
+
+</LinearLayout>

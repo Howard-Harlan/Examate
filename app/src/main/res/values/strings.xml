@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Examate</string>
+    <string name="back">&lt;</string>
+    <string name="description_in_xml">Examate 需要无障碍权限来识别当前屏幕上的文本内容，以便为您提供 AI 解题辅助服务。\n\n权限用途说明：\n· 读取屏幕文字内容，用于 AI 分析与解题\n· 执行手势操作，辅助选区截取\n\n安全承诺：\n· 本应用不会收集、上传或分享您的任何个人数据\n· 无障碍权限仅用于上述功能，不会用于其他用途\n· 您可以随时在系统设置中关闭此权限</string>
+</resources>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- 校园系统多为内网 HTTP / 自签名 HTTPS,统一放行明文流量,避免重定向到 HTTP 时报 "not permitted by network security policy" -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <!-- 校园系统自签名证书:允许用户/应用证书,配合 OkHttp trustAll -->
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

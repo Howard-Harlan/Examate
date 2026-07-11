@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_float_50"
+    android:orientation="vertical">
+
+    <TextView
+        android:id="@+id/select_zone_btn"
+        android:layout_width="48dp"
+        android:layout_height="wrap_content"
+        android:background="?android:attr/selectableItemBackground"
+        android:padding="8dp"
+        android:textSize="12sp"
+        android:text="选区"
+        android:gravity="center"
+        android:textColor="@color/text_hint" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="0.5dp"
+        android:background="#1A000000" />
+
+    <TextView
+        android:id="@+id/ask_btn"
+        android:layout_width="48dp"
+        android:layout_height="wrap_content"
+        android:background="?android:attr/selectableItemBackground"
+        android:padding="8dp"
+        android:textSize="12sp"
+        android:text="问问"
+        android:gravity="center"
+        android:textColor="@color/text_hint" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="0.5dp"
+        android:background="#1A000000" />
+
+    <TextView
+        android:id="@+id/auto_btn"
+        android:layout_width="48dp"
+        android:layout_height="wrap_content"
+        android:background="?android:attr/selectableItemBackground"
+        android:padding="8dp"
+        android:textSize="12sp"
+        android:text="自动"
+        android:gravity="center"
+        android:textColor="@color/text_hint" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="0.5dp"
+        android:background="#1A000000" />
+
+    <TextView
+        android:id="@+id/web_btn"
+        android:layout_width="48dp"
+        android:layout_height="wrap_content"
+        android:background="?android:attr/selectableItemBackground"
+        android:padding="8dp"
+        android:textSize="12sp"
+        android:text="浏览"
+        android:gravity="center"
+        android:textColor="@color/text_hint" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="0.5dp"
+        android:background="#1A000000" />
+
+    <TextView
+        android:id="@+id/close_btn"
+        android:layout_width="48dp"
+        android:layout_height="wrap_content"
+        android:background="?android:attr/selectableItemBackground"
+        android:padding="8dp"
+        android:textSize="12sp"
+        android:text="退出"
+        android:gravity="center"
+        android:textColor="@color/text_hint" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="0.5dp"
+        android:background="#1A000000" />
+
+    <TextView
+        android:id="@+id/hide_btn"
+        android:layout_width="48dp"
+        android:layout_height="wrap_content"
+        android:background="?android:attr/selectableItemBackground"
+        android:padding="8dp"
+        android:textSize="12sp"
+        android:text="藏匿"
+        android:gravity="center"
+        android:textColor="@color/text_hint"
+        android:visibility="gone" />
+
+</LinearLayout>

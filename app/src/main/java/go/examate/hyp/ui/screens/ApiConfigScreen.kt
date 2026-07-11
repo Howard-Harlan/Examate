@@ -1,0 +1,678 @@
+package go.examate.hyp.ui.screens
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
+import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.effects.lens
+import com.kyant.backdrop.effects.vibrancy
+import com.kyant.shapes.Capsule
+import go.examate.hyp.entity.ModelProvider
+import go.examate.hyp.ui.components.FrostedGlassCard
+import go.examate.hyp.ui.components.LocalGlassBackdrop
+import go.examate.hyp.ui.components.PlainDialog
+import go.examate.hyp.ui.components.PlainDialogButtons
+import go.examate.hyp.ui.components.PlainDialogContent
+import go.examate.hyp.ui.components.PlainDialogTitle
+import go.examate.hyp.ui.theme.BgPrimary
+import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.TextHint
+import go.examate.hyp.ui.theme.TextPrimary
+import go.examate.hyp.ui.theme.TextSecondary
+import androidx.compose.material3.OutlinedTextField
+import kotlin.math.roundToInt
+
+@Composable
+fun ApiConfigScreen(
+    initialProviders: List<ModelProvider>,
+    onBack: () -> Unit,
+    onSave: (List<ModelProvider>) -> Unit,
+    onOpenTutorial: () -> Unit,
+    onOpenUrl: (String) -> Unit,
+    onFetchModels: (String, String, (List<String>) -> Unit, (String) -> Unit) -> Unit,
+    onToast: (String) -> Unit
+) {
+    val providers = remember { mutableStateListOf(*initialProviders.toTypedArray()) }
+    var editingIndex by remember { mutableIntStateOf(-1) }
+
+    // ═══ 拖拽排序状态 ═══
+    val density = LocalDensity.current
+    val itemHeightPx = with(density) { 80.dp.toPx() } // 估算行高
+    var draggingIndex by remember { mutableIntStateOf(-1) }
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+
+    // ═══ 修改检测 + 返回保存确认 ═══
+    // 对比当前列表与初始列表,判断是否有修改
+    fun hasChanges(): Boolean {
+        if (providers.size != initialProviders.size) return true
+        return providers.zip(initialProviders).any { (a, b) ->
+            a.displayName != b.displayName || a.modelId != b.modelId ||
+                a.requestUrl != b.requestUrl || a.apiKey != b.apiKey ||
+                a.endpointType != b.endpointType
+        }
+    }
+    var showSaveConfirm by remember { mutableStateOf(false) }
+
+    fun doSave() {
+        val valid = providers.filter { it.displayName.isNotEmpty() || it.modelId.isNotEmpty() }
+        onSave(valid)
+    }
+    fun handleBack() {
+        if (hasChanges()) showSaveConfirm = true else onBack()
+    }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(BgPrimary)
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            // ═══ 顶部:标题栏 ═══
+            ApiConfigTopBar(
+                modifier = Modifier.padding(top = 48.dp),
+                onBack = { handleBack() },
+                onOpenTutorial = onOpenTutorial
+            )
+
+            // ═══ 列表(长按拖拽排序,不再分组,用色条颜色区分) ═══
+            LazyColumn(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                contentPadding = PaddingValues(bottom = 120.dp)
+            ) {
+                providers.forEachIndexed { index, provider ->
+                    item(key = "provider_$index") {
+                        ProviderRow(
+                            provider = provider,
+                            isDragging = index == draggingIndex,
+                            dragOffsetY = if (index == draggingIndex) dragOffsetY else 0f,
+                            onDragStart = {
+                                draggingIndex = index
+                                dragOffsetY = 0f
+                            },
+                            onDrag = { dragAmount ->
+                                dragOffsetY += dragAmount
+                                var target = draggingIndex
+                                // 向下 swap
+                                while (dragOffsetY > itemHeightPx / 2 && target < providers.size - 1) {
+                                    val item = providers.removeAt(target)
+                                    providers.add(target + 1, item)
+                                    target++
+                                    dragOffsetY -= itemHeightPx
+                                }
+                                // 向上 swap
+                                while (dragOffsetY < -itemHeightPx / 2 && target > 0) {
+                                    val item = providers.removeAt(target)
+                                    providers.add(target - 1, item)
+                                    target--
+                                    dragOffsetY += itemHeightPx
+                                }
+                                draggingIndex = target
+                            },
+                            onDragEnd = {
+                                draggingIndex = -1
+                                dragOffsetY = 0f
+                            },
+                            onDragCancel = {
+                                draggingIndex = -1
+                                dragOffsetY = 0f
+                            },
+                            onClick = { editingIndex = index }
+                        )
+                    }
+                }
+            }
+        }
+
+        // ═══ 底部胶囊底栏:新增 + 保存(液态玻璃) ═══
+        ApiConfigBottomBar(
+            onAddCustom = {
+                providers.add(ModelProvider("自定义厂商", "", "", "", false, "", "自定义"))
+                editingIndex = providers.size - 1
+            },
+            onSave = { doSave() },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 24.dp)
+        )
+    }
+
+    // ═══ 返回时保存确认弹窗 ═══
+    if (showSaveConfirm) {
+        PlainDialog(onDismissRequest = { showSaveConfirm = false }) {
+            PlainDialogTitle("保存修改")
+            PlainDialogContent("API 配置已修改,是否保存?")
+            PlainDialogButtons(
+                buttons = listOf(
+                    Triple("不保存", false) { showSaveConfirm = false; onBack() },
+                    Triple("保存", true) { showSaveConfirm = false; doSave() }
+                )
+            )
+        }
+    }
+
+    // ═══ 编辑对话框 ═══
+    if (editingIndex in providers.indices) {
+        EditProviderDialog(
+            provider = providers[editingIndex],
+            onDismiss = { editingIndex = -1 },
+            onConfirm = { updated ->
+                providers[editingIndex] = updated
+                editingIndex = -1
+            },
+            onDelete = { onDeleteIndex ->
+                providers.removeAt(onDeleteIndex)
+                editingIndex = -1
+            },
+            editingIndex = editingIndex,
+            onFetchModels = onFetchModels,
+            onOpenUrl = onOpenUrl,
+            onToast = onToast
+        )
+    }
+}
+
+@Composable
+private fun ApiConfigTopBar(
+    onBack: () -> Unit,
+    onOpenTutorial: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            "←",
+            color = TextSecondary,
+            fontSize = 22.sp,
+            modifier = Modifier
+                .clickable { onBack() }
+                .padding(8.dp)
+        )
+        Text(
+            "API 设置",
+            color = TextPrimary,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(start = 4.dp)
+        )
+        Spacer(Modifier.weight(1f))
+        Text(
+            "教程",
+            color = Primary,
+            fontSize = 13.sp,
+            modifier = Modifier
+                .clickable { onOpenTutorial() }
+                .padding(8.dp)
+        )
+    }
+}
+
+@Composable
+private fun ProviderRow(
+    provider: ModelProvider,
+    isDragging: Boolean,
+    dragOffsetY: Float,
+    onDragStart: () -> Unit,
+    onDrag: (Float) -> Unit,
+    onDragEnd: () -> Unit,
+    onDragCancel: () -> Unit,
+    onClick: () -> Unit
+) {
+    val tag = provider.tag ?: ""
+    val barColor = when (tag) {
+        "稳定" -> Primary
+        "免费" -> Color(0xFF6B7280)
+        else -> Color(0xFF9CA3AF)
+    }
+
+    FrostedGlassCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 12.dp)
+            .zIndex(if (isDragging) 1f else 0f)
+            .graphicsLayer { if (isDragging) translationY = dragOffsetY }
+            .pointerInput(Unit) {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { onDragStart() },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        onDrag(dragAmount.y)
+                    },
+                    onDragEnd = { onDragEnd() },
+                    onDragCancel = { onDragCancel() }
+                )
+            },
+        cornerRadius = 16.dp
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable { onClick() }
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                Modifier
+                    .width(4.dp)
+                    .height(36.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(barColor)
+            )
+            Column(
+                Modifier
+                    .weight(1f)
+                    .padding(start = 14.dp)
+            ) {
+                Text(
+                    provider.displayName,
+                    color = TextPrimary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    provider.modelId,
+                    color = TextHint,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+            // 拖拽手柄提示
+            Text(
+                "⠿",
+                color = TextHint.copy(alpha = 0.5f),
+                fontSize = 18.sp,
+                modifier = Modifier.padding(end = 6.dp)
+            )
+            Text(
+                "›",
+                color = TextHint,
+                fontSize = 20.sp
+            )
+        }
+    }
+}
+
+/**
+ * API 配置页底部胶囊底栏:新增 + 保存(真液态玻璃)
+ */
+@Composable
+private fun ApiConfigBottomBar(
+    onAddCustom: () -> Unit,
+    onSave: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val backdrop = LocalGlassBackdrop.current
+    val containerColor = Color(0xFFFAFAFA).copy(0.2f)
+
+    Row(
+        modifier
+            .fillMaxWidth()
+            .height(56.dp)
+            .then(
+                if (backdrop != null) {
+                    Modifier.drawBackdrop(
+                        backdrop = backdrop,
+                        shape = { Capsule() },
+                        effects = {
+                            vibrancy()
+                            blur(8f.dp.toPx())
+                            lens(24f.dp.toPx(), 24f.dp.toPx())
+                        },
+                        onDrawSurface = { drawRect(containerColor) }
+                    )
+                } else {
+                    Modifier.background(Color.White.copy(0.92f), Capsule())
+                }
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceEvenly
+    ) {
+        // 新增按钮
+        Box(
+            Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .clickable(
+                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                    indication = null
+                ) { onAddCustom() },
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                "＋ 新增",
+                color = TextPrimary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium
+            )
+        }
+        // 分隔线
+        Box(
+            Modifier
+                .width(1.dp)
+                .height(28.dp)
+                .background(Color(0xFFD1D5DB).copy(alpha = 0.5f))
+        )
+        // 保存按钮
+        Box(
+            Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .clickable(
+                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                    indication = null
+                ) { onSave() },
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                "保存",
+                color = Primary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium
+            )
+        }
+    }
+}
+
+@Composable
+private fun EditProviderDialog(
+    provider: ModelProvider,
+    editingIndex: Int,
+    onDismiss: () -> Unit,
+    onConfirm: (ModelProvider) -> Unit,
+    onDelete: (Int) -> Unit,
+    onFetchModels: (String, String, (List<String>) -> Unit, (String) -> Unit) -> Unit,
+    onOpenUrl: (String) -> Unit,
+    onToast: (String) -> Unit
+) {
+    var name by remember { mutableStateOf(provider.displayName) }
+    var modelId by remember { mutableStateOf(provider.modelId) }
+    // 完整 API 地址(含 /v1/chat/completions)
+    var apiUrl by remember { mutableStateOf(provider.requestUrl) }
+    var apiKey by remember { mutableStateOf(provider.apiKey) }
+    // 接口格式:OpenAI(chat) / OpenAI Responses / Anthropic
+    var endpointType by remember { mutableStateOf(provider.endpointType.ifEmpty { ModelProvider.inferEndpointType(apiUrl) }) }
+    var fetching by remember { mutableStateOf(false) }
+    var modelList by remember { mutableStateOf<List<String>?>(null) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+
+    // 接口格式选项:OpenAI(chat/responses 兼容)/ Anthropic
+    val endpointOptions = listOf(
+        "chat" to "OpenAI",
+        "anthropic" to "Anthropic"
+    )
+
+    PlainDialog(onDismissRequest = onDismiss) {
+        PlainDialogTitle("API 配置")
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp, 0.dp, 24.dp, 12.dp)) {
+            FieldLabel("厂商名称")
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                placeholder = { Text("如 DeepSeek") },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(12.dp))
+
+            // ═══ 接口格式选择(移到地址上方,仅 OpenAI / Anthropic) ═══
+            FieldLabel("接口格式")
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                endpointOptions.forEach { (value, label) ->
+                    val selected = endpointType == value
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (selected) Primary else Color(0xFFF3F4F6))
+                            .clickable { endpointType = value }
+                            .padding(vertical = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            label,
+                            color = if (selected) Color.White else TextHint,
+                            fontSize = 12.sp,
+                            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal
+                        )
+                    }
+                }
+            }
+            val endpointHint = when (endpointType) {
+                "anthropic" -> "端点:/v1/messages(认证用 x-api-key)"
+                else -> "端点:/v1/chat/completions"
+            }
+            Text(endpointHint, color = TextHint, fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp))
+            Spacer(Modifier.height(12.dp))
+
+            // ═══ API 地址 ═══
+            FieldLabel("API 地址")
+            OutlinedTextField(
+                value = apiUrl,
+                onValueChange = { apiUrl = it },
+                placeholder = { Text("https://api.example.com/v1/chat/completions") },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(12.dp))
+
+            // ═══ API Key ═══
+            FieldLabel("API Key")
+            OutlinedTextField(
+                value = apiKey,
+                onValueChange = { apiKey = it },
+                placeholder = { Text("sk-...") },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            // 获取 API Key 快捷跳转:provider 已有 registerUrl 时显示
+            val regUrl = provider.registerUrl
+            if (!regUrl.isNullOrEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "获取 API Key →",
+                    color = Primary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.clickable { onOpenUrl(regUrl) }
+                )
+            }
+
+            if (!provider.inviteCode.isNullOrEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    provider.inviteCode,
+                    color = TextHint,
+                    fontSize = 11.sp
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+
+            // ═══ 模型 ID(通过选择模型填入) ═══
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "模型 ID",
+                    Modifier.weight(1f),
+                    color = TextHint,
+                    fontSize = 11.sp
+                )
+                Text(
+                    if (fetching) "选择中..." else "选择模型",
+                    color = Primary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.clickable {
+                        val u = apiUrl.trim()
+                        val k = apiKey.trim()
+                        when {
+                            u.isEmpty() -> onToast("请先填写 API 地址")
+                            k.isEmpty() -> onToast("请先填写 API Key")
+                            else -> {
+                                fetching = true
+                                onFetchModels(
+                                    u, k,
+                                    { fetching = false; modelList = it },
+                                    { fetching = false; onToast(it) }
+                                )
+                            }
+                        }
+                    }
+                )
+            }
+            OutlinedTextField(
+                value = modelId,
+                onValueChange = { modelId = it },
+                placeholder = { Text("如 deepseek-chat") },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        // 按钮区:[删除] [间距] [取消] [保存]
+        PlainDialogButtons(
+            buttons = listOf(
+                Triple("删除", false) { showDeleteConfirm = true },
+                Triple("取消", false) { onDismiss() },
+                Triple("保存", true) {
+                    onConfirm(
+                        ModelProvider(
+                            name.trim(),
+                            modelId.trim(),
+                            apiUrl.trim(),
+                            apiKey.trim(),
+                            provider.enableThinking,
+                            provider.registerUrl ?: "",
+                            provider.tag ?: "",
+                            provider.inviteCode ?: "",
+                            endpointType
+                        )
+                    )
+                }
+            )
+        )
+    }
+
+    // ═══ 删除二次确认 ═══
+    if (showDeleteConfirm) {
+        PlainDialog(onDismissRequest = { showDeleteConfirm = false }) {
+            PlainDialogTitle("确认删除")
+            PlainDialogContent("确定要删除该厂商配置吗?此操作不可撤销。")
+            PlainDialogButtons(
+                buttons = listOf(
+                    Triple("取消", false) { showDeleteConfirm = false },
+                    Triple("删除", true) {
+                        showDeleteConfirm = false
+                        onDelete(editingIndex)
+                    }
+                )
+            )
+        }
+    }
+
+    // ═══ 模型选择列表 ═══
+    modelList?.let { models ->
+        PlainDialog(onDismissRequest = { modelList = null }) {
+            PlainDialogTitle("选择模型 (${models.size} 个可用)")
+            Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp, 0.dp, 24.dp, 12.dp)) {
+                models.forEach { m ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                modelId = m
+                                modelList = null
+                            }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = m == modelId,
+                            onClick = {
+                                modelId = m
+                                modelList = null
+                            }
+                        )
+                        Text(
+                            m,
+                            Modifier.padding(start = 8.dp),
+                            color = TextPrimary,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+            }
+            PlainDialogButtons(
+                buttons = listOf(
+                    Triple("取消", false) { modelList = null }
+                )
+            )
+        }
+    }
+}
+
+@Composable
+private fun FieldLabel(text: String) {
+    Text(
+        text,
+        color = TextHint,
+        fontSize = 11.sp,
+        letterSpacing = 0.4.sp,
+        modifier = Modifier.padding(start = 4.dp, bottom = 6.dp)
+    )
+}
