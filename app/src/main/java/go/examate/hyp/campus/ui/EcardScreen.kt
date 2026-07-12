@@ -155,6 +155,11 @@ private fun BalanceSection(
     var topping by remember { mutableStateOf(false) }
     var topResult by remember { mutableStateOf<PayResult?>(null) }
     var topError by remember { mutableStateOf("") }
+    // 充值:签约银行卡选择(对齐网页端"先选卡再充值"流程)
+    var topupCards by remember { mutableStateOf<List<BankCard>>(emptyList()) }
+    var selectedCard by remember { mutableStateOf<BankCard?>(null) }
+    var showCardPicker by remember { mutableStateOf(false) }
+    var loadingCards by remember { mutableStateOf(false) }
 
     if (!loaded && !loading && error.isEmpty()) {
         loading = true
@@ -164,7 +169,7 @@ private fun BalanceSection(
             } catch (e: CampusException) {
                 error = e.message ?: "查询失败"
             } catch (e: Exception) {
-                error = "网络异常: ${e.message}"
+                error = "网络异常: ${e.message ?: "未知错误"}"
             } finally {
                 loading = false
                 loaded = true
@@ -236,7 +241,30 @@ private fun BalanceSection(
                     modifier = Modifier.weight(1f)
                 )
                 LiquidGlassButton(
-                    text = "充值", onClick = { topping = true },
+                    text = if (loadingCards) "加载中..." else "充值",
+                    onClick = {
+                        if (loadingCards) return@LiquidGlassButton
+                        loadingCards = true
+                        topError = ""; topResult = null; selectedCard = null; topupCards = emptyList()
+                        scope.launch {
+                            try {
+                                val cards = repo.getTopupBankCards(prefs)
+                                topupCards = cards
+                                when {
+                                    cards.isEmpty() ->
+                                        topError = "没有可用的签约银行卡,请先在一卡通网页端签约银行卡"
+                                    cards.size == 1 -> { selectedCard = cards[0]; topping = true }
+                                    else -> showCardPicker = true
+                                }
+                            } catch (e: CampusException) {
+                                topError = e.message ?: "获取银行卡失败"
+                            } catch (e: Exception) {
+                                topError = "网络异常: ${e.message ?: "未知错误"}"
+                            } finally {
+                                loadingCards = false
+                            }
+                        }
+                    },
                     style = ButtonStyle.White, height = 40.dp,
                     modifier = Modifier.weight(1f)
                 )
@@ -292,6 +320,12 @@ private fun BalanceSection(
             }
         }
 
+        // 选卡/获取卡失败提示(不在弹窗内时)
+        if (topError.isNotEmpty() && !topping && !showCardPicker) {
+            Spacer(Modifier.height(12.dp))
+            ErrorBlock(topError)
+        }
+
         // 充值结果
         if (topResult != null) {
             topResult?.let { r ->
@@ -320,19 +354,41 @@ private fun BalanceSection(
                 if (queryPwd.isBlank()) {
                     topError = "请输入密码"; topResult = null; return@PayFormDialog
                 }
+                val card = selectedCard
+                if (card == null || card.cardNumberFull.isEmpty()) {
+                    topError = "请选择签约银行卡"; topResult = null; return@PayFormDialog
+                }
                 topping = false
                 topError = ""; topResult = null
                 scope.launch {
                     try {
-                        topResult = repo.topUp(prefs, amt, queryPwd)
+                        topResult = repo.topUp(prefs, amt, queryPwd, card.cardNumberFull)
                     } catch (e: CampusException) {
                         topError = e.message ?: "充值失败"
                     } catch (e: Exception) {
-                        topError = "网络异常: ${e.message}"
+                        topError = "网络异常: ${e.message ?: "未知错误"}"
                     }
                 }
             },
             onDismiss = { topping = false }
+        )
+    }
+
+    // 签约银行卡选择弹窗(多张卡时)
+    if (showCardPicker) {
+        SingleChoiceDialog(
+            title = "选择签约银行卡",
+            options = topupCards.map { card ->
+                val label = card.cardNumberShort.ifEmpty { "尾号 " + card.cardNumberFull.takeLast(4) }
+                card to label
+            },
+            selected = selectedCard ?: topupCards.first(),
+            onConfirm = { card ->
+                selectedCard = card
+                showCardPicker = false
+                topping = true
+            },
+            onDismiss = { showCardPicker = false }
         )
     }
 }
@@ -402,7 +458,7 @@ private fun BillSection(
                 } catch (e: CampusException) {
                     error = e.message ?: "查询失败"
                 } catch (e: Exception) {
-                    error = "网络异常: ${e.message}"
+                    error = "网络异常: ${e.message ?: "未知错误"}"
                 } finally {
                     loading = false
                 }
@@ -513,8 +569,8 @@ private fun summarize(bills: List<BillRecord>): Pair<String, String> {
 
 /** 缴费项目 */
 private val PAY_ITEMS = listOf(
-    "3" to "宿舍照明电费",
-    "2" to "常工电控缴费"
+    "2" to "常工电控缴费",
+    "3" to "宿舍照明电费"
 )
 
 @Composable
@@ -523,7 +579,7 @@ private fun PayFeeSection(
     prefs: PrefsManager,
     scope: kotlinx.coroutines.CoroutineScope
 ) {
-    var itemNum by remember { mutableStateOf("3") }
+    var itemNum by remember { mutableStateOf("2") }
     var showItemPicker by remember { mutableStateOf(false) }
     var area by remember { mutableStateOf<PayArea?>(null) }
     var building by remember { mutableStateOf<PayBuilding?>(null) }
@@ -574,7 +630,7 @@ private fun PayFeeSection(
                                 } catch (e: CampusException) {
                                     listError = e.message ?: "查询失败"
                                 } catch (e: Exception) {
-                                    listError = "网络异常: ${e.message}"
+                                    listError = "网络异常: ${e.message ?: "未知错误"}"
                                 } finally {
                                     loadingAreas = false
                                 }
@@ -598,7 +654,7 @@ private fun PayFeeSection(
                                 } catch (e: CampusException) {
                                     listError = e.message ?: "查询失败"
                                 } catch (e: Exception) {
-                                    listError = "网络异常: ${e.message}"
+                                    listError = "网络异常: ${e.message ?: "未知错误"}"
                                 } finally {
                                     loadingBuildings = false
                                 }
@@ -622,7 +678,7 @@ private fun PayFeeSection(
                                 } catch (e: CampusException) {
                                     listError = e.message ?: "查询失败"
                                 } catch (e: Exception) {
-                                    listError = "网络异常: ${e.message}"
+                                    listError = "网络异常: ${e.message ?: "未知错误"}"
                                 } finally {
                                     loadingRooms = false
                                 }
@@ -668,7 +724,7 @@ private fun PayFeeSection(
                                 } catch (e: CampusException) {
                                     elecError = e.message ?: "查询失败"
                                 } catch (e: Exception) {
-                                    elecError = "网络异常: ${e.message}"
+                                    elecError = "网络异常: ${e.message ?: "未知错误"}"
                                 } finally {
                                     elecLoading = false
                                 }
@@ -740,7 +796,7 @@ private fun PayFeeSection(
                     onValueChange = { queryPwd = it },
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                     singleLine = true,
-                    placeholder = { Text("通常为身份证后六位", color = TextHint, fontSize = 13.sp) },
+                    placeholder = { Text("输入密码", color = TextHint, fontSize = 13.sp) },
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                     shape = RoundedCornerShape(10.dp)
@@ -770,7 +826,7 @@ private fun PayFeeSection(
                             } catch (e: CampusException) {
                                 submitError = e.message ?: "缴费失败"
                             } catch (e: Exception) {
-                                submitError = "网络异常: ${e.message}"
+                                submitError = "网络异常: ${e.message ?: "未知错误"}"
                             } finally {
                                 submitting = false
                             }
@@ -988,7 +1044,7 @@ private fun PayFormDialog(
                 onValueChange = onPasswordChange,
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 singleLine = true,
-                placeholder = { Text("通常为身份证后六位", color = TextHint, fontSize = 13.sp) },
+                placeholder = { Text("输入密码", color = TextHint, fontSize = 13.sp) },
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                 shape = RoundedCornerShape(10.dp)

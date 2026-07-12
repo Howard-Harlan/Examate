@@ -5,9 +5,13 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import go.examate.hyp.agent.AgentOrchestrator
+import go.examate.hyp.agent.AgentTools
+import go.examate.hyp.agent.MemoryManager
+import go.examate.hyp.campus.CampusRepository
 import go.examate.hyp.config.MyConfig
 import go.examate.hyp.config.PrefsManager
 import go.examate.hyp.entity.ModelProvider
+import go.examate.hyp.util.ActionCard
 import go.examate.hyp.util.ChatHistoryManager
 import go.examate.hyp.util.ChatMsg
 import go.examate.hyp.util.ChatSession
@@ -77,7 +81,8 @@ class ChatViewModel : ViewModel() {
                 inputText = "",
                 pendingImageUriString = null,
                 isLoading = true,
-                loadingStatus = ""
+                loadingStatus = "",
+                toolProgressCards = emptyList()
             )
         }
         ensurePrefs(context)
@@ -109,23 +114,51 @@ class ChatViewModel : ViewModel() {
                         )
                     }
                 } else if (agentsMode) {
-                    // Agents 模式:使用 AgentOrchestrator(支持工具调用)
+                    // Agents 模式(Flow 渐进式): 工具执行过程实时更新 UI
                     val history = historyPairs()
-                    val result = AgentOrchestrator.execute(
+                    AgentOrchestrator.executeFlow(
                         context = context,
                         provider = provider,
                         userMessage = text,
-                        history = history.dropLast(1), // 去掉刚加的 user 消息(orchestrator 会加)
+                        history = history.dropLast(1),
                         agentsMode = true
-                    ) { status -> updateState { it.copy(loadingStatus = status) } }
-                    updateState { it.copy(isLoading = false) }
-                    appendAssistant(
-                        result.text,
-                        isError = result.isError,
-                        imageBase64 = result.imageBase64,
-                        imageUrl = result.imageUrl,
-                        toolCalls = result.toolCallsLog
-                    )
+                    ).collect { event ->
+                        when (event) {
+                            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.Thinking -> {
+                                updateState { it.copy(loadingStatus = event.text) }
+                            }
+                            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.ToolStarted -> {
+                                updateState { it.copy(loadingStatus = event.label) }
+                            }
+                            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.ToolDone -> {
+                                // 工具执行结果 → 立即在加载区域显示卡片
+                                val card = event.card
+                                if (card != null) {
+                                    updateState {
+                                        it.copy(toolProgressCards = it.toolProgressCards + card)
+                                    }
+                                }
+                                updateState { it.copy(loadingStatus = "${event.name} 完成") }
+                            }
+                            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.FinalReply -> {
+                                updateState {
+                                    it.copy(isLoading = false, toolProgressCards = emptyList())
+                                }
+                                appendAssistant(
+                                    event.text,
+                                    isError = event.isError,
+                                    imageBase64 = event.imageBase64,
+                                    imageUrl = event.imageUrl,
+                                    toolCalls = emptyList(),
+                                    cards = event.cards
+                                )
+                                if (!event.isError) maybeCaptureMemory(context)
+                            }
+                            // SSE 流式 token(预留,后续启用)
+                            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.FinalTextToken -> {}
+                            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.FinalTextEnd -> {}
+                        }
+                    }
                 } else {
                     // 普通对话模式
                     updateState { it.copy(loadingStatus = "正在思考...") }
@@ -141,7 +174,13 @@ class ChatViewModel : ViewModel() {
                     if (content.isNullOrEmpty()) {
                         appendAssistant("请求失败，请检查网络或 API 配置", isError = true)
                     } else {
-                        appendAssistant(content)
+                        // 普通对话也支持从回复推断校园服务快捷卡片
+                        val prefs = ensurePrefs(context)
+                        val cardEligible = prefs.rememberCampusLogin &&
+                                prefs.campusUsername.isNotEmpty()
+                        val cards = AgentTools.inferCampusCards(content, cardEligible)
+                        appendAssistant(content, cards = cards)
+                        maybeCaptureMemory(context)
                     }
                 }
             } catch (e: Exception) {
@@ -162,16 +201,56 @@ class ChatViewModel : ViewModel() {
         isError: Boolean = false,
         imageBase64: String? = null,
         imageUrl: String? = null,
-        toolCalls: List<String> = emptyList()
+        toolCalls: List<String> = emptyList(),
+        cards: List<ActionCard> = emptyList()
     ) {
         updateState {
             it.copy(
                 messages = it.messages + ChatMsg(
                     "assistant", text, isError, System.currentTimeMillis(),
-                    null, imageBase64, imageUrl, toolCalls
+                    null, imageBase64, imageUrl, toolCalls, cards
                 )
             )
         }
+    }
+
+    /**
+     * 记忆捕获:在一段非错误回复后,按策略从最近的用户消息中抽取长期偏好记忆。
+     * 涉及文件 I/O(JSON 读写),在 viewModelScope 内调用,不阻塞 UI。
+     */
+    private fun maybeCaptureMemory(context: Context) {
+        val prefsManager = ensurePrefs(context)
+        if (!prefsManager.isMemoryEnabled) return
+        val dialogMessages = _uiState.value.messages
+            .filter { it.role == "user" || it.role == "assistant" }
+        if (dialogMessages.size < 10) return
+
+        val userCount = dialogMessages.count { it.role == "user" }
+        val policyPrefs = context.getSharedPreferences("agent_memory_policy", Context.MODE_PRIVATE)
+        val lastUserCount = policyPrefs.getInt("last_user_count", 0)
+        val lastAt = policyPrefs.getLong("last_at", 0L)
+        val now = System.currentTimeMillis()
+        if (userCount - lastUserCount < 8 && now - lastAt < 30 * 60 * 1000L) return
+
+        val lastUser = dialogMessages.lastOrNull { it.role == "user" }?.content.orEmpty()
+        val candidate = extractMemoryCandidate(lastUser) ?: return
+        val existing = MemoryManager.loadAll(context)
+        if (existing.size >= 30 || existing.any { it.content == candidate }) return
+
+        MemoryManager.add(context, candidate, "偏好")
+        policyPrefs.edit()
+            .putInt("last_user_count", userCount)
+            .putLong("last_at", now)
+            .apply()
+    }
+
+    private fun extractMemoryCandidate(text: String): String? {
+        val normalized = text.trim().replace(Regex("\\s+"), " ")
+        if (normalized.length !in 8..160) return null
+        val preferenceSignals = listOf("以后", "下次", "记住", "我喜欢", "我不喜欢", "叫我", "称呼我", "用中文", "简洁", "详细", "不要")
+        if (preferenceSignals.none { normalized.contains(it) }) return null
+        if (normalized.endsWith("?") || normalized.endsWith("？")) return null
+        return normalized
     }
 
     // ════════════════════════════════════════════════
@@ -187,9 +266,16 @@ class ChatViewModel : ViewModel() {
                 inputText = "",
                 pendingImageUriString = null,
                 isLoading = false,
-                loadingStatus = ""
+                loadingStatus = "",
+                toolProgressCards = emptyList(),
+                showHistory = false
             )
         }
+    }
+
+    /** 关闭历史面板 */
+    fun dismissHistory() {
+        updateState { it.copy(showHistory = false) }
     }
 
     /** 切换模型(更新选中的 provider 索引) */
@@ -292,5 +378,7 @@ data class ChatUiState(
     val pendingImageUriString: String? = null,
     val showHistory: Boolean = false,
     val currentSession: ChatSession = ChatHistoryManager.newSession(),
-    val historyList: List<ChatSession> = emptyList()
+    val historyList: List<ChatSession> = emptyList(),
+    /** Agents 模式下,工具执行过程实时产出的结果卡片(余额/成绩等),显示在加载指示器下方 */
+    val toolProgressCards: List<ActionCard> = emptyList()
 )

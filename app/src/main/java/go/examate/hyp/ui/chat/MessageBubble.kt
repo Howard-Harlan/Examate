@@ -48,6 +48,7 @@ import androidx.compose.ui.window.Dialog
 import go.examate.hyp.ui.components.MarkdownText
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
+import go.examate.hyp.util.ActionCard
 import go.examate.hyp.util.ChatMsg
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -110,6 +111,10 @@ fun MessageBubble(
                     AssistantImage(msg)
                     ToolCalls(msg)
                     MessageContent(msg, isUser)
+                    if (msg.cards.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        msg.cards.forEach { card -> ActionCardView(card) }
+                    }
                 }
 
                 DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
@@ -296,4 +301,35 @@ private fun copyMessage(context: Context, content: String) {
     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     cm.setPrimaryClip(ClipData.newPlainText("message", content))
     Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
+}
+
+@Composable
+internal fun ActionCardView(card: ActionCard) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFFF0F4FF))
+            .clickable {
+                try {
+                    // 跳转到 Examate 主界面(校园服务 Tab)
+                    val intent = android.content.Intent(context, go.examate.hyp.MainActivity::class.java)
+                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(intent)
+                } catch (_: Exception) {
+                    android.widget.Toast.makeText(context, "请先登录校园服务", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(card.title, color = Color(0xFF5B8DEF), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            if (card.summary.isNotEmpty()) {
+                Text(card.summary, color = TextSecondary, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp))
+            }
+        }
+        Text("›", color = Color(0xFF5B8DEF), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+    }
 }

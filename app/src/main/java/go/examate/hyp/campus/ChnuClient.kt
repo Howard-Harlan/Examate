@@ -53,6 +53,27 @@ import javax.net.ssl.X509TrustManager
  *
  * 所有方法为普通同步函数(非 suspend),调用方需在协程 withContext(Dispatchers.IO) 中调用。
  */
+
+/** 充值页面解析结果(对齐 Python ecard.py get_topup_page) */
+private data class TopupPageInfo(
+    val bankId: String,
+    val logoFileName: String,
+    val walletName: String,
+    /** 充值可用的签约银行卡列表(含完整卡号,供 UI 选卡) */
+    val bankCards: List<BankCard>,
+    /** /topUp 页面上表单中的隐藏字段,提交 /topUp/confirm 时必须携带(否则服务端返回错误页) */
+    val formFields: Map<String, String> = emptyMap()
+)
+
+/** 缴费表单字段(对齐 Python ecard.py get_pay_fee_form) */
+private data class PayFeeForm(
+    val typeNum: String,
+    val token: String,
+    val limitMoney: String,
+    val limitMode: String,
+    val itemName: String
+)
+
 class ChnuClient(
     /** 统一认证账号(学号/工号) */
     val username: String,
@@ -79,6 +100,8 @@ class ChnuClient(
     val ecard = EcardClient()
     /** 第二课堂系统客户端(共享 cookie + JWT token) */
     val sc = SCClient()
+    /** 淮师心声客户端(失物招领 + 满意度调查) */
+    val hsxs = HsxsClient()
 
     // ==================== SSL 信任所有证书 ====================
 
@@ -1032,6 +1055,16 @@ class ChnuClient(
          */
         fun getRoomElectricity(areaNo: String, buildingNo: String, roomNo: String, itemNum: String = "3"): RoomElectricity {
             checkSession()
+            // Step 1: 先初始化缴费页面(否则 getBalance 会返回空)
+            val initForm = FormBody.Builder().add("itemNum", itemNum).build()
+            val initReq = Request.Builder().url("$baseUrl/payFee/showItemListPayPage").post(initForm)
+                .header("User-Agent", ChnuConfig.UA)
+                .header("Referer", "$baseUrl/")
+                .build()
+            try {
+                client.newCall(initReq).execute().use { /* 初始化 session */ }
+            } catch (_: Exception) { /* 即使异常也继续 */ }
+            // Step 2: 查询房间余额,返回 {"feeDate":{"balance":797.0,"eleDailyUsed":0.0},"ajaxState":"3"}
             val jsonBody = JSONObject()
                 .put("itemNum", itemNum)
                 .put("areano", areaNo)
@@ -1047,9 +1080,10 @@ class ChnuClient(
             client.newCall(req).execute().use { resp ->
                 val text = resp.body?.string() ?: ""
                 val json = parseJsonObject(text) ?: return RoomElectricity("", "")
+                val feeDate = json.optJSONObject("feeDate") ?: json
                 return RoomElectricity(
-                    balance = json.optString("balance", ""),
-                    dailyUsed = json.optString("eleDailyUsed", json.optString("dailyUsed", ""))
+                    balance = feeDate.optString("balance", json.optString("balance", "")),
+                    dailyUsed = feeDate.optString("eleDailyUsed", feeDate.optString("dailyUsed", ""))
                 )
             }
         }
@@ -1109,67 +1143,197 @@ class ChnuClient(
         }
 
         /**
-         * 一卡通充值
+         * 一卡通充值(银校转账)
          *
-         * 流程:校验查询密码(RSA) → POST /topUp 获取充值页 → POST /topUp/confirm 确认
-         * @param amount 充值金额(元)
-         * @param queryPassword 查询密码(通常为身份证后六位),充值需先校验
+         * 流程对齐 Python 参考实现(chnu/ecard.py top_up):
+         *  1. 确保卡信息(余额页解析 cardAccNum/eWalletId/epId)
+         *  2. 校验查询密码(RSA),并取回加密后的密码
+         *  3. POST /topUp/confirm 获取确认页(form#pay-form),
+         *     该接口服务器会以 chunked 方式提前断开连接,需用 [readBodyTolerant] 容错读取
+         *  4. 解析 form#pay-form 的 action 与隐藏字段
+         *  5. RSA 加密密码 → POST 到 pay-form action 提交充值
+         *
+         * @param amount 充值金额(元),如 50.00
+         * @param queryPassword 查询密码(通常为身份证后六位)
+         * @param bankCardNum 签约银行卡完整卡号,为空时自动取第一张签约卡
+         * @throws CampusException 未登录/密码错误/无签约卡/服务器内部错误
          */
-        fun topUp(amount: Double, queryPassword: String): PayResult {
-            checkSession()
-            if (queryPassword.isBlank()) throw CampusException("请输入密码")
-            // 先校验查询密码(与生活缴费同一套 RSA + checkpaypwd)
-            verifyPayPassword(queryPassword)
+        /**
+         * 获取充值页面信息,动态提取签约银行卡 ID / 银行 logo / 钱包名称。
+         * 对齐 Python ecard.py get_topup_page。
+         * 之前硬编码 bankId="25"/logoFileName="",对非默认银行卡用户会导致充值失败。
+         */
+        /**
+         * 获取充值页面信息,解析签约银行卡列表(含完整卡号)及钱包名称。
+         * 对齐 Python ecard.py get_topup_page:签约卡来自充值页的
+         * <label id="bankCard-{id}">…<input type="radio" name="inlineRadioOptions" value="完整卡号">…</label>。
+         * 注意:完整卡号必须从充值页解析;/bankCard 页通常只给脱敏号,直接用于充值会失败。
+         */
+        private fun getTopupPage(): TopupPageInfo {
             if (cardInfo["cardAccNum"].isNullOrEmpty()) getBalance()
-            val cardAccNum = cardInfo["cardAccNum"] ?: "35719"
-            val eWalletId = cardInfo["eWalletId"] ?: "1"
-            val epId = cardInfo["epId"] ?: "1"
-            val amountStr = "%.2f".format(amount)
-            // Step 1: 获取充值页面
-            val form1 = FormBody.Builder()
-                .add("cardAccNum", cardAccNum)
-                .add("eWalletId", eWalletId)
-                .add("epId", epId)
+            val form = FormBody.Builder()
+                .add("cardAccNum", cardInfo["cardAccNum"] ?: "")
+                .add("eWalletId", cardInfo["eWalletId"] ?: "")
+                .add("epId", cardInfo["epId"] ?: "")
                 .build()
-            val req1 = Request.Builder().url("$baseUrl/topUp").post(form1)
+            val req = Request.Builder().url("$baseUrl/topUp").post(form)
                 .header("User-Agent", ChnuConfig.UA)
                 .header("Referer", "$baseUrl/")
                 .build()
-            val formFields = mutableMapOf<String, String>()
-            var amountField = "inputFee"
-            client.newCall(req1).execute().use { resp ->
+            client.newCall(req).execute().use { resp ->
                 val html = resp.body?.string() ?: ""
-                // 解析所有 input 字段
-                Regex("""<input[^>]*>""").findAll(html).forEach { tag ->
+                // 钱包名称(recharge-box)
+                val walletName = Regex("""<div[^>]*class="recharge-box"[^>]*>([\s\S]*?)</div>""")
+                    .find(html)?.groupValues?.get(1)?.let { stripTags(it).trim() } ?: ""
+                // 签约银行卡列表:遍历 <label id="bankCard-{id}">…</label>,
+                // 内部含 radio(input value=完整卡号)与 <i/img logofilename=…>
+                val cards = mutableListOf<BankCard>()
+                var firstLogo = ""
+                val labelRegex = Regex("""id="bankCard-(\d+)"[^>]*>([\s\S]*?)</label>""")
+                val fullRegex = Regex("""value="(\d{11,})"""")
+                val logoRegex = Regex("""logofilename="([^"]+)"""")
+                labelRegex.findAll(html).forEach { m ->
+                    val id = m.groupValues[1]
+                    val inner = m.groupValues[2]
+                    val full = fullRegex.find(inner)?.groupValues?.get(1) ?: return@forEach
+                    val short = stripTags(inner).trim()
+                    val logo = logoRegex.find(inner)?.groupValues?.get(1) ?: ""
+                    if (firstLogo.isEmpty()) firstLogo = logo
+                    cards.add(BankCard(id, "", "", short, full, "", logo))
+                }
+                val bankId = cards.firstOrNull()?.cardId ?: "25"
+                // 提取所有隐藏表单字段(对齐 Python _extract_card_info),后续提交 /topUp/confirm 时必须携带
+                val formFields = mutableMapOf<String, String>()
+                Regex("""<input[^>]*type="hidden"[^>]*>""").findAll(html).forEach { tag ->
                     val name = Regex("""name="([^"]+)"""").find(tag.value)?.groupValues?.get(1)
                         ?: Regex("""id="([^"]+)"""").find(tag.value)?.groupValues?.get(1)
                     val value = Regex("""value="([^"]*)"""").find(tag.value)?.groupValues?.get(1) ?: ""
                     if (name != null) formFields[name] = value
-                    // 识别金额输入框
-                    if (name != null && listOf("money", "amount", "fee", "totalfee", "inputfee")
-                            .any { it in name.lowercase() }) {
-                        amountField = name
-                    }
                 }
+                return TopupPageInfo(bankId, firstLogo, walletName, cards, formFields)
             }
-            // Step 2: 提交充值
-            val form2 = FormBody.Builder()
-                .add(amountField, (amount * 100).toInt().toString())
-                .add("cardAccNum", cardAccNum)
-                .add("eWalletId", eWalletId)
-                .add("epId", epId)
-                .also { builder ->
-                    formFields.forEach { (k, v) -> if (k != amountField) builder.add(k, v) }
+        }
+
+        /**
+         * 获取充值可用的签约银行卡列表(含完整卡号),供 UI 选卡步骤使用。
+         * 对齐 Python ecard.py top_up 的"先展示签约卡让用户选择"流程。
+         */
+        fun getTopupBankCards(): List<BankCard> {
+            checkSession()
+            if (cardInfo["cardAccNum"].isNullOrEmpty()) getBalance()
+            return getTopupPage().bankCards
+        }
+
+        fun topUp(amount: Double, queryPassword: String, bankCardNum: String = ""): PayResult {
+            checkSession()
+            if (queryPassword.isBlank()) throw CampusException("请输入密码")
+            val amountStr = "%.2f".format(amount)
+            // 确保卡信息(余额页解析 cardAccNum/eWalletId/epId)
+            if (cardInfo["cardAccNum"].isNullOrEmpty()) getBalance()
+            val cardAccNum = cardInfo["cardAccNum"] ?: "35719"
+            val eWalletId = cardInfo["eWalletId"] ?: "1"
+            val epId = cardInfo["epId"] ?: "1"
+
+            // Step 1: 校验查询密码(RSA),并取回加密后的密码(后续提交复用,避免重复取公钥)
+            val encryptedPwd = verifyPayPassword(queryPassword)
+
+            // 获取充值页面信息(含签约银行卡列表)
+            val topupPage = getTopupPage()
+            // 确定签约银行卡:优先使用 UI 选中的卡号,否则取充值页解析到的第一张可用卡
+            val bankNum = if (bankCardNum.isNotEmpty()) bankCardNum
+            else topupPage.bankCards.firstOrNull { it.cardNumberFull.length > 10 }?.cardNumberFull
+                ?: topupPage.bankCards.firstOrNull { it.cardNumberFull.isNotEmpty() }?.cardNumberFull
+                ?: ""
+            if (bankNum.isEmpty()) {
+                throw CampusException("没有可用的签约银行卡,无法进行银校转账")
+            }
+            // 选中卡对应的 bankId / logo(不带正确 bankId 会导致充值失败)
+            val selCard = topupPage.bankCards.firstOrNull { it.cardNumberFull == bankNum }
+            val usedBankId = selCard?.cardId ?: topupPage.bankId
+            val usedLogo = selCard?.logoFileName ?: topupPage.logoFileName
+            // Step 3: 构建充值步骤数据并 POST /topUp/confirm
+            //    关键:必须携带 /topUp 页面的隐藏表单字段,否则服务端返回内部错误页("服务不可用")
+            val step1 = mutableMapOf(
+                "epId" to epId,
+                "cardAccNum" to cardAccNum,
+                "eWalletId" to eWalletId,
+                "eWalletName" to topupPage.walletName,
+                "bankCardNum" to bankNum,
+                "bankCardNumWithAsterisk" to "**${bankNum.takeLast(4)}",
+                "payMode" to "1",
+                "bankId" to usedBankId,
+                "logoFileName" to usedLogo,
+                "payChannelId" to ""
+            )
+            // 合并 /topUp 页面表单隐藏字段(服务端要求)
+            topupPage.formFields.forEach { (k, v) -> if (k !in step1) step1[k] = v }
+            try {
+                val limitReq = Request.Builder().url("$baseUrl/public/queryContinueTopUpMoney").post(
+                    FormBody.Builder()
+                        .add("epId", epId)
+                        .add("cardAccNum", cardAccNum)
+                        .add("eWalletId", eWalletId)
+                        .build()
+                ).header("User-Agent", ChnuConfig.UA)
+                    .header("Referer", "$baseUrl/")
+                    .build()
+                client.newCall(limitReq).execute().use { resp ->
+                    val json = parseJsonObject(readBodyTolerant(resp))
+                    val map = json?.optJSONObject("retMap")
+                    map?.optString("dayLimit")?.takeIf { it.isNotEmpty() }?.let { step1["dayLimit"] = it }
+                    map?.optString("oneLimit")?.takeIf { it.isNotEmpty() }?.let { step1["oneLimit"] = it }
+                    map?.optString("continueTopUpMoney")?.takeIf { it.isNotEmpty() }
+                        ?.let { step1["continueTopUpMoney"] = it }
                 }
-                .build()
-            val req2 = Request.Builder().url("$baseUrl/topUp/confirm").post(form2)
-                .header("User-Agent", ChnuConfig.UA)
+            } catch (_: Exception) { /* 限额信息可选 */ }
+
+            // Step 3: POST /topUp/confirm 获取确认页(该接口会提前断开 chunked 连接)
+            val confirmReq = Request.Builder().url("$baseUrl/topUp/confirm").post(
+                FormBody.Builder().apply { step1.forEach { (k, v) -> add(k, v) } }.build()
+            ).header("User-Agent", ChnuConfig.UA)
                 .header("Referer", "$baseUrl/topUp")
                 .build()
-            client.newCall(req2).execute().use { resp ->
-                val html = resp.body?.string() ?: ""
-                return parsePayResult(html, amountStr)
+            val confirmHtml = client.newCall(confirmReq).execute().use { readBodyTolerant(it) }
+            if (confirmHtml.isEmpty()) {
+                return PayResult(false, "获取充值确认页面失败(服务器无响应)", amountStr)
             }
+            // 检测服务器内部错误:优先提取具体错误文案
+            if (confirmHtml.contains("java.lang") || confirmHtml.contains("NullPointerException")
+                || confirmHtml.contains("NioEndpoint") || confirmHtml.contains("SocketProcessor")) {
+                val errMsg = extractPageErrorMessage(confirmHtml)
+                    ?: "一卡通充值服务暂时不可用(服务器内部错误),请稍后重试"
+                return PayResult(false, errMsg, amountStr)
+            }
+            // 检测业务错误(如"银行服务时间为00:00~20:00")
+            val bizError = extractPageErrorMessage(confirmHtml)
+            if (bizError != null && (bizError.contains("失败") || bizError.contains("错误"))) {
+                return PayResult(false, bizError, amountStr)
+            }
+            // 解析 pay-form 的 action 与隐藏字段
+            val (formAction, hiddenFields) = parsePayForm(confirmHtml)
+            // 确定提交地址:优先使用 pay-form 的 action,解析失败则回退到 /topUp/quickPay
+            val submitUrl = if (formAction.isNotEmpty()) resolveSubmitUrl(formAction)
+                else resolveSubmitUrl("$baseUrl/topUp/quickPay")
+
+            // 提交充值数据
+            val postData = mutableMapOf<String, String>()
+            if (hiddenFields.isNotEmpty()) postData.putAll(hiddenFields)
+            postData["cardAccNum"] = cardAccNum
+            postData["eWalletId"] = eWalletId
+            postData["epId"] = epId
+            postData["bankId"] = usedBankId
+            postData["bankCardNum"] = bankNum
+            postData["payMode"] = "1"
+            postData["money"] = amountStr
+            postData["payPwd"] = encryptedPwd
+
+            val submitReq = Request.Builder().url(submitUrl).post(
+                FormBody.Builder().apply { postData.forEach { (k, v) -> add(k, v) } }.build()
+            ).header("User-Agent", ChnuConfig.UA)
+                .header("Referer", "$baseUrl/topUp/confirm")
+                .build()
+            val finalHtml = client.newCall(submitReq).execute().use { readBodyTolerant(it) }
+            return parsePayResult(finalHtml, amountStr)
         }
 
         /**
@@ -1235,9 +1399,49 @@ class ChnuClient(
         }
 
         /**
-         * 生活缴费(电费等)
+         * 获取缴费表单字段(类型编号/防重放 token/限额/项目名称等)。
+         * 对齐 Python ecard.py get_pay_fee_page + get_pay_fee_form。
+         * 这些字段缺失会导致服务端拒绝缴费提交。
+         */
+        private fun getPayFeeForm(itemNum: String): PayFeeForm {
+            val form = FormBody.Builder().add("itemNum", itemNum).build()
+            val req = Request.Builder().url("$baseUrl/payFee/showItemListPayPage").post(form)
+                .header("User-Agent", ChnuConfig.UA)
+                .header("Referer", "$baseUrl/")
+                .build()
+            client.newCall(req).execute().use { resp ->
+                val html = resp.body?.string() ?: ""
+                // 提取隐藏字段
+                val fields = mutableMapOf<String, String>()
+                Regex("""<input[^>]*type="hidden"[^>]*>""").findAll(html).forEach { tag ->
+                    val name = Regex("""name="([^"]+)"""").find(tag.value)?.groupValues?.get(1)
+                        ?: Regex("""id="([^"]+)"""").find(tag.value)?.groupValues?.get(1)
+                    val value = Regex("""value="([^"]*)"""").find(tag.value)?.groupValues?.get(1) ?: ""
+                    if (name != null) fields[name] = value
+                }
+                // 项目名称(缴费项名称,如"滨湖1-5宿舍照明电费")
+                val knownItemNames = mapOf("2" to "常工电控缴费", "3" to "滨湖1-5宿舍照明电费")
+                var itemName = knownItemNames[itemNum] ?: ""
+                val nameMatch = Regex("""(常工电控缴费|滨湖1-5宿舍照明电费|[^<]{1,20}(?:电费|电控|照明)[^<]{0,20})""").find(html)
+                if (nameMatch != null) itemName = nameMatch.groupValues[1].trim()
+                return PayFeeForm(
+                    typeNum = fields["typeNum"] ?: "",
+                    token = fields["token"] ?: "",
+                    limitMoney = fields["limitMoney"] ?: "",
+                    limitMode = fields["limitMode"] ?: "",
+                    itemName = itemName
+                )
+            }
+        }
+
+        /**
+         * 生活缴费(宿舍电费等)。
          *
-         * 流程:获取RSA公钥 → 验证查询密码 → 提交缴费
+         * 流程对齐 Python ecard.py pay_fee:
+         *  1. 校验查询密码(RSA + checkpaypwd),复用加密后的密码
+         *  2. 获取缴费表单字段(类型/ token/ 限额/ 项目名称)
+         *  3. 限额校验后提交缴费(含 typeNum/token/limitMoney 等必需字段)
+         *
          * @param queryPassword 查询密码(通常为身份证后六位)
          */
         fun payFee(
@@ -1250,17 +1454,31 @@ class ChnuClient(
         ): PayResult {
             checkSession()
             val amountStr = "%.2f".format(amount)
-            // Step 1: 校验查询密码(RSA + checkpaypwd)
-            verifyPayPassword(queryPassword)
-            // Step 2: 提交缴费
-            val feeInCents = (amount * 100).toInt().toString()
+            // Step 1: 校验查询密码(RSA + checkpaypwd),并取回加密后的密码复用
+            val encryptedPwd = verifyPayPassword(queryPassword)
+            // Step 2: 获取缴费表单字段(类型/ token/ 限额等,缺失会导致提交被服务端拒绝)
+            val feeForm = getPayFeeForm(itemNum)
+            // 限额校验(对齐 Python pay_fee)
+            val limitMoney = feeForm.limitMoney.toDoubleOrNull() ?: 0.0
+            if (limitMoney > 0 && amount > limitMoney) {
+                return PayResult(false, "缴费金额超过限额(${feeForm.limitMoney}元)", amountStr)
+            }
+            // Step 3: 提交缴费(字段名对齐 Python ecard.py pay_fee)
             val form = FormBody.Builder()
-                .add("itemNum", itemNum)
+                .add("itemMoney", amountStr)
+                .add("inputPassword", encryptedPwd)
                 .add("areano", areaNo)
                 .add("buildingno", buildingNo)
                 .add("roomno", roomNo)
-                .add("inputFee", feeInCents)
-                .add("totalFee", feeInCents)
+                .add("itemNum", itemNum)
+                .add("typeNum", feeForm.typeNum)
+                .add("itemName", feeForm.itemName)
+                .add("token", feeForm.token)
+                .add("limitMoney", feeForm.limitMoney)
+                .add("limitMode", feeForm.limitMode)
+                .add("cardAccNum", cardInfo["cardAccNum"] ?: "")
+                .add("eWalletId", cardInfo["eWalletId"] ?: "")
+                .add("epId", cardInfo["epId"] ?: "")
                 .build()
             // 尝试多个提交端点
             val submitPaths = listOf("payFee/payItemlist", "payFee/payFeelist")
@@ -1271,7 +1489,7 @@ class ChnuClient(
                     .build()
                 client.newCall(req).execute().use { resp ->
                     if (resp.code == 200) {
-                        val html = resp.body?.string() ?: ""
+                        val html = readBodyTolerant(resp)
                         return parsePayResult(html, amountStr)
                     }
                 }
@@ -1282,21 +1500,24 @@ class ChnuClient(
         /**
          * 校验查询密码:GET RSA 公钥 → RSA 加密密码 → POST /publiccombo/checkpaypwd。
          * 充值与生活缴费共用。
+         * @return RSA 加密后的密码(Base64),供充值提交时复用,避免重复获取公钥
          * @throws CampusException 密码错误或获取公钥失败
          */
-        private fun verifyPayPassword(queryPassword: String) {
-            val reqKey = Request.Builder().url("$baseUrl/publiccombo/keyPair")
+        private fun verifyPayPassword(queryPassword: String): String {
+            // RSA 公钥接口必须用 POST(GET 返回 405)
+            val reqKey = Request.Builder().url("$baseUrl/publiccombo/keyPair").post(FormBody.Builder().build())
                 .header("User-Agent", ChnuConfig.UA)
                 .header("Referer", "$baseUrl/")
+                .header("X-Requested-With", "XMLHttpRequest")
                 .build()
             var modulus = ""
             var exponent = ""
             client.newCall(reqKey).execute().use { resp ->
-                val text = resp.body?.string() ?: ""
-                val json = parseJsonObject(text) ?: throw CampusException("获取RSA公钥失败")
-                val keyMap = json.optJSONObject("publicKeyMap")
-                modulus = keyMap?.optString("modulus") ?: ""
-                exponent = keyMap?.optString("exponent") ?: ""
+                val text = readBodyTolerant(resp)
+                val json = parseJsonObject(text) ?: throw CampusException("获取RSA公钥失败: $text")
+                val keyMap = json.optJSONObject("publicKeyMap") ?: json
+                modulus = keyMap.optString("modulus", "")
+                exponent = keyMap.optString("exponent", "")
             }
             if (modulus.isEmpty()) throw CampusException("RSA公钥为空")
             val encryptedPwd = rsaEncrypt(queryPassword, modulus, exponent)
@@ -1307,12 +1528,13 @@ class ChnuClient(
                 .header("X-Requested-With", "XMLHttpRequest")
                 .build()
             client.newCall(reqPwd).execute().use { resp ->
-                val text = resp.body?.string() ?: ""
+                val text = readBodyTolerant(resp)
                 val json = parseJsonObject(text)
                 if (json?.optString("ajaxState") == "1") {
                     throw CampusException("密码错误")
                 }
             }
+            return encryptedPwd
         }
 
         /** 解析楼栋/房间列表 JSON(返回 dormList/buildingList/roomList) */
@@ -1330,14 +1552,32 @@ class ChnuClient(
             return result
         }
 
-        /** 解析充值/缴费结果 HTML */
+        /** 解析充值/缴费结果(兼容 JSON ajaxState 与 HTML 文本,对齐 Python _parse_result) */
         private fun parsePayResult(html: String, amount: String): PayResult {
-            // 查找成功/失败提示
-            val successKeywords = listOf("成功", "充值成功", "缴费成功", "提交成功")
-            val failKeywords = listOf("失败", "余额不足", "错误", "异常")
+            val trimmed = html.trim()
+            // 优先按 JSON 解析(提交端点可能直接返回 {"ajaxState":"2","msg":"..."})
+            if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+                val json = parseJsonObject(trimmed)
+                if (json != null) {
+                    val state = json.optString("ajaxState", "")
+                    val msg = json.optString("msg", "")
+                    return when (state) {
+                        "2", "3" -> PayResult(true, msg.ifEmpty { "操作成功" }, amount)
+                        "1" -> PayResult(false, msg.ifEmpty { "操作失败" }, amount)
+                        else -> if (msg.isNotEmpty()) PayResult(false, msg, amount)
+                        else parsePayResultHtml(trimmed, amount)
+                    }
+                }
+            }
+            return parsePayResultHtml(trimmed, amount)
+        }
+
+        /** 从 HTML 文本解析充值/缴费结果 */
+        private fun parsePayResultHtml(html: String, amount: String): PayResult {
             val plainText = stripTags(html)
+            val successKeywords = listOf("成功", "充值成功", "缴费成功", "提交成功", "success")
+            val failKeywords = listOf("失败", "余额不足", "错误", "异常", "密码错误")
             val isSuccess = successKeywords.any { it in plainText } && !failKeywords.any { it in plainText }
-            // 提取提示语
             val msg = Regex("""alert\(["']([^"']+)["']""").find(html)?.groupValues?.get(1)
                 ?: Regex("""(成功[^<。]*)""").find(plainText)?.groupValues?.get(1)
                 ?: Regex("""(失败[^<。]*)""").find(plainText)?.groupValues?.get(1)
@@ -1345,11 +1585,88 @@ class ChnuClient(
             return PayResult(isSuccess, msg, amount)
         }
 
+        /**
+         * 容错读取响应体。一卡通部分接口(如 /topUp/confirm)会以 chunked 方式提前
+         * 断开连接,OkHttp 在读取完整分块流时会抛出 IOException(message 常为 null)。
+         * 这里改用流式读取,捕获截断异常后保留已读取的部分内容
+         * (对齐 Python ecard.py 的 _request_chunked)。
+         */
+        private fun readBodyTolerant(resp: Response): String {
+            val body = resp.body ?: return ""
+            val source = body.source()
+            val out = StringBuilder()
+            val buf = okio.Buffer()
+            try {
+                while (true) {
+                    val n = source.read(buf, 8192L)
+                    if (n == -1L) break
+                    if (n > 0L) out.append(buf.readString(Charsets.UTF_8))
+                }
+            } catch (e: IOException) {
+                // 截断/分块连接提前关闭:保留已读取的部分数据,继续解析
+            }
+            return out.toString()
+        }
+
+        /** 从确认页 HTML 解析 pay-form 的 action 与隐藏字段 */
+        private fun parsePayForm(html: String): Pair<String, Map<String, String>> {
+            var action = ""
+            val hidden = mutableMapOf<String, String>()
+            var found = false
+            Regex("""<form\b([\s\S]*?)</form>""").findAll(html).forEach { m ->
+                val formTag = m.groupValues[1]
+                val formFull = m.value
+                val isPayForm = formTag.contains("""id="pay-form"""") || formTag.contains("""id='pay-form'""")
+                if (isPayForm || !found) {
+                    val act = Regex("""action="([^"]*)"""").find(formTag)?.groupValues?.get(1) ?: ""
+                    val fields = mutableMapOf<String, String>()
+                    Regex("""<input[^>]*type="hidden"[^>]*>""").findAll(formFull).forEach { tag ->
+                        val name = Regex("""name="([^"]+)"""").find(tag.value)?.groupValues?.get(1)
+                            ?: Regex("""id="([^"]+)"""").find(tag.value)?.groupValues?.get(1)
+                        val value = Regex("""value="([^"]*)"""").find(tag.value)?.groupValues?.get(1) ?: ""
+                        if (name != null) fields[name] = value
+                    }
+                    if (isPayForm) { action = act; hidden.putAll(fields); found = true }
+                    else if (!found) { action = act; hidden.putAll(fields) }
+                }
+            }
+            return action to hidden
+        }
+
+        /** 从错误 HTML 页面中提取可读错误消息 */
+        private fun extractPageErrorMessage(html: String): String? {
+            // 1. JS alert 弹窗
+            Regex("""alert\(["']([^"']{2,})["']""").find(html)?.groupValues?.get(1)?.let { return it }
+            // 2. 页面醒目文字(如"充值失败，原因:银行服务时间为00:00~20:00")
+            Regex("""(?:充值|缴费)?失败[，。,.\s]*原因[：:]\s*([^<。]{5,})""").find(html)
+                ?.groupValues?.get(1)?.let { return "充值失败: $it" }
+            // 3. <div class="error"> 等错误提示容器
+            Regex("""class="[^"]*error[^"]*"[^>]*>([^<]{3,})<""").find(html)
+                ?.groupValues?.get(1)?.let { return it.trim() }
+            // 4. 包含"失败"或"错误"的醒目文本
+            Regex("""(充值失败|缴费失败|操作失败|密码错误|余额不足|服务时间[^<。]{0,30})""").find(html)
+                ?.groupValues?.get(1)?.let { return it }
+            return null
+        }
+
+        /** 将确认页 pay-form 的 action 解析为绝对 URL */
+        private fun resolveSubmitUrl(action: String): String {
+            if (action.startsWith("http://") || action.startsWith("https://")) return action
+            if (action.isEmpty()) return "$baseUrl/topUp/confirm"
+            if (action.startsWith("/")) {
+                val base = baseUrl.toHttpUrl()
+                val port = if (base.port != 80 && base.port != 443 && base.port > 0) ":${base.port}" else ""
+                return "${base.scheme}://${base.host}$port$action"
+            }
+            return "$baseUrl/$action"
+        }
+
         /** RSA 加密(一卡通查询密码) */
-        private fun rsaEncrypt(plain: String, modulusB64: String, exponentB64: String): String {
+        private fun rsaEncrypt(plain: String, modulusHex: String, exponentHex: String): String {
             return try {
-                val modulus = java.math.BigInteger(1, Base64.decode(modulusB64, Base64.DEFAULT))
-                val exponent = java.math.BigInteger(1, Base64.decode(exponentB64, Base64.DEFAULT))
+                // 一卡通系统 modulus/exponent 为十六进制字符串(非 Base64)
+                val modulus = java.math.BigInteger(1, modulusHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray())
+                val exponent = java.math.BigInteger(1, exponentHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray())
                 val keySpec = java.security.spec.RSAPublicKeySpec(modulus, exponent)
                 val keyFactory = java.security.KeyFactory.getInstance("RSA")
                 val publicKey = keyFactory.generatePublic(keySpec)
@@ -1577,5 +1894,143 @@ class ChnuClient(
             return "${base.scheme}://${base.host}${if (base.port != 80 && base.port != 443 && base.port > 0) ":${base.port}" else ""}$url"
         }
         return "$baseUrl/$url"
+    }
+
+    // ════════════════════════════════════════════════
+    //  淮师心声(Hsxs)客户端 — 失物招领 & 满意度调查
+    //  CAS SSO → 用 service ticket 登录 → cookie 会话
+    //  API: https://hsxs.chnu.edu.cn/api/
+    // ════════════════════════════════════════════════
+    inner class HsxsClient {
+        private val baseUrl = ChnuConfig.HSXS_API_BASE
+        private val webUrl = ChnuConfig.HSXS_BASE_URL
+
+        @Volatile var loggedIn: Boolean = false
+            private set
+        @Volatile var userName: String = ""
+            private set
+        private var authToken: String = ""
+
+        fun login() {
+            // CAS service ticket → validateLogin (GET) → token → getUserInfo
+            val service = "$webUrl/web"
+            val (ticket, _) = getServiceTicket(service)
+            if (ticket.isNullOrEmpty()) throw CampusException("淮师心声登录失败: 无法获取 CAS ticket")
+            // GET user/validateLogin?ticket=xxx&service=xxx
+            val vlResp = apiGet("user/validateLogin", mapOf("ticket" to "$ticket", "service" to service))
+            val data = vlResp.optJSONObject("data")
+            authToken = data?.optString("token", "") ?: ""
+            if (authToken.isEmpty()) throw CampusException("淮师心声登录失败: 未获取到 token")
+            userName = data?.optString("user_name", "") ?: ""
+            // GET user/getUserInfo (with token header)
+            val info = apiGetWithToken("user/getUserInfo")
+            userName = info.optJSONObject("data")?.optString("user_name", userName) ?: userName
+                .ifEmpty { info.optString("user_name", userName) }
+            loggedIn = true
+        }
+
+        private fun checkSession() {
+            if (!loggedIn) throw CampusException("淮师心声未登录,请先调用 login()")
+        }
+
+        // ── 失物招领 ──
+        // GET = Wt(getData), POST = ho(postData) — 从 JS 逆向确认
+
+        /** 获取失物招领列表 (GET + token) */
+        fun getLostList(page: Int = 1, pageSize: Int = 20, type: String = ""): JSONObject {
+            checkSession()
+            val params = mutableMapOf("page" to page.toString(), "rows" to pageSize.toString())
+            if (type.isNotEmpty()) params["type"] = type
+            return apiGetWithToken("lost/get_list", params)
+        }
+
+        /** 获取失物招领详情 (GET + token) */
+        fun getLostDetail(id: String): JSONObject {
+            checkSession()
+            return apiGetWithToken("lost/get_detail", mutableMapOf("id" to id))
+        }
+
+        /** 发布失物招领 (POST + token) */
+        fun publishLost(body: Map<String, String>): JSONObject {
+            checkSession()
+            return apiPostWithToken("lost/add", body)
+        }
+
+        /** 获取问卷列表 (GET + token) */
+        fun getQuestionList(page: Int = 1, pageSize: Int = 20): JSONObject {
+            checkSession()
+            return apiGetWithToken("question/get_list", mutableMapOf("page" to page.toString(), "rows" to pageSize.toString()))
+        }
+
+        /** 获取问卷详情 (GET + token) */
+        fun getQuestionDetail(id: String): JSONObject {
+            checkSession()
+            return apiGetWithToken("question/get_detail", mutableMapOf("id" to id))
+        }
+
+        /** 提交问卷答案 (POST + token) */
+        fun submitAnswer(questionId: String, answers: JSONObject): JSONObject {
+            checkSession()
+            return apiPostWithToken("question/answer", mutableMapOf("id" to questionId, "answerJson" to answers.toString()))
+        }
+
+        /** 查看已答结果 (GET + token) */
+        fun getMyAnswer(questionId: String): JSONObject {
+            checkSession()
+            return apiGetWithToken("question/get_user_answer", mutableMapOf("id" to questionId))
+        }
+
+        // ── 基础HTTP方法 ──
+
+        /** GET + token header */
+        private fun apiGetWithToken(path: String, params: Map<String, String> = emptyMap()): JSONObject {
+            val url = buildQueryUrl("$baseUrl/$path", params)
+            val req = Request.Builder().url(url).get()
+                .header("User-Agent", ChnuConfig.UA)
+                .header("token", authToken)
+                .header("Referer", "$webUrl/web/")
+                .build()
+            client.newCall(req).execute().use { resp ->
+                val text = resp.body?.string() ?: "{}"
+                return parseJsonObject(text) ?: JSONObject()
+            }
+        }
+
+        /** POST + token header */
+        private fun apiPostWithToken(path: String, params: Map<String, String>): JSONObject {
+            val form = FormBody.Builder()
+            params.forEach { (k, v) -> form.add(k, v) }
+            val req = Request.Builder().url("$baseUrl/$path").post(form.build())
+                .header("User-Agent", ChnuConfig.UA)
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .header("token", authToken)
+                .header("Referer", "$webUrl/web/")
+                .build()
+            client.newCall(req).execute().use { resp ->
+                val text = resp.body?.string() ?: "{}"
+                return parseJsonObject(text) ?: JSONObject()
+            }
+        }
+
+        private fun buildQueryUrl(base: String, params: Map<String, String>): String {
+            if (params.isEmpty()) return base
+            val sb = StringBuilder(base)
+            sb.append("?")
+            params.entries.joinTo(sb, "&") { "${it.key}=${java.net.URLEncoder.encode(it.value, "UTF-8")}" }
+            return sb.toString()
+        }
+
+        /** No-token GET (for validateLogin before token is set) */
+        private fun apiGet(path: String, params: Map<String, String> = emptyMap()): JSONObject {
+            val url = buildQueryUrl("$baseUrl/$path", params)
+            val req = Request.Builder().url(url)
+                .header("User-Agent", ChnuConfig.UA)
+                .header("Referer", "$webUrl/web/")
+                .build()
+            client.newCall(req).execute().use { resp ->
+                val text = resp.body?.string() ?: "{}"
+                return parseJsonObject(text) ?: JSONObject()
+            }
+        }
     }
 }

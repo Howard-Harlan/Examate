@@ -19,6 +19,7 @@ import go.examate.hyp.campus.model.StudentInfo
 import go.examate.hyp.campus.model.XkCredits
 import go.examate.hyp.campus.model.XkStatus
 import go.examate.hyp.config.PrefsManager
+import org.json.JSONObject
 
 /**
  * 校园服务底层架构:统一管理 [ChnuClient] 的创建、登录与生命周期。
@@ -232,8 +233,18 @@ class CampusRepository private constructor() {
     ): List<BillRecord> =
         withEcard(prefs) { it.getBillRecords(startDate, endDate, recordType) }
 
-    suspend fun topUp(prefs: PrefsManager, amount: Double, queryPassword: String): PayResult =
-        withEcard(prefs) { it.topUp(amount, queryPassword) }
+    /** 充值。bankCardNum 为充值页解析到的签约卡完整卡号(UI 选卡后传入)。 */
+    suspend fun topUp(
+        prefs: PrefsManager,
+        amount: Double,
+        queryPassword: String,
+        bankCardNum: String = ""
+    ): PayResult =
+        withEcard(prefs) { it.topUp(amount, queryPassword, bankCardNum) }
+
+    /** 获取充值可用的签约银行卡列表(供 UI 选卡步骤使用)。 */
+    suspend fun getTopupBankCards(prefs: PrefsManager): List<BankCard> =
+        withEcard(prefs) { it.getTopupBankCards() }
 
     suspend fun getPayAreas(prefs: PrefsManager, itemNum: String = "3"): List<PayArea> =
         withEcard(prefs) { it.getPayAreas(itemNum) }
@@ -289,6 +300,60 @@ class CampusRepository private constructor() {
         val c = scLogin(prefs)
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             block(c.sc)
+        }
+    }
+
+    // ════════════════════════════════════════════════
+    //  淮师心声(Hsxs) — 失物招领 & 满意度调查
+    // ════════════════════════════════════════════════
+
+    suspend fun hsxsLogin(prefs: PrefsManager): ChnuClient =
+        ensureLoggedIn(prefs).also {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                if (!it.hsxs.loggedIn) it.hsxs.login()
+            }
+        }
+
+    suspend fun getLostList(prefs: PrefsManager, page: Int = 1, type: String = ""): JSONObject {
+        return withHsxs(prefs) { it.getLostList(page, 20, type) }
+    }
+
+    suspend fun getLostDetail(prefs: PrefsManager, id: String): JSONObject {
+        return withHsxs(prefs) { it.getLostDetail(id) }
+    }
+
+    suspend fun publishLost(prefs: PrefsManager, title: String, type: String,
+                            category: String, description: String, location: String,
+                            contactName: String, contactPhone: String, imageBase64: String = ""): JSONObject {
+        val body = mutableMapOf(
+            "title" to title, "type" to type, "category" to category,
+            "description" to description, "location" to location,
+            "contactName" to contactName, "contactPhone" to contactPhone
+        )
+        if (imageBase64.isNotEmpty()) body["image"] = imageBase64
+        return withHsxs(prefs) { it.publishLost(body) }
+    }
+
+    suspend fun getQuestionList(prefs: PrefsManager, page: Int = 1): JSONObject {
+        return withHsxs(prefs) { it.getQuestionList(page) }
+    }
+
+    suspend fun getQuestionDetail(prefs: PrefsManager, id: String): JSONObject {
+        return withHsxs(prefs) { it.getQuestionDetail(id) }
+    }
+
+    suspend fun submitAnswer(prefs: PrefsManager, questionId: String, answers: JSONObject): JSONObject {
+        return withHsxs(prefs) { it.submitAnswer(questionId, answers) }
+    }
+
+    suspend fun getMyAnswer(prefs: PrefsManager, questionId: String): JSONObject {
+        return withHsxs(prefs) { it.getMyAnswer(questionId) }
+    }
+
+    private suspend fun <T> withHsxs(prefs: PrefsManager, block: (ChnuClient.HsxsClient) -> T): T {
+        val c = hsxsLogin(prefs)
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            block(c.hsxs)
         }
     }
 

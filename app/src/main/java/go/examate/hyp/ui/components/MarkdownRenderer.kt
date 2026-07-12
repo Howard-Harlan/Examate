@@ -7,6 +7,8 @@ import android.content.Intent
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.TextView
+import java.util.concurrent.atomic.AtomicInteger
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -59,18 +61,31 @@ fun MarkdownText(
     textColor: Color = TextPrimary,
     fontSize: Int = 14
 ) {
-    val blocks = remember(markdown) { parseBlocks(markdown) }
+    // 外层 try/catch(放在 remember 内部,因为 Compose 不允许直接 try/catch 包 Composable 调用):
+    // 万一 parseBlocks 抛异常,整条消息回退为纯文本,不让一个渲染 bug 拖垮整个 Activity(闪退)。
+    val safe = remember(markdown) {
+        try { parseBlocks(markdown) } catch (_: Exception) { emptyList<MdBlock>() }
+    }
+    if (safe.isEmpty() && markdown.isNotBlank()) {
+        // 解析失败:回退为纯文本(不加任何渲染)
+        FallbackFormula(markdown)
+        return
+    }
+    val blocks = safe
+    // 公式过多时整条消息改用文本回退,避免几十个 WebView 同时存活导致崩溃。
+    val tooManyFormulas = remember(blocks) { countFormulas(blocks) > MAX_FORMULAS_PER_MESSAGE }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         blocks.forEach { block ->
             when (block) {
                 is MdBlock.Heading -> HeadingBlock(block, textColor, fontSize)
-                is MdBlock.CodeBlock -> RenderedCodeBlock(block)
+                is MdBlock.CodeBlock -> RenderedCodeBlock(block, forceText = tooManyFormulas)
                 is MdBlock.MathBlock -> RenderBox(
                     title = "LaTeX",
                     raw = block.latex,
                     exportText = block.latex
                 ) {
-                    MathWebView(block.latex, displayMode = true, modifier = Modifier.fillMaxWidth().height(88.dp))
+                    if (tooManyFormulas) FallbackFormula(block.latex)
+                    else MathWebView(block.latex, displayMode = true, modifier = Modifier.fillMaxWidth().height(88.dp))
                 }
                 is MdBlock.ListBlock -> ListBlockView(block, textColor, fontSize)
                 is MdBlock.Quote -> QuoteBlockView(block, textColor, fontSize)
@@ -80,9 +95,55 @@ fun MarkdownText(
                     thickness = 0.5.dp,
                     modifier = Modifier.padding(vertical = 4.dp)
                 )
-                is MdBlock.Paragraph -> ParagraphBlock(block.text, textColor, fontSize)
+                is MdBlock.Paragraph -> ParagraphBlock(block.text, textColor, fontSize, forceText = tooManyFormulas)
             }
         }
+    }
+}
+
+// 单条消息公式数量超过此阈值时,放弃逐个 WebView 渲染(否则会同时存在几十个
+// 完整浏览器实例 -> OOM / 渲染进程崩溃),改为纯文本回退,保证页面不崩。
+private const val MAX_FORMULAS_PER_MESSAGE = 24
+
+// 整个会话同时存在的 WebView(公式/结构式)上限。超出部分直接文本回退。
+private const val MAX_ACTIVE_WEBVIEWS = 8
+private val activeWebViewCount = AtomicInteger(0)
+
+private fun countFormulas(blocks: List<MdBlock>): Int = blocks.sumOf { b ->
+    when (b) {
+        is MdBlock.MathBlock -> 1
+        is MdBlock.Paragraph -> splitInlineContent(b.text).count { it.kind != InlineKind.Text }
+        else -> 0
+    }
+}
+
+private fun createSafeWebView(ctx: Context): WebView? = try {
+    if (activeWebViewCount.get() >= MAX_ACTIVE_WEBVIEWS) null else WebView(ctx)
+} catch (_: Throwable) { null }
+
+private fun makeFallbackView(ctx: Context, text: String): TextView =
+    TextView(ctx).apply {
+        setText(text)
+        setTextColor(android.graphics.Color.parseColor("#1b1f24"))
+        textSize = 13f
+        setTypeface(android.graphics.Typeface.MONOSPACE)
+        val pad = (8 * ctx.resources.displayMetrics.density).toInt()
+        setPadding(pad, pad, pad, pad)
+    }
+
+@Composable
+private fun FallbackFormula(latex: String) {
+    SelectionContainer {
+        Text(
+            text = latex,
+            color = TextPrimary,
+            fontSize = 12.sp,
+            lineHeight = 16.sp,
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+        )
     }
 }
 
@@ -245,7 +306,7 @@ private fun splitTableRow(row: String): List<String> =
     row.trim().trim('|').split("|").map { it.trim() }
 
 @Composable
-private fun ParagraphBlock(text: String, textColor: Color, fontSize: Int) {
+private fun ParagraphBlock(text: String, textColor: Color, fontSize: Int, forceText: Boolean = false) {
     val raw = text.trim()
     val prettyJson = remember(raw) { prettyJsonOrNull(raw) }
     val csv = remember(raw) { parseCsvOrNull(raw) }
@@ -260,10 +321,17 @@ private fun ParagraphBlock(text: String, textColor: Color, fontSize: Int) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 segments.forEach { seg ->
                     when (seg.kind) {
-                        InlineKind.Math -> RenderBox(title = "LaTeX", raw = seg.text, exportText = seg.text) {
-                            MathWebView(seg.text, displayMode = false, modifier = Modifier.fillMaxWidth().height(60.dp))
-                        }
-                        InlineKind.Smiles -> RenderBox(title = "SMILES", raw = seg.text, exportText = seg.text) {
+                        // 行内数学:直接融入文段(无框),用衬线斜体示意数学语义。
+                        // 块级公式 $$...$$ 仍走 RenderBox+MathWebView。
+                        InlineKind.Math -> Text(
+                            text = seg.text,
+                            fontFamily = FontFamily.Serif,
+                            fontStyle = FontStyle.Italic,
+                            color = textColor.copy(0.85f),
+                            fontSize = fontSize.sp,
+                            modifier = Modifier.padding(horizontal = 2.dp)
+                        )
+                        InlineKind.Smiles -> if (forceText) FallbackFormula(seg.text) else RenderBox(title = "SMILES", raw = seg.text, exportText = seg.text) {
                             SmilesWebView(seg.text, modifier = Modifier.fillMaxWidth().height(210.dp))
                         }
                         InlineKind.Text -> if (seg.text.isNotBlank()) {
@@ -284,7 +352,7 @@ private fun ParagraphBlock(text: String, textColor: Color, fontSize: Int) {
 }
 
 @Composable
-private fun RenderedCodeBlock(block: MdBlock.CodeBlock) {
+private fun RenderedCodeBlock(block: MdBlock.CodeBlock, forceText: Boolean = false) {
     val lang = block.language.lowercase()
     when {
         lang in setOf("json", "jsonc") || prettyJsonOrNull(block.code) != null -> {
@@ -299,10 +367,10 @@ private fun RenderedCodeBlock(block: MdBlock.CodeBlock) {
             } ?: GenericCodeBlock(block)
         }
         lang in setOf("smiles", "smi", "mol") -> RenderBox(title = "SMILES", raw = block.code, exportText = block.code) {
-            SmilesWebView(block.code, modifier = Modifier.fillMaxWidth().height(240.dp))
+            if (forceText) FallbackFormula(block.code) else SmilesWebView(block.code, modifier = Modifier.fillMaxWidth().height(240.dp))
         }
         lang in setOf("tex", "latex", "math") -> RenderBox(title = "LaTeX", raw = block.code, exportText = block.code) {
-            MathWebView(block.code, displayMode = true, modifier = Modifier.fillMaxWidth().height(96.dp))
+            if (forceText) FallbackFormula(block.code) else MathWebView(block.code, displayMode = true, modifier = Modifier.fillMaxWidth().height(96.dp))
         }
         else -> GenericCodeBlock(block)
     }
@@ -514,7 +582,8 @@ private fun QuoteBlockView(block: MdBlock.Quote, textColor: Color, fontSize: Int
 
 private fun splitInlineContent(text: String): List<InlineSegment> {
     val segments = mutableListOf<InlineSegment>()
-    val regex = Regex("\\${'$'}smiles\\{([^}]+)}|\\${'$'}([^${'$'}]+)\\${'$'}")
+    // $smiles{...} 内联化学结构式 | $...$ 行内数学(要求无空格,避免误匹配货币)
+    val regex = Regex("\\${'$'}smiles\\{([^}]+)\\}|\\${'$'}([^${'$'}\\s]+)\\${'$'}")
     var lastEnd = 0
     regex.findAll(text).forEach { match ->
         if (match.range.first > lastEnd) {
@@ -564,171 +633,6 @@ private fun renderInline(text: String, baseColor: Color): AnnotatedString = buil
         append(text[i])
         i++
     }
-}
-
-@SuppressLint("SetJavaScriptEnabled")
-@Composable
-private fun MathWebView(latex: String, displayMode: Boolean, modifier: Modifier = Modifier) {
-    val html = remember(latex, displayMode) { buildMathHtml(latex, displayMode) }
-    var contentHeightDp by remember { mutableStateOf(if (displayMode) 88.dp else 60.dp) }
-    AndroidView(
-        factory = { ctx ->
-            WebView(ctx).apply {
-                webViewClient = WebViewClient()
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true
-                settings.loadWithOverviewMode = true
-                settings.useWideViewPort = true
-                setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                addJavascriptInterface(MathHeightBridge { heightPx ->
-                    val density = ctx.resources.displayMetrics.density
-                    val dp = (heightPx / density).toInt()
-                    contentHeightDp = dp.dp
-                }, "MathHeightBridge")
-                loadDataWithBaseURL("https://cdn.bootcdn.net/", html, "text/html", "utf-8", null)
-            }
-        },
-        update = { it.loadDataWithBaseURL("https://cdn.bootcdn.net/", html, "text/html", "utf-8", null) },
-        modifier = modifier.heightIn(min = 40.dp, max = 600.dp).then(
-            Modifier.height(contentHeightDp)
-        )
-    )
-}
-
-private class MathHeightBridge(private val onHeightReady: (Int) -> Unit) {
-    @JavascriptInterface
-    fun postHeight(heightPx: Int) {
-        onHeightReady(heightPx)
-    }
-}
-
-private fun buildMathHtml(latex: String, displayMode: Boolean): String {
-    val encodedLatex = JSONObject.quote(latex)
-    return """
-        <!doctype html>
-        <html>
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/KaTeX/0.17.0/katex.min.css">
-          <script src="https://cdn.bootcdn.net/ajax/libs/KaTeX/0.17.0/katex.min.js"></script>
-          <style>
-            html,body{margin:0;padding:0;background:transparent;color:#1b1f24;font-family:sans-serif;}
-            #formula{padding:8px;overflow-x:auto;font-size:16px;}
-            .error{font-family:monospace;color:#b42318;white-space:pre-wrap;}
-          </style>
-        </head>
-        <body>
-          <div id="formula"></div>
-          <script>
-            function renderFormula(){
-              var target = document.getElementById('formula');
-              if (!window.katex) { target.textContent = 'KaTeX loading failed'; target.className = 'error'; return; }
-              try {
-                katex.render($encodedLatex, target, { throwOnError:false, displayMode:$displayMode });
-              } catch(e) {
-                target.textContent = e.message;
-                target.className = 'error';
-              }
-              requestAnimationFrame(function() {
-                requestAnimationFrame(function() {
-                  var h = document.documentElement.scrollHeight || document.body.scrollHeight || 60;
-                  if (window.MathHeightBridge) window.MathHeightBridge.postHeight(h + 16);
-                });
-              });
-            }
-            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', renderFormula); else renderFormula();
-          </script>
-        </body>
-        </html>
-    """.trimIndent()
-}
-
-@SuppressLint("SetJavaScriptEnabled")
-@Composable
-private fun SmilesWebView(smiles: String, modifier: Modifier = Modifier) {
-    val html = remember(smiles) { buildSmilesHtml(smiles) }
-    AndroidView(
-        factory = { ctx ->
-            WebView(ctx).apply {
-                webViewClient = WebViewClient()
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true
-                settings.loadWithOverviewMode = true
-                settings.useWideViewPort = true
-                setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                loadDataWithBaseURL("https://cdn.bootcdn.net/", html, "text/html", "utf-8", null)
-            }
-        },
-        update = { it.loadDataWithBaseURL("https://cdn.bootcdn.net/", html, "text/html", "utf-8", null) },
-        modifier = modifier
-    )
-}
-
-private fun buildSmilesHtml(smiles: String): String {
-    val cleaned = smiles.trim()
-    val encoded = JSONObject.quote(cleaned)
-    return """
-        <!doctype html>
-        <html>
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <script src="https://cdn.bootcdn.net/ajax/libs/smiles-drawer/2.0.13/smiles-drawer.min.js"></script>
-          <style>
-            html,body{margin:0;padding:0;background:transparent;font-family:sans-serif;color:#1b1f24;}
-            #root{min-height:190px;display:flex;align-items:center;justify-content:center;overflow:auto;padding:8px;box-sizing:border-box;}
-            .reaction{display:flex;align-items:center;gap:12px;min-width:max-content;}
-            .side{display:flex;align-items:center;gap:6px;}
-            .mol{width:170px;height:150px;background:#fff;border:1px solid #edf0f3;border-radius:8px;}
-            .single{width:260px;height:200px;background:#fff;border:1px solid #edf0f3;border-radius:8px;}
-            .arrow{min-width:72px;text-align:center;color:#5f6b7a;font-size:12px;}
-            .arrowLine{font-size:24px;line-height:24px;color:#1f2937;}
-            .error{font-family:monospace;color:#b42318;white-space:pre-wrap;padding:12px;}
-          </style>
-        </head>
-        <body>
-          <div id="root"></div>
-          <script>
-            var input = $encoded;
-            function stripOptions(value) {
-              return value.replace(/\s+__[\s\S]*__\s*${'$'}/, '').trim();
-            }
-            function drawOne(smiles, svgId, small) {
-              var drawer = new SmilesDrawer.SvgDrawer({ width: small ? 170 : 260, height: small ? 150 : 200, bondThickness: 0.7, padding: 12 });
-              SmilesDrawer.parse(smiles, function(tree) {
-                drawer.draw(tree, svgId, 'light', false);
-              }, function(err) {
-                document.getElementById(svgId).outerHTML = '<div class="error">' + String(err) + '</div>';
-              });
-            }
-            function moleculeSide(items, prefix) {
-              return '<div class="side">' + items.filter(Boolean).map(function(_, i) {
-                return '<svg class="mol" id="' + prefix + i + '"></svg>';
-              }).join('<span>+</span>') + '</div>';
-            }
-            function render() {
-              var root = document.getElementById('root');
-              if (!window.SmilesDrawer) { root.textContent = 'SmilesDrawer loading failed'; root.className='error'; return; }
-              var value = stripOptions(input);
-              if (value.indexOf('>') >= 0) {
-                var parts = value.split('>');
-                var left = (parts[0] || '').split('.');
-                var middle = parts[1] || '';
-                var right = (parts[2] || '').split('.');
-                root.innerHTML = '<div class="reaction">' + moleculeSide(left, 'l') + '<div class="arrow"><div>' + middle + '</div><div class="arrowLine">→</div></div>' + moleculeSide(right, 'r') + '</div>';
-                left.filter(Boolean).forEach(function(s, i){ drawOne(s.trim(), 'l' + i, true); });
-                right.filter(Boolean).forEach(function(s, i){ drawOne(s.trim(), 'r' + i, true); });
-              } else {
-                root.innerHTML = '<svg class="single" id="single"></svg>';
-                drawOne(value, 'single', false);
-              }
-            }
-            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', render); else render();
-          </script>
-        </body>
-        </html>
-    """.trimIndent()
 }
 
 private fun prettyJsonOrNull(raw: String): String? {
@@ -816,4 +720,186 @@ private fun shareText(context: Context, title: String, text: String) {
         putExtra(Intent.EXTRA_TEXT, text)
     }
     context.startActivity(Intent.createChooser(intent, "导出"))
+}
+
+// ══════════════════════════════════════════════════════
+// WebView 渲染组件(KaTeX 数学公式 + SmilesDrawer 化学结构)
+// 用 AndroidView 嵌入 WebView,带安全兜底与自动回收
+// ══════════════════════════════════════════════════════
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun MathWebView(latex: String, displayMode: Boolean, modifier: Modifier = Modifier) {
+    val html = remember(latex, displayMode) { buildMathHtml(latex, displayMode) }
+    var contentHeightDp by remember { mutableStateOf(if (displayMode) 88.dp else 60.dp) }
+    AndroidView(
+        factory = { ctx ->
+            val webView = createSafeWebView(ctx) ?: return@AndroidView makeFallbackView(ctx, latex)
+            activeWebViewCount.incrementAndGet()
+            webView.apply {
+                webViewClient = WebViewClient()
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                settings.loadWithOverviewMode = true
+                settings.useWideViewPort = true
+                setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                addJavascriptInterface(MathHeightBridge { heightPx ->
+                    val density = ctx.resources.displayMetrics.density
+                    val dp = (heightPx / density).toInt()
+                    contentHeightDp = dp.dp
+                }, "MathHeightBridge")
+                loadDataWithBaseURL("https://cdn.jsdelivr.net/", html, "text/html", "utf-8", null)
+            }
+        },
+        onRelease = { view ->
+            if (view is WebView) {
+                try { view.destroy() } catch (_: Throwable) {}
+                activeWebViewCount.decrementAndGet()
+            }
+        },
+        modifier = modifier.heightIn(min = 40.dp, max = 600.dp).then(Modifier.height(contentHeightDp))
+    )
+}
+
+private class MathHeightBridge(private val onHeightReady: (Int) -> Unit) {
+    @JavascriptInterface
+    fun postHeight(heightPx: Int) {
+        android.os.Handler(android.os.Looper.getMainLooper()).post { onHeightReady(heightPx) }
+    }
+}
+
+private fun buildMathHtml(latex: String, displayMode: Boolean): String {
+    val encodedLatex = JSONObject.quote(latex)
+    return """
+        <!doctype html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.css">
+          <script src="https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.js"></script>
+          <style>
+            html,body{margin:0;padding:0;background:transparent;color:#1b1f24;font-family:sans-serif;}
+            #formula{padding:8px;overflow-x:auto;font-size:16px;}
+            .error{font-family:monospace;color:#b42318;white-space:pre-wrap;}
+          </style>
+        </head>
+        <body>
+          <div id="formula"></div>
+          <script>
+            function renderFormula(){
+              var target = document.getElementById('formula');
+              if (!window.katex) { target.textContent = 'KaTeX loading failed'; target.className = 'error'; return; }
+              try {
+                katex.render($encodedLatex, target, { throwOnError:false, displayMode:$displayMode });
+              } catch(e) {
+                target.textContent = e.message;
+                target.className = 'error';
+              }
+              requestAnimationFrame(function() {
+                requestAnimationFrame(function() {
+                  var h = document.documentElement.scrollHeight || document.body.scrollHeight || 60;
+                  if (window.MathHeightBridge) window.MathHeightBridge.postHeight(h + 16);
+                });
+              });
+            }
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', renderFormula); else renderFormula();
+          </script>
+        </body>
+        </html>
+    """.trimIndent()
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun SmilesWebView(smiles: String, modifier: Modifier = Modifier) {
+    val html = remember(smiles) { buildSmilesHtml(smiles) }
+    AndroidView(
+        factory = { ctx ->
+            val webView = createSafeWebView(ctx) ?: return@AndroidView makeFallbackView(ctx, smiles)
+            activeWebViewCount.incrementAndGet()
+            webView.apply {
+                webViewClient = WebViewClient()
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                settings.loadWithOverviewMode = true
+                settings.useWideViewPort = true
+                setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                loadDataWithBaseURL("https://cdn.jsdelivr.net/", html, "text/html", "utf-8", null)
+            }
+        },
+        onRelease = { view ->
+            if (view is WebView) {
+                try { view.destroy() } catch (_: Throwable) {}
+                activeWebViewCount.decrementAndGet()
+            }
+        },
+        modifier = modifier
+    )
+}
+
+private fun buildSmilesHtml(smiles: String): String {
+    val cleaned = smiles.trim()
+    val encoded = JSONObject.quote(cleaned)
+    return """
+        <!doctype html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <script src="https://cdn.jsdelivr.net/npm/smiles-drawer@2.4.1/dist/smiles-drawer.min.js"></script>
+          <style>
+            html,body{margin:0;padding:0;background:transparent;font-family:sans-serif;color:#1b1f24;}
+            #root{min-height:190px;display:flex;align-items:center;justify-content:center;overflow:auto;padding:8px;box-sizing:border-box;}
+            .reaction{display:flex;align-items:center;gap:12px;min-width:max-content;}
+            .side{display:flex;align-items:center;gap:6px;}
+            .mol{width:170px;height:150px;background:#fff;border:1px solid #edf0f3;border-radius:8px;}
+            .single{width:260px;height:200px;background:#fff;border:1px solid #edf0f3;border-radius:8px;}
+            .arrow{min-width:72px;text-align:center;color:#5f6b7a;font-size:12px;}
+            .arrowLine{font-size:24px;line-height:24px;color:#1f2937;}
+            .error{font-family:monospace;color:#b42318;white-space:pre-wrap;padding:12px;}
+          </style>
+        </head>
+        <body>
+          <div id="root"></div>
+          <script>
+            var input = $encoded;
+            function stripOptions(value) {
+              return value.replace(/\s+__[\s\S]*__\s*\${'$'}/, '').trim();
+            }
+            function drawOne(smiles, svgId, small) {
+              var drawer = new SmilesDrawer.SvgDrawer({ width: small ? 170 : 260, height: small ? 150 : 200, bondThickness: 0.7, padding: 12 });
+              SmilesDrawer.parse(smiles, function(tree) {
+                drawer.draw(tree, svgId, 'light', false);
+              }, function(err) {
+                document.getElementById(svgId).outerHTML = '<div class="error">' + String(err) + '</div>';
+              });
+            }
+            function moleculeSide(items, prefix) {
+              return '<div class="side">' + items.filter(Boolean).map(function(_, i) {
+                return '<svg class="mol" id="' + prefix + i + '"></svg>';
+              }).join('<span>+</span>') + '</div>';
+            }
+            function render() {
+              var root = document.getElementById('root');
+              if (!window.SmilesDrawer) { root.textContent = 'SmilesDrawer loading failed'; root.className='error'; return; }
+              var value = stripOptions(input);
+              if (value.indexOf('>') >= 0) {
+                var parts = value.split('>');
+                var left = (parts[0] || '').split('.');
+                var middle = parts[1] || '';
+                var right = (parts[2] || '').split('.');
+                root.innerHTML = '<div class="reaction">' + moleculeSide(left, 'l') + '<div class="arrow"><div>' + middle + '</div><div class="arrowLine">→</div></div>' + moleculeSide(right, 'r') + '</div>';
+                left.filter(Boolean).forEach(function(s, i){ drawOne(s.trim(), 'l' + i, true); });
+                right.filter(Boolean).forEach(function(s, i){ drawOne(s.trim(), 'r' + i, true); });
+              } else {
+                root.innerHTML = '<svg class="single" id="single"></svg>';
+                drawOne(value, 'single', false);
+              }
+            }
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', render); else render();
+          </script>
+        </body>
+        </html>
+    """.trimIndent()
 }

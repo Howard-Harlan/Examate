@@ -152,11 +152,11 @@ private fun AgentSettingsScreen(onBack: () -> Unit) {
                         SkillManager.setEnabled(context, skill.id, enabled)
                         skills = SkillManager.loadAll(context)
                     },
-                    onDelete = {
+                    onDelete = if (skill.source == "imported") ({
                         SkillManager.deleteSkill(context, skill.id)
                         skills = SkillManager.loadAll(context)
                         Toast.makeText(context, "已删除", Toast.LENGTH_SHORT).show()
-                    }
+                    }) else null
                 )
             }
 
@@ -288,7 +288,7 @@ private fun SectionHeader(title: String, subtitle: String) {
 private fun SkillCard(
     skill: SkillManager.Skill,
     onToggle: (Boolean) -> Unit,
-    onDelete: () -> Unit
+    onDelete: (() -> Unit)? = null
 ) {
     FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp)) {
@@ -323,13 +323,15 @@ private fun SkillCard(
                 maxLines = 2
             )
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    "删除",
-                    color = Color(0xFFFF3B30),
-                    fontSize = 12.sp,
-                    modifier = Modifier.clickable { onDelete() }.padding(4.dp)
-                )
+            if (onDelete != null) {
+                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        "删除",
+                        color = Color(0xFFFF3B30),
+                        fontSize = 12.sp,
+                        modifier = Modifier.clickable { onDelete() }.padding(4.dp)
+                    )
+                }
             }
         }
     }

@@ -6,6 +6,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -38,7 +39,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -118,21 +121,21 @@ private fun AboutScreen(onBack: () -> Unit) {
                 Modifier.fillMaxWidth().padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Logo
+                // Logo — 使用应用图标前景(VectorDrawable,兼容painterResource)
                 Box(
-                    Modifier
-                        .size(72.dp)
-                        .background(Primary, CircleShape),
+                    Modifier.size(72.dp).clip(CircleShape).background(Primary),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("E", color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Bold)
+                    Image(
+                        painter = painterResource(id = go.examate.hyp.R.drawable.ic_launcher_foreground),
+                        contentDescription = "logo",
+                        modifier = Modifier.size(72.dp)
+                    )
                 }
                 Spacer(Modifier.height(12.dp))
                 Text("Examate", color = TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(4.dp))
                 Text("版本 $currentVersion", color = TextHint, fontSize = 13.sp)
-                Spacer(Modifier.height(4.dp))
-                Text("ex a mate · 超越一个朋友", color = TextSecondary, fontSize = 12.sp)
             }
         }
 
@@ -186,28 +189,6 @@ private fun AboutScreen(onBack: () -> Unit) {
 
         Spacer(Modifier.height(20.dp))
 
-        // ═══ 说明 ═══
-        Text(
-            "说明",
-            color = TextPrimary,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.padding(start = 4.dp, bottom = 10.dp)
-        )
-        FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp)) {
-                Text(
-                    "Examate — ex a mate,超越一个朋友。\n\n" +
-                            "名字取自 \"ex a mate\",寓意不只是工具,更是一个超越普通朋友的智能学习伙伴。\n\n" +
-                            "本应用为独立开发项目,集成了多种 AI 能力与校园服务功能。尊重用户隐私,所有数据均存储在本地,不会上传至任何服务器。" +
-                            "AI 对话功能需要用户自行配置 API 密钥,密钥仅保存在本地。\n\n" +
-                            "如遇问题或有建议,欢迎反馈。",
-                    color = TextSecondary,
-                    fontSize = 12.sp,
-                    lineHeight = 18.sp
-                )
-            }
-        }
     }
 
     // 更新检查结果弹窗

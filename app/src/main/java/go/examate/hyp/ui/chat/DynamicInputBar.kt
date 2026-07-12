@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -52,7 +53,9 @@ fun DynamicInputBar(
     onPickImage: () -> Unit,
     onClearImage: () -> Unit,
     canSend: Boolean,
-    onSend: () -> Unit
+    onSend: () -> Unit,
+    agentsMode: Boolean = false,
+    onToggleAgents: (() -> Unit)? = null
 ) {
     val backdrop = LocalGlassBackdrop.current
     Column(
@@ -83,6 +86,22 @@ fun DynamicInputBar(
                 Spacer(Modifier.width(4.dp))
                 Text("已选择图片", color = TextSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
                 Icon(Icons.Filled.Close, contentDescription = "清除", tint = TextHint, modifier = Modifier.clickable { onClearImage() }.padding(4.dp).size(16.dp))
+            }
+        }
+        // 对话/Agents 模式切换(下划线指示激活态)
+        if (onToggleAgents != null) {
+            Row(
+                Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { if (agentsMode) onToggleAgents() }.padding(horizontal = 14.dp, vertical = 2.dp)) {
+                    Text("对话", color = if (!agentsMode) Color(0xFF5B8DEF) else TextHint, fontSize = 12.sp)
+                    if (!agentsMode) Spacer(Modifier.width(24.dp).height(2.dp).background(Color(0xFF5B8DEF), RoundedCornerShape(1.dp)))
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { if (!agentsMode) onToggleAgents() }.padding(horizontal = 14.dp, vertical = 2.dp)) {
+                    Text("Agents", color = if (agentsMode) Color(0xFF5B8DEF) else TextHint, fontSize = 12.sp)
+                    if (agentsMode) Spacer(Modifier.width(24.dp).height(2.dp).background(Color(0xFF5B8DEF), RoundedCornerShape(1.dp)))
+                }
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {

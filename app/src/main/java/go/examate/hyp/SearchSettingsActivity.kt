@@ -73,6 +73,7 @@ private fun SearchSettingsScreen(onBack: () -> Unit) {
     var edgeAttach by remember { mutableStateOf(prefs.isEdgeAttach) }
     var transparentFloat by remember { mutableStateOf(prefs.isTransparentFloat) }
     var floatingMenuItems by remember { mutableStateOf(prefs.floatingMenuItems) }
+    var memoryEnabled by remember { mutableStateOf(prefs.isMemoryEnabled) }
 
     Column(
         Modifier
@@ -103,6 +104,28 @@ private fun SearchSettingsScreen(onBack: () -> Unit) {
         }
 
         Spacer(Modifier.height(24.dp))
+
+        // AI 对话设置
+        Text(
+            "AI 对话",
+            color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(start = 4.dp, bottom = 10.dp)
+        )
+        FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
+            Column {
+                ToggleRow(
+                    title = "对话记忆",
+                    subtitle = "自动记住用户偏好(默认关闭,待优化)",
+                    checked = memoryEnabled,
+                    onCheckedChange = {
+                        memoryEnabled = it
+                        prefs.isMemoryEnabled = it
+                    }
+                )
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
 
         // 悬浮球设置
         Text(

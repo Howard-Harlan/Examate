@@ -481,10 +481,6 @@ class UnifiedFloatingService : Service() {
             stopService(Intent(applicationContext, UnifiedFloatingService::class.java))
             onDestroy()
         }
-        // 藏匿选项
-        popupMenuView.findViewById<View>(R.id.hide_btn).setOnClickListener {
-            launcherSecureCountListener()
-        }
     }
 
     /**
@@ -507,9 +503,6 @@ class UnifiedFloatingService : Service() {
             if (enabled.contains("browse")) View.VISIBLE else View.GONE
         // close:退出,固定保留
         popupMenuView.findViewById<View>(R.id.close_btn).visibility = View.VISIBLE
-        // hide:藏匿,仅无障碍模式
-        popupMenuView.findViewById<View>(R.id.hide_btn).visibility =
-            if (mode == FloatingMode.ACCESSIBILITY) View.VISIBLE else View.GONE
     }
 
     /**
@@ -604,6 +597,13 @@ class UnifiedFloatingService : Service() {
             val thinkTextView = askContainerView.findViewById<TextView>(R.id.thinkOutput)
             val errorTextView = askContainerView.findViewById<TextView>(R.id.errorOutput)
             val textView = askContainerView.findViewById<TextView>(R.id.contentOutput)
+            // 单击AI回复内容→关闭问问窗口
+            textView.setOnClickListener {
+                if (isAskViewShow) {
+                    isAskViewShow = false
+                    windowManager.removeView(askContainerView)
+                }
+            }
             thinkTextView.text = ""
             errorTextView.text = ""
             textView.text = ""
@@ -1590,9 +1590,6 @@ class UnifiedFloatingService : Service() {
     private fun exitHideMode() {
         shutdownSecureCountListener()
         inExamMode = false
-        // 显示按钮
-        val hideBtn = popupMenuView.findViewById<TextView>(R.id.hide_btn)
-        hideBtn.visibility = View.VISIBLE
         // 恢复悬浮球
         floatToggleBtnParams.flags = floatToggleBtnParams.flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
         handler.post {

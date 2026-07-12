@@ -769,6 +769,65 @@ class HttpUtils {
             }
         }.flowOn(Dispatchers.IO)
 
+        /**
+         * 发起带对话历史的流式请求,返回 Flow<SseEvent>。
+         * 与 sendPostRequestStreamFlow 的区别: 本方法支持多轮对话历史(messages 列表),
+         * 适合在 AgentOrchestrator 中流式输出 AI 的最终文本回复。
+         */
+        @JvmStatic
+        fun sendChatWithHistoryStreamFlow(
+            url: String, modelName: String, messages: List<Pair<String, String>>,
+            apiKey: String?, systemPrompt: String, thinking: Boolean?, endpointType: String
+        ): Flow<SseEvent> = flow {
+            val bodyStr = when (endpointType) {
+                "anthropic" -> {
+                    val json = JSONObject(buildAnthropicHistoryBody(modelName, messages, systemPrompt, thinking))
+                    json.put("stream", true)
+                    json.toString()
+                }
+                "responses" -> buildResponsesHistoryBody(modelName, messages, systemPrompt, thinking)
+                else -> buildChatHistoryBody(modelName, messages, systemPrompt, thinking)
+                    .let { JSONObject(it).apply { put("stream", true) }.toString() }
+            }
+            val request = Request.Builder()
+                .url(url)
+                .post(bodyStr.toRequestBody(JSON_MEDIA_TYPE))
+                .applyAuth(endpointType, apiKey)
+                .build()
+
+            try {
+                streamClient.newCall(request).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        resp.body?.byteStream()?.bufferedReader()?.use { reader ->
+                            var line = reader.readLine()
+                            while (line != null) {
+                                if (line.length > 6 && line.startsWith("data:")) {
+                                    val event = parseSseToEvent(line.substring(6), endpointType)
+                                    if (event != null) emit(event)
+                                }
+                                line = reader.readLine()
+                            }
+                        }
+                    } else {
+                        val errBody = resp.body?.string()
+                        emit(SseEvent.Error("HTTP error ${resp.code}: $errBody"))
+                    }
+                }
+            } catch (e: UnknownHostException) {
+                emit(SseEvent.Error("无法解析服务器域名，请检查网络设置"))
+            } catch (e: InterruptedIOException) {
+                emit(SseEvent.Error("请求被中断，这条消息已停止"))
+            } catch (e: SocketException) {
+                emit(SseEvent.Error("访问连接失败，请检查网络设置"))
+            } catch (e: IOException) {
+                Log.e(TAG, "Stream IOException", e)
+            } catch (e: JSONException) {
+                Log.e(TAG, "Stream JSONException", e)
+            } finally {
+                emit(SseEvent.Done)
+            }
+        }.flowOn(Dispatchers.IO)
+
         /** 解析 SSE 单条 data 为 SseEvent(纯函数,无 UI 依赖) */
         private fun parseSseToEvent(lineData: String, endpointType: String): SseEvent? {
             return try {

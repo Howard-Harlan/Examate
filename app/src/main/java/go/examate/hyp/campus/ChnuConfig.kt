@@ -22,6 +22,8 @@ object ChnuConfig {
     const val ECARD_BASE_URL = "http://210.45.128.224:8081/easytong_portal"
     const val SC_BASE_URL = "https://sc.chnu.edu.cn"
     const val SC_API_BASE = "https://sc.chnu.edu.cn/hbsdDkApi"
+    const val HSXS_BASE_URL = "https://hsxs.chnu.edu.cn"
+    const val HSXS_API_BASE = "https://hsxs.chnu.edu.cn/api"
     const val TIMEOUT_SECONDS = 20L
 
     /** 默认 User-Agent(Chrome) */

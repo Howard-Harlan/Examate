@@ -15,7 +15,24 @@ data class ChatMsg(
     val imageBase64: String? = null,
     val imageUrl: String? = null,
     val toolCalls: List<String> = emptyList(),
+    val cards: List<ActionCard> = emptyList(),
     val id: String = UUID.randomUUID().toString()
+)
+
+/**
+ * 行动卡片:AI 回复下方紧贴的可交互卡片
+ * type 区分:
+ * - "ecard_topup" 一卡通充值入口
+ * - "ecard_balance" 一卡通余额信息
+ * - "room_electricity" 房间电费信息
+ * - "campus_grades" 成绩信息
+ * - "link" 普通链接
+ */
+data class ActionCard(
+    val type: String,
+    val title: String,
+    val summary: String = "",
+    val payload: Map<String, String> = emptyMap()
 )
 
 data class ChatSession(
@@ -46,6 +63,29 @@ object ChatHistoryManager {
                 val msgs = mutableListOf<ChatMsg>()
                 for (j in 0 until msgArr.length()) {
                     val m = msgArr.getJSONObject(j)
+                    val toolCalls = m.optJSONArray("toolCalls")?.let { tools ->
+                        (0 until tools.length()).map { tools.optString(it) }
+                    }.orEmpty()
+                    val cards = m.optJSONArray("cards")?.let { cdArr ->
+                        (0 until cdArr.length()).mapNotNull { idx ->
+                            val c = cdArr.optJSONObject(idx) ?: return@mapNotNull null
+                            val payloadObj = c.optJSONObject("payload")
+                            val payload = mutableMapOf<String, String>()
+                            if (payloadObj != null) {
+                                val keys = payloadObj.keys()
+                                while (keys.hasNext()) {
+                                    val k = keys.next()
+                                    payload[k] = payloadObj.optString(k)
+                                }
+                            }
+                            ActionCard(
+                                type = c.optString("type"),
+                                title = c.optString("title"),
+                                summary = c.optString("summary"),
+                                payload = payload
+                            )
+                        }
+                    }.orEmpty()
                     msgs.add(
                         ChatMsg(
                             role = m.optString("role"),
@@ -55,9 +95,8 @@ object ChatHistoryManager {
                             imageUriString = m.optString("imageUriString", "").ifEmpty { null },
                             imageBase64 = m.optString("imageBase64", "").ifEmpty { null },
                             imageUrl = m.optString("imageUrl", "").ifEmpty { null },
-                            toolCalls = m.optJSONArray("toolCalls")?.let { tools ->
-                                (0 until tools.length()).map { tools.optString(it) }
-                            }.orEmpty()
+                            toolCalls = toolCalls,
+                            cards = cards
                         )
                     )
                 }
@@ -114,6 +153,20 @@ object ChatHistoryManager {
                         msg.imageBase64?.let { put("imageBase64", it) }
                         msg.imageUrl?.let { put("imageUrl", it) }
                         if (msg.toolCalls.isNotEmpty()) put("toolCalls", JSONArray(msg.toolCalls))
+                        if (msg.cards.isNotEmpty()) {
+                            val cdArr = JSONArray()
+                            msg.cards.forEach { cd ->
+                                val p = JSONObject()
+                                cd.payload.forEach { (k, v) -> p.put(k, v) }
+                                cdArr.put(JSONObject().apply {
+                                    put("type", cd.type)
+                                    put("title", cd.title)
+                                    put("summary", cd.summary)
+                                    put("payload", p)
+                                })
+                            }
+                            put("cards", cdArr)
+                        }
                     }
                 )
             }

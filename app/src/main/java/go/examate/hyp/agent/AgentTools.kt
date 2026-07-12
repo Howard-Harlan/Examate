@@ -5,6 +5,7 @@ import android.util.Base64
 import go.examate.hyp.campus.CampusRepository
 import go.examate.hyp.config.PrefsManager
 import go.examate.hyp.entity.ModelProvider
+import go.examate.hyp.util.ActionCard
 import go.examate.hyp.util.HttpUtils
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -141,60 +142,91 @@ object AgentTools {
         return try {
             when (call.name) {
                 "get_student_info" -> {
-                    val info = repo.getStudentInfo(prefs)
-                    ToolResult(true, "学生信息:\n姓名: ${info.name}\n学号: ${info.studentId}\n院系: ${info.department}\n专业: ${info.major}\n班级: ${info.className}")
+                    val output = cachedExecute("get_student_info") {
+                        val info = repo.getStudentInfo(prefs)
+                        "学生信息:\n姓名: ${info.name}\n学号: ${info.studentId}\n院系: ${info.department}\n专业: ${info.major}\n班级: ${info.className}"
+                    }
+                    ToolResult(true, output)
                 }
                 "get_grades" -> {
                     val xn = call.arguments.optString("xn", "").ifEmpty { null }
                     val xq = call.arguments.optString("xq", "").ifEmpty { null }
-                    val grades = repo.getGrades(prefs, xn, xq)
-                    if (grades.isEmpty()) ToolResult(true, "未查询到成绩数据")
-                    else ToolResult(true, formatGrades(grades))
+                    val cacheKey = "get_grades:${xn ?: "all"}:${xq ?: "all"}"
+                    val output = cachedExecute(cacheKey) {
+                        val grades = repo.getGrades(prefs, xn, xq)
+                        if (grades.isEmpty()) "未查询到成绩数据"
+                        else formatGrades(grades)
+                    }
+                    ToolResult(true, output)
                 }
                 "get_schedule" -> {
                     val xn = call.arguments.optString("xn", "").ifEmpty { null }
                     val xq = call.arguments.optString("xq", "").ifEmpty { null }
-                    val schedule = repo.getSchedule(prefs, xn, xq)
-                    if (schedule.isEmpty()) ToolResult(true, "未查询到课表数据")
-                    else ToolResult(true, formatSchedule(schedule))
+                    val cacheKey = "get_schedule:${xn ?: "all"}:${xq ?: "all"}"
+                    val output = cachedExecute(cacheKey) {
+                        val schedule = repo.getSchedule(prefs, xn, xq)
+                        if (schedule.isEmpty()) "未查询到课表数据"
+                        else formatSchedule(schedule)
+                    }
+                    ToolResult(true, output)
                 }
                 "get_exam_schedule" -> {
                     val xn = call.arguments.optString("xn", "").ifEmpty { null }
                     val xq = call.arguments.optString("xq", "").ifEmpty { null }
-                    val exams = repo.getExamSchedule(prefs, xn, xq)
-                    if (exams.isEmpty()) ToolResult(true, "未查询到考试安排")
-                    else ToolResult(true, formatExams(exams))
+                    val cacheKey = "get_exam_schedule:${xn ?: "all"}:${xq ?: "all"}"
+                    val output = cachedExecute(cacheKey) {
+                        val exams = repo.getExamSchedule(prefs, xn, xq)
+                        if (exams.isEmpty()) "未查询到考试安排"
+                        else formatExams(exams)
+                    }
+                    ToolResult(true, output)
                 }
                 "get_selected_courses" -> {
                     val xn = call.arguments.optString("xn", "").ifEmpty { null }
                     val xq = call.arguments.optString("xq", "").ifEmpty { null }
-                    val courses = repo.getSelectedCourses(prefs, xn, xq)
-                    if (courses.isEmpty()) ToolResult(true, "未查询到已选课程")
-                    else ToolResult(true, formatSelectedCourses(courses))
+                    val cacheKey = "get_selected_courses:${xn ?: "all"}:${xq ?: "all"}"
+                    val output = cachedExecute(cacheKey) {
+                        val courses = repo.getSelectedCourses(prefs, xn, xq)
+                        if (courses.isEmpty()) "未查询到已选课程"
+                        else formatSelectedCourses(courses)
+                    }
+                    ToolResult(true, output)
                 }
                 "get_balance" -> {
-                    val balance = repo.getBalance(prefs)
-                    ToolResult(true, "一卡通余额: ${balance.balance} 元\n账户名: ${balance.accountName}\n卡号: ${balance.cardNo}")
+                    val output = cachedExecute("get_balance") {
+                        val balance = repo.getBalance(prefs)
+                        "一卡通余额: ${balance.balance} 元\n账户名: ${balance.accountName}\n卡号: ${balance.cardNo}"
+                    }
+                    ToolResult(true, output)
                 }
                 "get_score_summary" -> {
-                    val summary = repo.getScoreSummary(prefs)
-                    val sb = StringBuilder("第二课堂总分: ${summary.totalScore}\n\n各模块得分:\n")
-                    summary.modules.forEach { sb.append("- ${it.moduleName}: ${it.score}\n") }
-                    ToolResult(true, sb.toString())
+                    val output = cachedExecute("get_score_summary") {
+                        val summary = repo.getScoreSummary(prefs)
+                        val sb = StringBuilder("第二课堂总分: ${summary.totalScore}\n\n各模块得分:\n")
+                        summary.modules.forEach { sb.append("- ${it.moduleName}: ${it.score}\n") }
+                        sb.toString()
+                    }
+                    ToolResult(true, output)
                 }
                 "get_score_detail" -> {
-                    val details = repo.getScoreDetail(prefs)
-                    if (details.isEmpty()) ToolResult(true, "未查询到第二课堂明细")
-                    else {
-                        val sb = StringBuilder("第二课堂成绩明细:\n| 模块 | 项目 | 得分 |\n|---|---|---|\n")
-                        details.forEach { sb.append("| ${it.moduleName} | ${it.itemName} | ${it.score} |\n") }
-                        ToolResult(true, sb.toString())
+                    val output = cachedExecute("get_score_detail") {
+                        val details = repo.getScoreDetail(prefs)
+                        if (details.isEmpty()) "未查询到第二课堂明细"
+                        else {
+                            val sb = StringBuilder("第二课堂成绩明细:\n| 模块 | 项目 | 得分 |\n|---|---|---|\n")
+                            details.forEach { sb.append("| ${it.moduleName} | ${it.itemName} | ${it.score} |\n") }
+                            sb.toString()
+                        }
                     }
+                    ToolResult(true, output)
                 }
                 "get_teaching_evaluation" -> {
-                    val evals = repo.getTeachingEvaluation(prefs)
-                    if (evals.isEmpty()) ToolResult(true, "未查询到教学评价")
-                    else ToolResult(true, formatEvaluations(evals))
+                    val output = cachedExecute("get_teaching_evaluation") {
+                        val evals = repo.getTeachingEvaluation(prefs)
+                        if (evals.isEmpty()) "未查询到教学评价"
+                        else formatEvaluations(evals)
+                    }
+                    ToolResult(true, output)
                 }
                 "generate_image" -> {
                     val prompt = call.arguments.optString("prompt", "")
@@ -213,6 +245,14 @@ object AgentTools {
         } catch (e: Exception) {
             ToolResult(false, "工具执行错误: ${e.message ?: "未知错误"}")
         }
+    }
+
+    /** 带缓存的执行:先查 CampusCache,命中直接返回,未命中执行并写入缓存 */
+    private suspend fun cachedExecute(cacheKey: String, block: suspend () -> String): String {
+        CampusCache.get(cacheKey)?.let { return "$it\n(缓存)" }
+        val result = block()
+        if (!result.startsWith("未查询到")) CampusCache.put(cacheKey, result)
+        return result
     }
 
     // ════════════════════════════════════════
@@ -313,5 +353,40 @@ object AgentTools {
     /** 判断 base64 字符串是否为有效的图片数据 */
     fun isBase64Image(data: String): Boolean {
         return data.length > 100 && data.all { it.isLetterOrDigit() || it == '+' || it == '/' || it == '=' }
+    }
+
+    /**
+     * 从回复文本中推断"行动卡片"(校园服务快捷入口)。
+     * - 提到"充值"/"余额不足"/"不够"且已登录 → 一卡通充值卡
+     * - 提到"电费"/"房间"/"宿舍"且已登录 → 房间电费查询卡
+     *
+     * 统一实现,供 AgentOrchestrator(agents 分支)与 ChatViewModel(普通对话分支)复用,
+     * 消除此前两份近似重复的逻辑。
+     */
+    fun inferCampusCards(text: String, campusLoggedIn: Boolean): List<ActionCard> {
+        if (!campusLoggedIn) return emptyList()
+        val lower = text.lowercase()
+        val cards = mutableListOf<ActionCard>()
+        if (lower.contains("充值") || lower.contains("余额不足") || lower.contains("不够")) {
+            cards.add(
+                ActionCard(
+                    type = "ecard_topup",
+                    title = "一卡通充值",
+                    summary = "点击进入充值页面",
+                    payload = mapOf("action" to "ecard_topup")
+                )
+            )
+        }
+        if (lower.contains("电费") || lower.contains("房间") || lower.contains("宿舍")) {
+            cards.add(
+                ActionCard(
+                    type = "room_electricity",
+                    title = "房间电费查询",
+                    summary = "查询房间剩余电费",
+                    payload = mapOf("action" to "room_electricity")
+                )
+            )
+        }
+        return cards
     }
 }

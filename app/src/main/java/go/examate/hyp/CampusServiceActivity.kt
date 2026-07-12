@@ -49,6 +49,7 @@ import go.examate.hyp.campus.CampusRepository
 import go.examate.hyp.campus.ui.EcardScreen
 import go.examate.hyp.campus.ui.JwxtScreen
 import go.examate.hyp.campus.ui.ScScreen
+import go.examate.hyp.campus.ui.HsxsScreen
 import go.examate.hyp.config.PrefsManager
 import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.FrostedGlassCard
@@ -93,6 +94,7 @@ private sealed class CampusRoute {
     object Jwxt : CampusRoute()
     object Ecard : CampusRoute()
     object Sc : CampusRoute()
+    object Hsxs : CampusRoute()
 }
 
 /** 登录状态 */
@@ -157,6 +159,10 @@ private fun CampusServiceRoot(onBack: () -> Unit) {
         }
         is CampusRoute.Sc -> {
             ScScreen(onBack = { route = CampusRoute.Home })
+            return
+        }
+        is CampusRoute.Hsxs -> {
+            HsxsScreen(onBack = { route = CampusRoute.Home })
             return
         }
         else -> { /* 主页继续往下渲染 */ }
@@ -379,6 +385,12 @@ private fun CampusServiceRoot(onBack: () -> Unit) {
                             title = "第二课堂",
                             subtitle = "成绩汇总 / 成绩明细",
                             onClick = { route = CampusRoute.Sc }
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        FeatureEntryCard(
+                            title = "淮师心声",
+                            subtitle = "失物招领 / 满意度调查",
+                            onClick = { route = CampusRoute.Hsxs }
                         )
                         Spacer(Modifier.height(20.dp))
                         LiquidGlassButton(

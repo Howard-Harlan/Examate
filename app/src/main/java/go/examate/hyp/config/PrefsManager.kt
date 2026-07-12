@@ -68,6 +68,11 @@ class PrefsManager private constructor(context: Context) {
         get() = prefsConfig.getBoolean(KEY_AGENTS_MODE, false)
         set(value) = prefsConfig.edit().putBoolean(KEY_AGENTS_MODE, value).apply()
 
+    /** 记忆功能开关:默认关闭,等待后续优化后再启用 */
+    var isMemoryEnabled: Boolean
+        get() = prefsConfig.getBoolean(KEY_MEMORY_ENABLED, false)
+        set(value) = prefsConfig.edit().putBoolean(KEY_MEMORY_ENABLED, value).apply()
+
     /** 已绑定的学校名称(空表示未绑定) */
     var school: String
         get() = prefsConfig.getString(KEY_SCHOOL, "") ?: ""
@@ -157,6 +162,7 @@ class PrefsManager private constructor(context: Context) {
         const val KEY_MULTI_AI_VERIFY_SELECTED = "multi_ai_verify_selected"
         const val KEY_NICKNAME = "nickname"
         const val KEY_AGENTS_MODE = "agents_mode"
+        const val KEY_MEMORY_ENABLED = "memory_enabled"
         const val KEY_SCHOOL = "school"
         const val KEY_CAMPUS_USERNAME = "campus_username"
         const val KEY_CAMPUS_PASSWORD = "campus_password"
