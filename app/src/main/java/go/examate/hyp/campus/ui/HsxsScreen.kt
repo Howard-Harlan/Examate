@@ -3,6 +3,8 @@ package go.examate.hyp.campus.ui
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -17,9 +19,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -27,19 +31,18 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import go.examate.hyp.campus.CampusRepository
 import go.examate.hyp.config.PrefsManager
-import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.json.JSONArray
 
 private const val IMG_BASE = "https://hsxs.chnu.edu.cn"
-
 private enum class HsxsTab(val label: String) { LOST_FOUND("失物招领"), SURVEY("满意度调查") }
 
 @Composable
@@ -105,30 +108,62 @@ private fun LostFoundSection(repo: CampusRepository, prefs: PrefsManager,
 
     fun load() { scope.launch {
         loading = true; error = ""
-        try {
-            items = withContext(Dispatchers.IO) { parseDataArray(repo.getLostList(prefs)) }; loading = false
-        } catch (e: Exception) { error = e.message ?: "加载失败"; loading = false }
+        try { items = withContext(Dispatchers.IO) { parseDataArray(repo.getLostList(prefs)) }; loading = false }
+        catch (e: Exception) { error = e.message ?: "加载失败"; loading = false }
     }}
     LaunchedEffect(Unit) { load() }
-
     if (detailId.isNotEmpty()) { LostDetailView(detailId, repo, prefs, scope) { onDetail("") }; return }
 
     Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp)) {
+        val scrollState = rememberScrollState()
+        Column(Modifier.fillMaxSize().verticalScroll(scrollState).padding(horizontal = 14.dp)) {
             when { loading -> LoadingBlock(); error.isNotEmpty() -> ErrorBlock(error); items.isEmpty() -> EmptyBlock("暂无失物招领信息")
                 else -> items.forEach { item -> Spacer(Modifier.height(10.dp)); LostItemCard(item) { onDetail(item.optString("id", "")) } } }
             Spacer(Modifier.height(80.dp))
         }
-        // 发布按钮(液态玻璃效果 FAB)
-        FrostedGlassCard(
-            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp).clickable { showPublish = true }
-        ) {
-            Box(Modifier.padding(horizontal = 20.dp, vertical = 12.dp), contentAlignment = Alignment.Center) {
-                Text("＋ 发布", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-            }
+        // 发布按钮(在 Box 作用域内设置位置)
+        Box(Modifier.align(Alignment.BottomEnd).padding(16.dp)) {
+            ScrollAwarePublishButton(scrollState) { showPublish = true }
         }
     }
     if (showPublish) { PublishLostDialog(repo, prefs, scope) { showPublish = false; load() } }
+}
+
+/** 滚动时滑出右边缘、停止后滑回的发布按钮 */
+@Composable
+private fun ScrollAwarePublishButton(scrollState: ScrollState, onClick: () -> Unit) {
+    val isScrolling by remember { derivedStateOf { scrollState.isScrollInProgress } }
+    val offsetX = remember { Animatable(120f) }
+    val scope = rememberCoroutineScope()
+    var wasScrolling by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isScrolling) {
+        if (isScrolling && !wasScrolling) {
+            wasScrolling = true
+            scope.launch { offsetX.animateTo(120f, tween(250)) }
+        } else if (!isScrolling && wasScrolling) {
+            delay(350)
+            if (!scrollState.isScrollInProgress) {
+                wasScrolling = false
+                scope.launch { offsetX.animateTo(0f, tween(350)) }
+            }
+        }
+    }
+
+    val density = LocalDensity.current
+    val pxOffset = density.run { offsetX.value.dp.toPx() }
+
+    Box(Modifier.offset { IntOffset(pxOffset.toInt(), 0) }) {
+        Card(
+            modifier = Modifier.clickable { onClick() },
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.92f)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        ) {
+            Text("发布", color = Primary, fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(horizontal = 22.dp, vertical = 12.dp))
+        }
+    }
 }
 
 @Composable
@@ -146,7 +181,7 @@ private fun LostItemCard(item: JSONObject, onClick: () -> Unit) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) { Text(typeLabel, color = typeColor, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                    Row { Text(typeLabel, color = typeColor, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
                     Spacer(Modifier.height(4.dp))
                     Text(content, color = TextPrimary, fontSize = 13.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 }
@@ -171,18 +206,12 @@ private fun LostDetailView(id: String, repo: CampusRepository, prefs: PrefsManag
 ) {
     var item by remember { mutableStateOf<JSONObject?>(null) }
     var loading by remember { mutableStateOf(true) }
-
     LaunchedEffect(id) {
         scope.launch {
-            try {
-                val resp = withContext(Dispatchers.IO) { repo.getLostDetail(prefs, id) }
-                item = resp.optJSONObject("data") ?: resp  // data 嵌套
-                loading = false
-            }
+            try { val resp = withContext(Dispatchers.IO) { repo.getLostDetail(prefs, id) }; item = resp.optJSONObject("data") ?: resp; loading = false }
             catch (_: Exception) { loading = false }
         }
     }
-
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp)) {
         Text("← 返回", color = Primary, fontSize = 13.sp, modifier = Modifier.clickable { onBack() }.padding(vertical = 10.dp))
         if (loading) LoadingBlock()
@@ -229,10 +258,7 @@ private fun PublishLostDialog(repo: CampusRepository, prefs: PrefsManager,
     var submitting by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf("") }
     var imageUri by remember { mutableStateOf<android.net.Uri?>(null) }
-
-    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        imageUri = uri
-    }
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { imageUri = it }
 
     Dialog(onDismissRequest = { if (!submitting) onDone() }) {
         Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
@@ -242,8 +268,7 @@ private fun PublishLostDialog(repo: CampusRepository, prefs: PrefsManager,
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     listOf("1" to "寻物", "2" to "招领").forEach { (v, l) ->
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { type = v }) {
-                            RadioButton(selected = type == v, onClick = { type = v })
-                            Text(l, fontSize = 13.sp)
+                            RadioButton(selected = type == v, onClick = { type = v }); Text(l, fontSize = 13.sp)
                         }
                     }
                 }
@@ -293,16 +318,13 @@ private fun SurveySection(repo: CampusRepository, prefs: PrefsManager,
     var surveys by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf("") }
-
     LaunchedEffect(Unit) {
         scope.launch {
             try { surveys = withContext(Dispatchers.IO) { parseDataArray(repo.getQuestionList(prefs)) }; loading = false }
             catch (e: Exception) { error = e.message ?: "加载失败"; loading = false }
         }
     }
-
     if (detailId.isNotEmpty()) { SurveyDetailView(detailId, repo, prefs, scope) { onDetail("") }; return }
-
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp)) {
         when { loading -> LoadingBlock(); error.isNotEmpty() -> ErrorBlock(error); surveys.isEmpty() -> EmptyBlock("暂无满意度调查")
             else -> surveys.forEach { survey -> Spacer(Modifier.height(10.dp)); SurveyCard(survey) { onDetail(survey.optString("id", "")) } } }
@@ -348,7 +370,6 @@ private fun SurveyDetailView(id: String, repo: CampusRepository, prefs: PrefsMan
     var submitting by remember { mutableStateOf(false) }
     var resultMsg by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(true) }
-
     LaunchedEffect(id) {
         scope.launch {
             try {
@@ -358,7 +379,6 @@ private fun SurveyDetailView(id: String, repo: CampusRepository, prefs: PrefsMan
             } catch (_: Exception) { loading = false }
         }
     }
-
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp)) {
         Text("← 返回", color = Primary, fontSize = 13.sp, modifier = Modifier.clickable { onBack() }.padding(vertical = 10.dp))
         if (loading) LoadingBlock()
@@ -376,7 +396,6 @@ private fun SurveyDetailView(id: String, repo: CampusRepository, prefs: PrefsMan
             Text(s.optString("desc", ""), color = TextSecondary, fontSize = 13.sp, lineHeight = 18.sp)
             Spacer(Modifier.height(12.dp))
 
-            // 问卷题目
             questions.forEachIndexed { idx, q ->
                 val qType = q.optInt("type", 1)
                 val qTitle = q.optString("title", "")
@@ -393,7 +412,6 @@ private fun SurveyDetailView(id: String, repo: CampusRepository, prefs: PrefsMan
                         Text("${idx + 1}. $qTitle", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                         Spacer(Modifier.height(8.dp))
                         if (qType == 1) {
-                            // 单选
                             options.forEach { (label, key) ->
                                 Row(Modifier.fillMaxWidth().clickable { answers = answers.toMutableMap().also { it[qId] = key.toIntOrNull() ?: key } }.padding(vertical = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically) {
@@ -402,7 +420,6 @@ private fun SurveyDetailView(id: String, repo: CampusRepository, prefs: PrefsMan
                                 }
                             }
                         } else if (qType == 2) {
-                            // 多选
                             val selected = (answers[qId] as? List<*>)?.map { it.toString() } ?: emptyList()
                             options.forEach { (label, key) ->
                                 Row(Modifier.fillMaxWidth().clickable {
@@ -429,9 +446,7 @@ private fun SurveyDetailView(id: String, repo: CampusRepository, prefs: PrefsMan
                 scope.launch {
                     try {
                         val ansJson = JSONObject()
-                        answers.forEach { (qId, v) ->
-                            ansJson.put(qId.toString(), if (v is List<*>) JSONArray(v) else v)
-                        }
+                        answers.forEach { (qId, v) -> ansJson.put(qId.toString(), if (v is List<*>) JSONArray(v) else v) }
                         withContext(Dispatchers.IO) { repo.submitAnswer(prefs, id, ansJson) }
                         resultMsg = "提交成功"
                     } catch (e: Exception) { resultMsg = "提交失败: ${e.message}" }
@@ -445,7 +460,6 @@ private fun SurveyDetailView(id: String, repo: CampusRepository, prefs: PrefsMan
     }
 }
 
-/** 解析 API 返回的 data.data 数组 */
 private fun parseDataArray(json: JSONObject): List<JSONObject> {
     val arr = json.optJSONObject("data")?.optJSONArray("data") ?: json.optJSONArray("data") ?: return emptyList()
     return (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
