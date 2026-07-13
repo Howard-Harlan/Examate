@@ -1263,10 +1263,12 @@ class ChnuClient(
                 "payMode" to "1",
                 "bankId" to usedBankId,
                 "logoFileName" to usedLogo,
-                "payChannelId" to ""
+                "payChannelId" to "",
+                "topUpDisableTime" to ""
             )
             // 合并 /topUp 页面表单隐藏字段(服务端要求)
             topupPage.formFields.forEach { (k, v) -> if (k !in step1) step1[k] = v }
+            // 获取限额信息(dayLimit/oneLimit/moneyMax/continueTopUpMoney)
             try {
                 val limitReq = Request.Builder().url("$baseUrl/public/queryContinueTopUpMoney").post(
                     FormBody.Builder()
@@ -1275,7 +1277,8 @@ class ChnuClient(
                         .add("eWalletId", eWalletId)
                         .build()
                 ).header("User-Agent", ChnuConfig.UA)
-                    .header("Referer", "$baseUrl/")
+                    .header("Referer", "$baseUrl/topUp")
+                    .header("X-Requested-With", "XMLHttpRequest")
                     .build()
                 client.newCall(limitReq).execute().use { resp ->
                     val json = parseJsonObject(readBodyTolerant(resp))
@@ -1284,8 +1287,26 @@ class ChnuClient(
                     map?.optString("oneLimit")?.takeIf { it.isNotEmpty() }?.let { step1["oneLimit"] = it }
                     map?.optString("continueTopUpMoney")?.takeIf { it.isNotEmpty() }
                         ?.let { step1["continueTopUpMoney"] = it }
+                    map?.optString("moneyMax")?.takeIf { it.isNotEmpty() }?.let { step1["moneyMax"] = it }
                 }
             } catch (_: Exception) { /* 限额信息可选 */ }
+            // 获取银行禁止充值时间
+            try {
+                val disableReq = Request.Builder().url("$baseUrl/public/queryTopUpDisableTime").post(
+                    FormBody.Builder().add("epId", epId).add("bankId", usedBankId).build()
+                ).header("User-Agent", ChnuConfig.UA)
+                    .header("Referer", "$baseUrl/topUp")
+                    .header("X-Requested-With", "XMLHttpRequest")
+                    .build()
+                client.newCall(disableReq).execute().use { resp ->
+                    val json = parseJsonObject(readBodyTolerant(resp))
+                    val begin = json?.optString("disableBegin", "") ?: ""
+                    val end = json?.optString("disableEnd", "") ?: ""
+                    if (begin.isNotEmpty() && end.isNotEmpty()) {
+                        step1["topUpDisableTime"] = "$begin-$end"
+                    }
+                }
+            } catch (_: Exception) { /* 禁用时间可选 */ }
 
             // Step 3: POST /topUp/confirm 获取确认页(该接口会提前断开 chunked 连接)
             val confirmReq = Request.Builder().url("$baseUrl/topUp/confirm").post(
@@ -2000,6 +2021,12 @@ class ChnuClient(
         fun getQuestionDetail(id: String): JSONObject {
             checkSession()
             return apiGetWithToken("question/get_detail", mutableMapOf("id" to id))
+        }
+
+        /** 获取问卷题目列表 (GET + token) */
+        fun getSurveyQuestions(id: String): JSONObject {
+            checkSession()
+            return apiGetWithToken("question/get_answer", mutableMapOf("id" to id))
         }
 
         /** 提交问卷答案 (POST + token) */

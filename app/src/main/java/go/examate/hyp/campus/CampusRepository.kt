@@ -346,6 +346,10 @@ class CampusRepository private constructor() {
         return withHsxs(prefs) { it.getQuestionDetail(id) }
     }
 
+    suspend fun getSurveyQuestions(prefs: PrefsManager, id: String): JSONObject {
+        return withHsxs(prefs) { it.getSurveyQuestions(id) }
+    }
+
     suspend fun submitAnswer(prefs: PrefsManager, questionId: String, answers: JSONObject): JSONObject {
         return withHsxs(prefs) { it.submitAnswer(questionId, answers) }
     }
