@@ -88,6 +88,9 @@ dependencies {
     implementation libs.compose.foundation
     debugImplementation libs.compose.ui.tooling
 
+    // Coil: 图片加载(淮师心声等)
+    implementation 'io.coil-kt:coil-compose:2.6.0'
+
     testImplementation libs.junit
     androidTestImplementation libs.ext.junit
     androidTestImplementation libs.espresso.core

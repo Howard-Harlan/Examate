@@ -34,3 +34,4 @@ api_keys.json
 
 test_hsxs.py
 test_hsxs2.py
+analyze_payfee.py

@@ -1235,7 +1235,7 @@ class ChnuClient(
             val epId = cardInfo["epId"] ?: "1"
 
             // Step 1: 校验查询密码(RSA),并取回加密后的密码(后续提交复用,避免重复取公钥)
-            val encryptedPwd = verifyPayPassword(queryPassword)
+            val encryptedPwd = rsaEncryptPassword(queryPassword)
 
             // 获取充值页面信息(含签约银行卡列表)
             val topupPage = getTopupPage()
@@ -1437,10 +1437,10 @@ class ChnuClient(
         /**
          * 生活缴费(宿舍电费等)。
          *
-         * 流程对齐 Python ecard.py pay_fee:
-         *  1. 校验查询密码(RSA + checkpaypwd),复用加密后的密码
-         *  2. 获取缴费表单字段(类型/ token/ 限额/ 项目名称)
-         *  3. 限额校验后提交缴费(含 typeNum/token/limitMoney 等必需字段)
+         * 流程完全对齐网页端 itemPay() JS:
+         *  1. RSA公钥 → 加密密码
+         *  2. POST /publiccombo/checkpaypwd 验证密码(网页端在此步立即返回正确/错误)
+         *  3. POST /payFee/payItemlist 提交表单(不含密码!验证通过后服务端信任会话)
          *
          * @param queryPassword 查询密码(通常为身份证后六位)
          */
@@ -1454,57 +1454,71 @@ class ChnuClient(
         ): PayResult {
             checkSession()
             val amountStr = "%.2f".format(amount)
-            // Step 1: 校验查询密码(RSA + checkpaypwd),并取回加密后的密码复用
-            val encryptedPwd = verifyPayPassword(queryPassword)
-            // Step 2: 获取缴费表单字段(类型/ token/ 限额等,缺失会导致提交被服务端拒绝)
+
+            // Step 1: RSA加密密码
+            val encryptedPwd = rsaEncryptPassword(queryPassword)
+
+            // Step 2: 获取缴费表单字段(字段名对齐网页端 id 属性)
             val feeForm = getPayFeeForm(itemNum)
-            // 限额校验(对齐 Python pay_fee)
             val limitMoney = feeForm.limitMoney.toDoubleOrNull() ?: 0.0
             if (limitMoney > 0 && amount > limitMoney) {
                 return PayResult(false, "缴费金额超过限额(${feeForm.limitMoney}元)", amountStr)
             }
-            // Step 3: 提交缴费(字段名对齐 Python ecard.py pay_fee)
+
+            // Step 3: POST checkpaypwd 验证密码(网页端 AJAX 验证,对/错立即返回)
+            val pwdForm = FormBody.Builder().add("paypassword", encryptedPwd).build()
+            val pwdReq = Request.Builder().url("$baseUrl/publiccombo/checkpaypwd").post(pwdForm)
+                .header("User-Agent", ChnuConfig.UA)
+                .header("X-Requested-With", "XMLHttpRequest")
+                .header("Referer", "$baseUrl/payFee/showItemListPayPage")
+                .build()
+            client.newCall(pwdReq).execute().use { resp ->
+                val pwdText = readBodyTolerant(resp)
+                val pwdJson = parseJsonObject(pwdText)
+                val state = pwdJson?.optString("ajaxState", "")
+                // AJAXSTATE: FAILED=2(密码错误), SUCCESS=3, PASSED=4
+                if (state == "2") {
+                    val msg = pwdJson?.optString("msg", "") ?: ""
+                    return PayResult(false, msg.ifEmpty { "密码错误" }, amountStr)
+                }
+                if (state != "3" && state != "4") {
+                    val msg = pwdJson?.optString("msg", "") ?: ""
+                    return PayResult(false, msg.ifEmpty { "验证失败,请检查密码" }, amountStr)
+                }
+            }
+
+            // Step 4: 提交缴费(字段名完全对齐网页端 elementObj)
+            //   payMenoy=金额, cardaccNum=卡号(小写), ewalletMenoy=余额
+            //   NO inputPassword(已通过 checkpaypwd 验证)
+            //   NO limitMoney/limitMode/epId(网页端不传)
+            val balance = cardInfo["balance"] ?: "0"
+            val cardaccNum = cardInfo["cardAccNum"] ?: ""
             val form = FormBody.Builder()
-                .add("itemMoney", amountStr)
-                .add("inputPassword", encryptedPwd)
+                .add("itemNum", itemNum)
+                .add("eWalletId", cardInfo["eWalletId"] ?: "1")
+                .add("typeNum", feeForm.typeNum)
+                .add("itemName", feeForm.itemName)
+                .add("payMenoy", amountStr)               // 网页端字段名
+                .add("ewalletMenoy", balance)              // 钱包余额
+                .add("eWalletName", feeForm.itemName.ifEmpty { "卡1号钱包" })
                 .add("areano", areaNo)
                 .add("buildingno", buildingNo)
                 .add("roomno", roomNo)
-                .add("itemNum", itemNum)
-                .add("typeNum", feeForm.typeNum)
-                .add("itemName", feeForm.itemName)
+                .add("cardaccNum", cardaccNum)             // 小写!网页端字段名
                 .add("token", feeForm.token)
-                .add("limitMoney", feeForm.limitMoney)
-                .add("limitMode", feeForm.limitMode)
-                .add("cardAccNum", cardInfo["cardAccNum"] ?: "")
-                .add("eWalletId", cardInfo["eWalletId"] ?: "")
-                .add("epId", cardInfo["epId"] ?: "")
                 .build()
-            // 尝试多个提交端点
-            val submitPaths = listOf("payFee/payItemlist", "payFee/payFeelist")
-            for (path in submitPaths) {
-                val req = Request.Builder().url("$baseUrl/$path").post(form)
-                    .header("User-Agent", ChnuConfig.UA)
-                    .header("Referer", "$baseUrl/")
-                    .build()
-                client.newCall(req).execute().use { resp ->
-                    if (resp.code == 200) {
-                        val html = readBodyTolerant(resp)
-                        return parsePayResult(html, amountStr)
-                    }
-                }
+            val req = Request.Builder().url("$baseUrl/payFee/payItemlist").post(form)
+                .header("User-Agent", ChnuConfig.UA)
+                .header("Referer", "$baseUrl/payFee/showItemListPayPage")
+                .build()
+            client.newCall(req).execute().use { resp ->
+                val html = readBodyTolerant(resp)
+                return parsePayResult(html, amountStr)
             }
-            return PayResult(false, "缴费提交失败,请稍后重试", amountStr)
         }
 
-        /**
-         * 校验查询密码:GET RSA 公钥 → RSA 加密密码 → POST /publiccombo/checkpaypwd。
-         * 充值与生活缴费共用。
-         * @return RSA 加密后的密码(Base64),供充值提交时复用,避免重复获取公钥
-         * @throws CampusException 密码错误或获取公钥失败
-         */
-        private fun verifyPayPassword(queryPassword: String): String {
-            // RSA 公钥接口必须用 POST(GET 返回 405)
+        /** RSA加密密码(不调用checkpaypwd,仅加密。内层类命名避免与外层AES encryptPassword冲突) */
+        private fun rsaEncryptPassword(queryPassword: String): String {
             val reqKey = Request.Builder().url("$baseUrl/publiccombo/keyPair").post(FormBody.Builder().build())
                 .header("User-Agent", ChnuConfig.UA)
                 .header("Referer", "$baseUrl/")
@@ -1520,21 +1534,7 @@ class ChnuClient(
                 exponent = keyMap.optString("exponent", "")
             }
             if (modulus.isEmpty()) throw CampusException("RSA公钥为空")
-            val encryptedPwd = rsaEncrypt(queryPassword, modulus, exponent)
-            val formPwd = FormBody.Builder().add("paypassword", encryptedPwd).build()
-            val reqPwd = Request.Builder().url("$baseUrl/publiccombo/checkpaypwd").post(formPwd)
-                .header("User-Agent", ChnuConfig.UA)
-                .header("Referer", "$baseUrl/")
-                .header("X-Requested-With", "XMLHttpRequest")
-                .build()
-            client.newCall(reqPwd).execute().use { resp ->
-                val text = readBodyTolerant(resp)
-                val json = parseJsonObject(text)
-                if (json?.optString("ajaxState") == "1") {
-                    throw CampusException("密码错误")
-                }
-            }
-            return encryptedPwd
+            return rsaEncrypt(queryPassword, modulus, exponent)
         }
 
         /** 解析楼栋/房间列表 JSON(返回 dormList/buildingList/roomList) */
@@ -1561,12 +1561,13 @@ class ChnuClient(
                 if (json != null) {
                     val state = json.optString("ajaxState", "")
                     val msg = json.optString("msg", "")
-                    return when (state) {
-                        "2", "3" -> PayResult(true, msg.ifEmpty { "操作成功" }, amount)
-                        "1" -> PayResult(false, msg.ifEmpty { "操作失败" }, amount)
-                        else -> if (msg.isNotEmpty()) PayResult(false, msg, amount)
-                        else parsePayResultHtml(trimmed, amount)
-                    }
+                return when (state) {
+                    // AJAXSTATE: NOLOGIN:0, NOAUTH:1, FAILED:2, SUCCESS:3, PASSED:4
+                    "3", "4" -> PayResult(true, msg.ifEmpty { "操作成功" }, amount)
+                    "0", "1", "2" -> PayResult(false, msg.ifEmpty { "操作失败" }, amount)
+                    else -> if (msg.isNotEmpty()) PayResult(false, msg, amount)
+                    else parsePayResultHtml(trimmed, amount)
+                }
                 }
             }
             return parsePayResultHtml(trimmed, amount)
@@ -1661,19 +1662,52 @@ class ChnuClient(
             return "$baseUrl/$action"
         }
 
-        /** RSA 加密(一卡通查询密码) */
+        /**
+         * RSA 加密(一卡通查询密码)。
+         *
+         * 对齐网页端 security.js 的 RSAUtils.encryptedString:
+         *   ● modulus/exponent 十六进制 → BigInteger
+         *   ● 明文分块,每块 2*(modulusDigits-1) 字节,零填充
+         *   ● 逐块 modular exponentiation(无 PKCS1 填充)
+         *   ● 输出 HEX 字符串,块间空格分隔
+         *
+         * 注意:这里不使用标准 PKCS1 填充,必须用 Raw RSA 对齐 JS 代码。
+         */
         private fun rsaEncrypt(plain: String, modulusHex: String, exponentHex: String): String {
-            return try {
-                // 一卡通系统 modulus/exponent 为十六进制字符串(非 Base64)
-                val modulus = java.math.BigInteger(1, modulusHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray())
-                val exponent = java.math.BigInteger(1, exponentHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray())
-                val keySpec = java.security.spec.RSAPublicKeySpec(modulus, exponent)
-                val keyFactory = java.security.KeyFactory.getInstance("RSA")
-                val publicKey = keyFactory.generatePublic(keySpec)
-                val cipher = javax.crypto.Cipher.getInstance("RSA/ECB/PKCS1Padding")
-                cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, publicKey)
-                val encrypted = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
-                Base64.encodeToString(encrypted, Base64.NO_WRAP)
+            try {
+                val modulus = java.math.BigInteger(modulusHex, 16)
+                val exponent = java.math.BigInteger(exponentHex, 16)
+                // chunkSize = 2 * (modulus.bitLength() / 16 - 1) = (modulus.bitLength() - 16) / 8
+                // JS: chunkSize = 2 * biHighIndex(this.m), where biHighIndex = digits.length - 1
+                // digits are base-65536, so chunkSize = 2 * (bytes/2 - 1) = modulusBytes - 2
+                val modulusBytes = (modulus.bitLength() + 7) / 8
+                val chunkSize = modulusBytes - 2  // same as JS: 2 * biHighIndex
+                val bytes = plain.toByteArray(Charsets.UTF_8)
+                val sb = StringBuilder()
+                var i = 0
+                while (i < bytes.size) {
+                    // 取 chunkSize 字节,不足补零
+                    val block = ByteArray(chunkSize)
+                    var j = 0
+                    while (j < chunkSize && i + j < bytes.size) {
+                        block[j] = bytes[i + j]
+                        j++
+                    }
+                    // block → positive BigInteger (big-endian, unsigned)
+                    val m = java.math.BigInteger(1, block)
+                    val enc = m.modPow(exponent, modulus)
+                    // HEX, 对齐 JS RSAUtils.biToHex
+                    val hex = enc.toString(16)
+                    // 填充前导零至 modulus 位数的 hex 长度
+                    val expectedHexLen = modulus.bitLength() / 4
+                    if (hex.length < expectedHexLen) {
+                        sb.append("0".repeat(expectedHexLen - hex.length))
+                    }
+                    sb.append(hex)
+                    if (i + chunkSize < bytes.size) sb.append(" ")
+                    i += chunkSize
+                }
+                return sb.toString()
             } catch (e: Exception) {
                 throw CampusException("RSA加密失败: ${e.message}")
             }

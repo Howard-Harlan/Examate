@@ -322,6 +322,10 @@ class CampusRepository private constructor() {
         return withHsxs(prefs) { it.getLostDetail(id) }
     }
 
+    suspend fun publishLost(prefs: PrefsManager, body: Map<String, String>): JSONObject {
+        return withHsxs(prefs) { it.publishLost(body) }
+    }
+
     suspend fun publishLost(prefs: PrefsManager, title: String, type: String,
                             category: String, description: String, location: String,
                             contactName: String, contactPhone: String, imageBase64: String = ""): JSONObject {
