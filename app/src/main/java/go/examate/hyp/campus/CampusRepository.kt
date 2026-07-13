@@ -326,6 +326,10 @@ class CampusRepository private constructor() {
         return withHsxs(prefs) { it.publishLost(body) }
     }
 
+    suspend fun uploadImage(prefs: PrefsManager, fileName: String, fileBytes: ByteArray): String {
+        return withHsxs(prefs) { it.uploadImage(fileName, fileBytes) }
+    }
+
     suspend fun publishLost(prefs: PrefsManager, title: String, type: String,
                             category: String, description: String, location: String,
                             contactName: String, contactPhone: String, imageBase64: String = ""): JSONObject {

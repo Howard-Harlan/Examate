@@ -35,6 +35,9 @@ import java.util.concurrent.TimeUnit
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.RequestBody
 import javax.net.ssl.HostnameVerifier
 import javax.net.ssl.SSLContext
 import javax.net.ssl.X509TrustManager
@@ -1318,19 +1321,13 @@ class ChnuClient(
             if (confirmHtml.isEmpty()) {
                 return PayResult(false, "获取充值确认页面失败(服务器无响应)", amountStr)
             }
-            // 检测服务器内部错误:优先提取具体错误文案
-            if (confirmHtml.contains("java.lang") || confirmHtml.contains("NullPointerException")
-                || confirmHtml.contains("NioEndpoint") || confirmHtml.contains("SocketProcessor")) {
+            // 只检测明确的服务器 500 错误(不检测业务文案,业务错误由最终提交页解析)
+            if (confirmHtml.contains("java.lang") || confirmHtml.contains("NullPointerException")) {
                 val errMsg = extractPageErrorMessage(confirmHtml)
                     ?: "一卡通充值服务暂时不可用(服务器内部错误),请稍后重试"
                 return PayResult(false, errMsg, amountStr)
             }
-            // 检测业务错误(如"银行服务时间为00:00~20:00")
-            val bizError = extractPageErrorMessage(confirmHtml)
-            if (bizError != null && (bizError.contains("失败") || bizError.contains("错误"))) {
-                return PayResult(false, bizError, amountStr)
-            }
-            // 解析 pay-form 的 action 与隐藏字段
+            // 解析 pay-form 的 action 与隐藏字段(确认页是正常步骤,不是错误)
             val (formAction, hiddenFields) = parsePayForm(confirmHtml)
             // 确定提交地址:优先使用 pay-form 的 action,解析失败则回退到 /topUp/quickPay
             val submitUrl = if (formAction.isNotEmpty()) resolveSubmitUrl(formAction)
@@ -2003,6 +2000,33 @@ class ChnuClient(
         fun getLostDetail(id: String): JSONObject {
             checkSession()
             return apiGetWithToken("lost/get_detail", mutableMapOf("id" to id))
+        }
+
+        /** 上传图片,返回文件路径 (POST multipart + token) */
+        fun uploadImage(fileName: String, fileBytes: ByteArray): String {
+            checkSession()
+            val body = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("file", fileName,
+                    RequestBody.create("image/*".toMediaType(), fileBytes))
+                .build()
+            val req = Request.Builder().url("$baseUrl/common/upload").post(body)
+                .header("User-Agent", ChnuConfig.UA)
+                .header("token", authToken)
+                .header("Referer", "$webUrl/web/")
+                .build()
+            client.newCall(req).execute().use { resp ->
+                val text = resp.body?.string() ?: "{}"
+                val json = parseJsonObject(text)
+                val code = json?.optInt("code", -1) ?: -1
+                if (code != 1) {
+                    val msg = json?.optString("msg", "上传失败") ?: "上传失败"
+                    throw CampusException(msg)
+                }
+                val url = json?.optJSONObject("data")?.optString("url", "") ?: ""
+                if (url.isEmpty()) throw CampusException("上传返回的图片URL为空")
+                return url
+            }
         }
 
         /** 发布失物招领 (POST + token) */

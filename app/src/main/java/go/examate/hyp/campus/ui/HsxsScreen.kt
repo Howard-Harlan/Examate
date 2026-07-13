@@ -1,6 +1,8 @@
 package go.examate.hyp.campus.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -25,6 +27,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import go.examate.hyp.campus.CampusRepository
 import go.examate.hyp.config.PrefsManager
+import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
@@ -116,8 +119,14 @@ private fun LostFoundSection(repo: CampusRepository, prefs: PrefsManager,
                 else -> items.forEach { item -> Spacer(Modifier.height(10.dp)); LostItemCard(item) { onDetail(item.optString("id", "")) } } }
             Spacer(Modifier.height(80.dp))
         }
-        FloatingActionButton(onClick = { showPublish = true }, modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp), containerColor = Primary
-        ) { Text("＋", color = Color.White, fontSize = 20.sp) }
+        // 发布按钮(液态玻璃效果 FAB)
+        FrostedGlassCard(
+            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp).clickable { showPublish = true }
+        ) {
+            Box(Modifier.padding(horizontal = 20.dp, vertical = 12.dp), contentAlignment = Alignment.Center) {
+                Text("＋ 发布", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            }
+        }
     }
     if (showPublish) { PublishLostDialog(repo, prefs, scope) { showPublish = false; load() } }
 }
@@ -165,7 +174,11 @@ private fun LostDetailView(id: String, repo: CampusRepository, prefs: PrefsManag
 
     LaunchedEffect(id) {
         scope.launch {
-            try { item = withContext(Dispatchers.IO) { repo.getLostDetail(prefs, id) }; loading = false }
+            try {
+                val resp = withContext(Dispatchers.IO) { repo.getLostDetail(prefs, id) }
+                item = resp.optJSONObject("data") ?: resp  // data 嵌套
+                loading = false
+            }
             catch (_: Exception) { loading = false }
         }
     }
@@ -210,13 +223,19 @@ private fun InfoRow(label: String, value: String) {
 private fun PublishLostDialog(repo: CampusRepository, prefs: PrefsManager,
     scope: kotlinx.coroutines.CoroutineScope, onDone: () -> Unit
 ) {
+    val ctx = LocalContext.current
     var type by remember { mutableStateOf("1") }
     var content by remember { mutableStateOf("") }
     var submitting by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf("") }
+    var imageUri by remember { mutableStateOf<android.net.Uri?>(null) }
+
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        imageUri = uri
+    }
 
     Dialog(onDismissRequest = { if (!submitting) onDone() }) {
-        Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+        Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
             Column(Modifier.padding(20.dp).verticalScroll(rememberScrollState())) {
                 Text("发布失物招领", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(12.dp))
@@ -231,8 +250,10 @@ private fun PublishLostDialog(repo: CampusRepository, prefs: PrefsManager,
                 Spacer(Modifier.height(10.dp))
                 OutlinedTextField(value = content, onValueChange = { content = it }, label = { Text("描述内容") },
                     modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp), maxLines = 5)
-                Spacer(Modifier.height(6.dp))
-                Text("⚠ 图片上传暂未支持,请在网页端添加", color = TextHint, fontSize = 11.sp)
+                Spacer(Modifier.height(10.dp))
+                Button(onClick = { imagePicker.launch("image/*") }, modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF0F2F5))
+                ) { Text(if (imageUri == null) "＋ 添加图片" else "已选择图片 ✓", color = TextPrimary, fontSize = 13.sp) }
                 if (result.isNotEmpty()) { Spacer(Modifier.height(8.dp)); Text(result, color = if (result.contains("成功")) Color(0xFF1D9E75) else Color(0xFFE24B4A), fontSize = 12.sp) }
                 Spacer(Modifier.height(12.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -240,10 +261,19 @@ private fun PublishLostDialog(repo: CampusRepository, prefs: PrefsManager,
                     Spacer(Modifier.width(8.dp))
                     Button(onClick = {
                         if (content.isBlank()) { result = "请填写内容"; return@Button }
-                        submitting = true
+                        submitting = true; result = ""
                         scope.launch {
                             try {
-                                withContext(Dispatchers.IO) { repo.publishLost(prefs, mapOf("content" to content, "type" to type)) }
+                                val body = mutableMapOf("content" to content, "type" to type)
+                                val uri = imageUri
+                                if (uri != null) {
+                                    val bytes = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(uri)?.readBytes() }
+                                    if (bytes != null) {
+                                        val path = withContext(Dispatchers.IO) { repo.uploadImage(prefs, "upload_${System.currentTimeMillis()}.jpg", bytes) }
+                                        body["images"] = path
+                                    }
+                                }
+                                withContext(Dispatchers.IO) { repo.publishLost(prefs, body) }
                                 result = "发布成功"; onDone()
                             } catch (e: Exception) { result = "发布失败: ${e.message}"; submitting = false }
                         }
@@ -409,7 +439,7 @@ private fun SurveyDetailView(id: String, repo: CampusRepository, prefs: PrefsMan
                 }
             }, modifier = Modifier.fillMaxWidth(), enabled = !submitting && questions.isNotEmpty(),
                 colors = ButtonDefaults.buttonColors(containerColor = Primary)
-            ) { Text(if (submitting) "提交中..." else "提交答案", color = Color.White, fontSize = 14.sp) }
+            ) { Text(if (submitting) "提交中..." else "提交问卷", color = Color.White, fontSize = 14.sp) }
         }
         Spacer(Modifier.height(30.dp))
     }

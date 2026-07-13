@@ -363,6 +363,10 @@ private fun BalanceSection(
                 scope.launch {
                     try {
                         topResult = repo.topUp(prefs, amt, queryPwd, card.cardNumberFull)
+                        // 充值成功后自动刷新余额
+                        if (topResult?.success == true) {
+                            loaded = false; loading = false
+                        }
                     } catch (e: CampusException) {
                         topError = e.message ?: "充值失败"
                     } catch (e: Exception) {
