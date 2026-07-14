@@ -232,6 +232,12 @@ class EcardViewModel(app: Application) : AndroidViewModel(app) {
     fun showBillTypePicker(show: Boolean) {
         _uiState.update { it.copy(bill = it.bill.copy(showTypePicker = show)) }
     }
+    fun showStartDatePicker(show: Boolean) {
+        _uiState.update { it.copy(bill = it.bill.copy(datePickerField = if (show) "start" else "")) }
+    }
+    fun showEndDatePicker(show: Boolean) {
+        _uiState.update { it.copy(bill = it.bill.copy(datePickerField = if (show) "end" else "")) }
+    }
 
     fun queryBills() {
         val s = _uiState.value.bill
@@ -543,6 +549,7 @@ data class BillState(
     val endDate: String = LocalDate.now().toString(),
     val recordType: String = "",
     val showTypePicker: Boolean = false,
+    val datePickerField: String = "", // "start" / "end" / ""
     val loading: Boolean = false,
     val error: String = "",
     val bills: List<BillRecord> = emptyList(),

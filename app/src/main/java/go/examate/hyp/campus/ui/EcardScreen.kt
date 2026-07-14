@@ -22,6 +22,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -282,26 +286,11 @@ private fun BillSection(state: BillState, vm: EcardViewModel) {
     SectionTitle("查询条件", "选择日期范围与记录类型")
     FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
-            Text("开始日期", color = TextHint, fontSize = 12.sp)
-            OutlinedTextField(
-                value = state.startDate,
-                onValueChange = { vm.setBillStartDate(it) },
-                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                singleLine = true,
-                placeholder = { Text("YYYY-MM-DD", color = TextHint, fontSize = 13.sp) },
-                shape = RoundedCornerShape(10.dp)
-            )
-            Spacer(Modifier.height(10.dp))
-            Text("结束日期", color = TextHint, fontSize = 12.sp)
-            OutlinedTextField(
-                value = state.endDate,
-                onValueChange = { vm.setBillEndDate(it) },
-                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                singleLine = true,
-                placeholder = { Text("YYYY-MM-DD", color = TextHint, fontSize = 13.sp) },
-                shape = RoundedCornerShape(10.dp)
-            )
-            Spacer(Modifier.height(10.dp))
+            QueryParamRow(label = "开始日期", value = state.startDate,
+                onClick = { vm.showStartDatePicker(true) })
+            QueryParamRow(label = "结束日期", value = state.endDate,
+                onClick = { vm.showEndDatePicker(true) })
+            Spacer(Modifier.height(2.dp))
             HorizontalDivider(color = DividerColor, thickness = 0.5.dp)
             Spacer(Modifier.height(6.dp))
             QueryParamRow(
@@ -374,6 +363,39 @@ private fun BillSection(state: BillState, vm: EcardViewModel) {
             onConfirm = { vm.setBillRecordType(it) },
             onDismiss = { vm.showBillTypePicker(false) }
         )
+    }
+
+    if (state.datePickerField.isNotEmpty()) {
+        val initialMillis = try {
+            LocalDate.parse(if (state.datePickerField == "start") state.startDate else state.endDate)
+                .atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        } catch (_: Exception) { java.time.LocalDate.now().minusDays(30).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() }
+        val pickerState = rememberDatePickerState(initialSelectedDateMillis = initialMillis)
+        DatePickerDialog(
+            onDismissRequest = {
+                if (state.datePickerField == "start") vm.showStartDatePicker(false)
+                else vm.showEndDatePicker(false)
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pickerState.selectedDateMillis?.let { millis ->
+                        val dt = java.time.Instant.ofEpochMilli(millis).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+                        if (state.datePickerField == "start") vm.setBillStartDate(dt.toString())
+                        else vm.setBillEndDate(dt.toString())
+                    }
+                    if (state.datePickerField == "start") vm.showStartDatePicker(false)
+                    else vm.showEndDatePicker(false)
+                }) { Text("确定", color = Primary) }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    if (state.datePickerField == "start") vm.showStartDatePicker(false)
+                    else vm.showEndDatePicker(false)
+                }) { Text("取消", color = TextSecondary) }
+            }
+        ) {
+            DatePicker(state = pickerState)
+        }
     }
 }
 
