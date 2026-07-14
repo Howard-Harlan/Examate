@@ -9,13 +9,14 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,7 +33,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -45,32 +45,44 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import go.examate.hyp.agent.QuickActions
+import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.effects.vibrancy
+import com.kyant.backdrop.highlight.Highlight
+import com.kyant.shapes.Capsule
 import go.examate.hyp.config.MyConfig
-import go.examate.hyp.entity.ModelProvider
+import go.examate.hyp.config.PrefsManager
+import go.examate.hyp.ui.chat.ActionCardView
 import go.examate.hyp.ui.chat.DynamicInputBar
 import go.examate.hyp.ui.chat.HistoryPanel
 import go.examate.hyp.ui.chat.MessageBubble
-import go.examate.hyp.ui.chat.ActionCardView
 import go.examate.hyp.ui.chat.ModelSelector
 import go.examate.hyp.ui.components.LiquidGlassBackground
+import go.examate.hyp.ui.components.LiquidGlassIconButton
+import go.examate.hyp.ui.components.LocalGlassBackdrop
 import go.examate.hyp.ui.theme.BgPrimary
 import go.examate.hyp.ui.theme.ExamateTheme
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
+import go.examate.hyp.util.AvatarHelper
 import go.examate.hyp.util.ChatHistoryManager
 import go.examate.hyp.util.ChatMsg
-import go.examate.hyp.util.ChatSession
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -95,28 +107,29 @@ class ChatActivity : ComponentActivity() {
 @Composable
 private fun ChatScreen(onBack: () -> Unit) {
     val context = LocalContext.current
-    // 单一状态所有者:ChatViewModel 通过 StateFlow 持有全部聊天状态,
-    // 由本 Composable 用 collectAsState() 收集。Activity 不再自管状态,
-    // 配置变更(旋屏等)后状态不丢失,且彻底避免了后台线程写 Compose MutableState 的崩溃根因。
     val vm: ChatViewModel = viewModel()
     val ui by vm.uiState.collectAsState()
     val providers = remember { MyConfig.loadProviders(context) }
     val listState = rememberLazyListState()
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val historyTimeFmt = remember { SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()) }
-    // 稳定的 lambda:否则每次重组生成新实例会导致所有可见气泡被迫重组(见 MarkdownRenderer 注释)。
+    val backdrop = LocalGlassBackdrop.current
     val onQuickFollowUp = remember {
-        { source: String -> vm.updateInputText("继续追问这条回复：\n${source.take(800)}\n\n") }
+        { source: String -> vm.updateInputText("关于这段内容:\n${source.take(800)}\n\n") }
     }
 
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         vm.setPendingImage(uri?.toString())
     }
 
-    // 启动时:若上次会话距今30分钟内且处于agents模式,自动恢复上次对话;
-    // 超过30分钟或非agents模式则开新会话。
+    // Agent 聊天头像:读取开关 + 加载头像
+    val chatAvatarEnabled = remember { PrefsManager.getInstance(context).isAgentChatAvatarEnabled }
+    val agentAvatarBitmap = remember(chatAvatarEnabled) {
+        if (chatAvatarEnabled) AvatarHelper.loadAgentAvatar(context) else null
+    }
+
     LaunchedEffect(Unit) {
-        if (ui.agentsMode && ui.messages.isEmpty()) {
+        if (ui.messages.isEmpty()) {
             val sessions = ChatHistoryManager.loadAll(context)
             val latest = sessions.firstOrNull()
             if (latest != null && latest.messages.isNotEmpty()) {
@@ -128,115 +141,154 @@ private fun ChatScreen(onBack: () -> Unit) {
         }
     }
 
-    LaunchedEffect(ui.messages.size, ui.isLoading) {
-        if (ui.messages.isNotEmpty()) listState.animateScrollToItem(ui.messages.size - 1)
+    // reverseLayout=true 时,index 0 在底部,新消息自动出现在底部
+    LaunchedEffect(ui.currentSession.id) {
+        listState.scrollToItem(0)
     }
 
-    // 消息变化时自动保存当前会话(持久化交给 ChatHistoryManager 的后台线程)。
     LaunchedEffect(ui.messages.size) {
         vm.saveCurrentSession(context)
     }
 
-    Column(
+    Box(
         Modifier
             .fillMaxSize()
             .background(BgPrimary)
             .imePadding()
-            .statusBarsPadding()
     ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(Modifier.size(40.dp).clickable { onBack() }, contentAlignment = Alignment.Center) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = TextPrimary, modifier = Modifier.size(22.dp))
-            }
-            ModelSelector(providers = providers, selectedIndex = ui.modelIndex, onSelect = { vm.loadModelIndex(it) })
-            Spacer(Modifier.weight(1f))
-            Box(
-                Modifier.size(40.dp).clickable {
-                    vm.loadHistory(context)
-                },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Filled.Menu, contentDescription = "历史", tint = TextPrimary, modifier = Modifier.size(20.dp))
-            }
-            Box(
-                Modifier.size(40.dp).clickable {
-                    context.startActivity(android.content.Intent(context, AgentSettingsActivity::class.java))
-                },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Filled.Settings, contentDescription = "设置", tint = TextPrimary, modifier = Modifier.size(20.dp))
-            }
-        }
-
-        QuickActionsBar(
-            agentsMode = ui.agentsMode,
-            onActionClick = { action ->
-                if (action.requiresAgents && !ui.agentsMode) {
-                    Toast.makeText(context, "此操作需要开启 Agents 模式", Toast.LENGTH_SHORT).show()
-                }
-                vm.updateInputText(action.prompt)
-            }
-        )
-
+        // ═══ 消息列表(reverseLayout:消息从底部开始,新消息自动出现在底部) ═══
         LazyColumn(
             Modifier
-                .weight(1f)
-                .fillMaxWidth()
+                .fillMaxSize()
                 .padding(horizontal = 14.dp),
             state = listState,
+            reverseLayout = true,
             verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 14.dp)
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                start = 0.dp, end = 0.dp,
+                top = 64.dp,   // 顶栏高度+留白
+                bottom = 90.dp // 输入栏高度+留白
+            )
         ) {
-            if (ui.messages.isEmpty()) {
-                item(key = "empty") { EmptyHint(ui.agentsMode) }
-            }
-            items(ui.messages, key = { it.id }) { message ->
-                MessageBubble(
-                    message,
-                    timeFmt,
-                    context,
-                    onQuickFollowUp = onQuickFollowUp
-                )
-            }
-            if (ui.isLoading) {
-                item(key = "loading") {
-                    Column(Modifier.fillMaxWidth().padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator(Modifier.width(20.dp).height(20.dp), strokeWidth = 2.dp, color = TextHint)
-                        if (ui.loadingStatus.isNotEmpty()) {
-                            Spacer(Modifier.height(6.dp))
-                            Text(ui.loadingStatus, color = TextHint, fontSize = 12.sp)
-                        }
-                        // Agents 模式下,工具执行结果卡片实时出现
-                        ui.toolProgressCards.forEach { card ->
-                            Spacer(Modifier.height(8.dp))
-                            ActionCardView(card)
+            if (ui.messages.isEmpty() && ui.streamingText.isEmpty() && !ui.isLoading) {
+                // 空状态提示(reverseLayout 下第一个 item 在底部)
+                item(key = "empty") { EmptyHint() }
+            } else {
+                // ★ 底部:流式文本 或 加载指示器
+                if (ui.streamingText.isNotEmpty()) {
+                    item(key = "streaming") {
+                        MessageBubble(
+                            ChatMsg("assistant", ui.streamingText, false, System.currentTimeMillis()),
+                            timeFmt, context, onQuickFollowUp = onQuickFollowUp,
+                            isStreaming = true,
+                            showAvatar = chatAvatarEnabled,
+                            avatarBitmap = agentAvatarBitmap
+                        )
+                    }
+                } else if (ui.isLoading) {
+                    item(key = "loading") {
+                        Column(Modifier.fillMaxWidth().padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator(Modifier.width(20.dp).height(20.dp), strokeWidth = 2.dp, color = TextHint)
+                            if (ui.loadingStatus.isNotEmpty()) {
+                                Spacer(Modifier.height(6.dp))
+                                Text(ui.loadingStatus, color = TextHint, fontSize = 12.sp)
+                            }
                         }
                     }
                 }
+                // ★ 工具进度卡片
+                ui.toolProgressCards.forEachIndexed { index, card ->
+                    item(key = "card_$index") { ActionCardView(card) }
+                }
+                // ★ 消息列表(reversed:最新消息在底部 = reversed 列表的第一个)
+                items(ui.messages.reversed(), key = { it.id }) { message ->
+                    MessageBubble(
+                        message, timeFmt, context, onQuickFollowUp = onQuickFollowUp,
+                        showAvatar = chatAvatarEnabled,
+                        avatarBitmap = agentAvatarBitmap
+                    )
+                }
             }
         }
 
-        DynamicInputBar(
-            text = ui.inputText,
-            onTextChange = { vm.updateInputText(it) },
-            hasImage = ui.pendingImageUriString != null,
-            onPickImage = { imagePicker.launch("image/*") },
-            onClearImage = { vm.clearPendingImage() },
-            canSend = (ui.inputText.isNotBlank() || ui.pendingImageUriString != null) && !ui.isLoading && providers.isNotEmpty(),
-            onSend = {
-                val text = ui.inputText.trim()
-                if (text.isEmpty() && ui.pendingImageUriString == null) return@DynamicInputBar
-                val uri = ui.pendingImageUriString?.let { Uri.parse(it) }
-                vm.send(text, uri, providers, ui.agentsMode, context)
-            },
-            agentsMode = ui.agentsMode,
-            onToggleAgents = { vm.toggleAgentsMode() }
-        )
+        // ═══ 顶栏:悬浮液态玻璃(单行:返回 / 模型选择 / 历史 / 设置) ═══
+        Row(
+            Modifier
+                .statusBarsPadding()
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // 返回按钮 — 液态玻璃胶囊
+            LiquidGlassIconButton(
+                icon = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "返回",
+                onClick = onBack,
+                modifier = Modifier.size(40.dp),
+                surfaceAlpha = 0.75f
+            )
+            Spacer(Modifier.width(6.dp))
+            // 模型选择(液态玻璃胶囊包裹)
+            Box(
+                Modifier.then(
+                    if (backdrop != null) {
+                        Modifier.drawBackdrop(
+                            backdrop = backdrop,
+                            shape = { Capsule() },
+                            effects = { vibrancy(); blur(12f) },
+                            highlight = { Highlight.Plain },
+                            onDrawSurface = { drawRect(Color.White.copy(0.75f)) }
+                        )
+                    } else {
+                        Modifier.clip(RoundedCornerShape(20.dp)).background(Color.White.copy(0.88f))
+                    }
+                )
+            ) {
+                ModelSelector(
+                    providers = providers,
+                    selectedIndex = ui.modelIndex,
+                    onSelect = { vm.loadModelIndex(it) }
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            // 历史按钮 — 液态玻璃胶囊
+            LiquidGlassIconButton(
+                icon = Icons.Filled.Menu,
+                contentDescription = "历史",
+                onClick = { vm.loadHistory(context) },
+                modifier = Modifier.size(40.dp),
+                surfaceAlpha = 0.75f
+            )
+            Spacer(Modifier.width(6.dp))
+            // 设置按钮 — 液态玻璃胶囊
+            LiquidGlassIconButton(
+                icon = Icons.Filled.Settings,
+                contentDescription = "设置",
+                onClick = {
+                    context.startActivity(android.content.Intent(context, AgentSettingsActivity::class.java))
+                },
+                modifier = Modifier.size(40.dp),
+                surfaceAlpha = 0.75f
+            )
+        }
+
+        // ═══ 底部输入栏 ═══
+        Box(Modifier.align(Alignment.BottomCenter)) {
+            DynamicInputBar(
+                text = ui.inputText,
+                onTextChange = { vm.updateInputText(it) },
+                hasImage = ui.pendingImageUriString != null,
+                onPickImage = { imagePicker.launch("image/*") },
+                onClearImage = { vm.clearPendingImage() },
+                canSend = (ui.inputText.isNotBlank() || ui.pendingImageUriString != null) && !ui.isLoading && providers.isNotEmpty(),
+                onSend = {
+                    val text = ui.inputText.trim()
+                    if (text.isEmpty() && ui.pendingImageUriString == null) return@DynamicInputBar
+                    val uri = ui.pendingImageUriString?.let { Uri.parse(it) }
+                    vm.send(text, uri, providers, context)
+                }
+            )
+        }
     }
 
     AnimatedVisibility(
@@ -248,59 +300,79 @@ private fun ChatScreen(onBack: () -> Unit) {
             sessions = ui.historyList,
             timeFmt = historyTimeFmt,
             currentSessionId = ui.currentSession.id,
-            onNewChat = {
-                vm.clearMessages()
-            },
-            onSessionClick = { session ->
-                vm.selectSession(session)
-            },
-            onDelete = { id ->
-                vm.deleteSession(context, id)
-            },
+            onNewChat = { vm.clearMessages() },
+            onSessionClick = { session -> vm.selectSession(session) },
+            onDelete = { id -> vm.deleteSession(context, id) },
             onDismiss = { vm.dismissHistory() }
         )
     }
 }
 
 @Composable
-private fun QuickActionsBar(agentsMode: Boolean, onActionClick: (QuickActions.Action) -> Unit) {
-    Row(
+private fun EmptyHint() {
+    val text = "发掘无限可能"
+    val charCount = text.length
+    // 从左到右逐字显示进度(0..charCount)
+    val revealProgress = remember { Animatable(0f) }
+    // 流体闪光偏移(0..2,扫两遍)
+    val shimmerOffset = remember { Animatable(0f) }
+    var rowWidthPx by remember { mutableStateOf(0f) }
+
+    LaunchedEffect(Unit) {
+        // 1. 从左到右逐字显示
+        revealProgress.animateTo(
+            targetValue = charCount.toFloat(),
+            animationSpec = tween(durationMillis = charCount * 180, delayMillis = 300)
+        )
+        // 2. 流体在文字后闪两下
+        shimmerOffset.animateTo(
+            targetValue = 2f,
+            animationSpec = tween(durationMillis = 1600, delayMillis = 120)
+        )
+    }
+
+    Box(
         Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 10.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+            .fillMaxSize(),
+        contentAlignment = Alignment.Center
     ) {
-        QuickActions.allActions.forEach { action ->
-            val highlight = agentsMode || !action.requiresAgents
-            Row(
-                Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(if (highlight) Color(0xFF5B8DEF).copy(0.1f) else Color(0xFFE5E7EB).copy(0.5f))
-                    .clickable { onActionClick(action) }
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(action.icon, fontSize = 13.sp)
-                Spacer(Modifier.width(4.dp))
+        Row(
+            horizontalArrangement = Arrangement.Center,
+            modifier = Modifier
+                .onSizeChanged { rowWidthPx = it.width.toFloat() }
+                .drawWithContent {
+                    drawContent()
+                    // 流体闪光:文字全部显示后启动
+                    if (shimmerOffset.value > 0f && rowWidthPx > 0f) {
+                        // 每一遍 phase 0..1,从左扫到右
+                        val phase = shimmerOffset.value % 1f
+                        // 中心 x:从 -0.5*width 到 1.5*width,光带进入并离开文字
+                        val centerX = (phase * 2f - 0.5f) * rowWidthPx
+                        val halfBand = rowWidthPx * 0.28f
+                        val brush = Brush.horizontalGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                Color.White.copy(alpha = 0.32f),
+                                Color.Transparent
+                            ),
+                            startX = centerX - halfBand,
+                            endX = centerX + halfBand
+                        )
+                        drawRect(brush = brush, size = size)
+                    }
+                }
+        ) {
+            text.forEachIndexed { index, char ->
+                val charProgress = (revealProgress.value - index).coerceIn(0f, 1f)
                 Text(
-                    action.name,
-                    color = if (highlight) Color(0xFF5B8DEF) else TextHint,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium
+                    text = char.toString(),
+                    color = TextHint,
+                    fontSize = 15.sp,
+                    modifier = Modifier.graphicsLayer {
+                        alpha = charProgress
+                    }
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun EmptyHint(agentsMode: Boolean) {
-    Box(Modifier.fillMaxWidth().padding(top = 60.dp), contentAlignment = Alignment.Center) {
-        Text(
-            "与 AI 开始对话",
-            color = TextHint,
-            fontSize = 14.sp
-        )
     }
 }

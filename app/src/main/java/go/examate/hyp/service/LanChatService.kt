@@ -96,7 +96,7 @@ class LanChatService : Service(), LifecycleOwner, SavedStateRegistryOwner, LanCh
         transport?.stop()
         transport = null
         if (isViewAdded && composeView.isAttachedToWindow) {
-            try { windowManager.removeView(composeView) } catch (e: Exception) {}
+            try { windowManager.removeView(composeView) } catch (e: Exception) { Log.w(TAG, "removeView failed", e) }
             isViewAdded = false
         }
         super.onDestroy()
@@ -162,7 +162,7 @@ class LanChatService : Service(), LifecycleOwner, SavedStateRegistryOwner, LanCh
                         onDrag = { dx, dy ->
                             chatParams.x += dx.toInt()
                             chatParams.y += dy.toInt()
-                            try { windowManager.updateViewLayout(composeView, chatParams) } catch (e: Exception) {}
+                            try { windowManager.updateViewLayout(composeView, chatParams) } catch (e: Exception) { Log.w(TAG, "updateViewLayout failed", e) }
                         },
                         onInputFocusChange = { focused ->
                             // 输入框聚焦时移除 FLAG_NOT_FOCUSABLE 让窗口可获取焦点输入;

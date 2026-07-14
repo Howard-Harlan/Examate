@@ -21,7 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.sp
 import go.examate.hyp.config.PrefsManager
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassBackground
+import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.components.LiquidGlassToggle
 import go.examate.hyp.ui.theme.BgPrimary
 import go.examate.hyp.ui.theme.Divider as DividerColor
@@ -80,29 +81,34 @@ private fun SearchSettingsScreen(onBack: () -> Unit) {
             .fillMaxSize()
             .background(BgPrimary)
             .statusBarsPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp)
-            .padding(top = 16.dp, bottom = 60.dp)
     ) {
         // 顶栏
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
+        Box(
+            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)
         ) {
-            Box(
-                Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFFF3F4F6))
-                    .clickable { onBack() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = TextPrimary, modifier = Modifier.size(20.dp))
-            }
-            Spacer(Modifier.size(12.dp))
-            Text("搜题功能设置", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+            LiquidGlassIconButton(
+                icon = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "返回",
+                onClick = onBack,
+                modifier = Modifier
+                    .size(40.dp)
+                    .align(Alignment.CenterStart)
+            )
+            Text(
+                "搜题功能设置",
+                color = TextPrimary,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.align(Alignment.Center)
+            )
         }
 
+        Column(
+            Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp)
+                .padding(top = 16.dp, bottom = 60.dp)
+        ) {
         Spacer(Modifier.height(24.dp))
 
         // AI 对话设置
@@ -144,7 +150,7 @@ private fun SearchSettingsScreen(onBack: () -> Unit) {
                         prefs.isForbidCapture = it
                     }
                 )
-                Divider(color = DividerColor, thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 18.dp))
+                HorizontalDivider(color = DividerColor, thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 18.dp))
                 ToggleRow(
                     title = "悬浮球吸边",
                     subtitle = "自动吸附至屏幕边缘",
@@ -154,7 +160,7 @@ private fun SearchSettingsScreen(onBack: () -> Unit) {
                         prefs.isEdgeAttach = it
                     }
                 )
-                Divider(color = DividerColor, thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 18.dp))
+                HorizontalDivider(color = DividerColor, thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 18.dp))
                 ToggleRow(
                     title = "半透明悬浮球",
                     subtitle = "降低悬浮球视觉干扰",
@@ -185,7 +191,7 @@ private fun SearchSettingsScreen(onBack: () -> Unit) {
                 )
                 menuOptions.forEachIndexed { index, (id, label) ->
                     if (index > 0) {
-                        Divider(color = DividerColor, thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 18.dp))
+                        HorizontalDivider(color = DividerColor, thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 18.dp))
                     }
                     ToggleRow(
                         title = label,
@@ -201,6 +207,7 @@ private fun SearchSettingsScreen(onBack: () -> Unit) {
                 }
             }
         }
+        } // 内层 Column
     }
 }
 

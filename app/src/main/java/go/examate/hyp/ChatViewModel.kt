@@ -55,19 +55,17 @@ class ChatViewModel : ViewModel() {
 
     /**
      * 发送一条消息。内部用 viewModelScope.launch 调用
-     * AgentOrchestrator.execute / simpleChat / HttpUtils.sendImageRequest。
+     * AgentOrchestrator.executeFlow(流式 SSE) / HttpUtils.sendImageRequest。
      *
      * @param text 用户输入文本(已 trim)
      * @param imageUri 待发送图片(可选,非空时走 vision 分支)
      * @param providers 已加载的 provider 列表
-     * @param agentsMode 是否启用 agents 模式
      * @param context 用于读取图片流 / 初始化 prefs
      */
     fun send(
         text: String,
         imageUri: Uri?,
         providers: List<ModelProvider>,
-        agentsMode: Boolean,
         context: Context
     ) {
         if (providers.isEmpty()) return
@@ -82,7 +80,8 @@ class ChatViewModel : ViewModel() {
                 pendingImageUriString = null,
                 isLoading = true,
                 loadingStatus = "",
-                toolProgressCards = emptyList()
+                toolProgressCards = emptyList(),
+                streamingText = ""
             )
         }
         ensurePrefs(context)
@@ -99,22 +98,23 @@ class ChatViewModel : ViewModel() {
                             stream.readBytes()
                         }
                     }
-                    val response = HttpUtils.sendImageRequest(
+                    val result = HttpUtils.sendImageRequestResult(
                         provider.requestUrl, provider.modelId, imageBytes,
                         provider.apiKey, MyConfig.CHAT_SYSTEM_PROMPT, provider.endpointType
                     )
                     updateState { it.copy(isLoading = false) }
-                    if (response == null) {
-                        appendAssistant("请求失败，请检查网络或 API 配置", isError = true)
-                    } else {
-                        val content = HttpUtils.extractContent(response, provider.endpointType)
-                        appendAssistant(
-                            if (content.isEmpty()) "解析失败:\n$response" else content,
-                            isError = content.isEmpty()
-                        )
+                    when (result) {
+                        is go.examate.hyp.util.ApiResult.Success -> {
+                            val content = HttpUtils.extractContent(result.data, provider.endpointType)
+                            appendAssistant(
+                                if (content.isEmpty()) "解析失败:\n${result.data}" else content,
+                                isError = content.isEmpty()
+                            )
+                        }
+                        else -> appendAssistant("请求失败: ${result.errorMessage()}", isError = true)
                     }
-                } else if (agentsMode) {
-                    // Agents 模式(Flow 渐进式): 工具执行过程实时更新 UI
+                } else {
+                    // Agents 模式(Flow 渐进式 + SSE 流式输出)
                     val history = historyPairs()
                     AgentOrchestrator.executeFlow(
                         context = context,
@@ -131,7 +131,6 @@ class ChatViewModel : ViewModel() {
                                 updateState { it.copy(loadingStatus = event.label) }
                             }
                             is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.ToolDone -> {
-                                // 工具执行结果 → 立即在加载区域显示卡片
                                 val card = event.card
                                 if (card != null) {
                                     updateState {
@@ -141,8 +140,13 @@ class ChatViewModel : ViewModel() {
                                 updateState { it.copy(loadingStatus = "${event.name} 完成") }
                             }
                             is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.FinalReply -> {
+                                // 非流式回复(错误 / 误判回退)
                                 updateState {
-                                    it.copy(isLoading = false, toolProgressCards = emptyList())
+                                    it.copy(
+                                        isLoading = false,
+                                        toolProgressCards = emptyList(),
+                                        streamingText = ""
+                                    )
                                 }
                                 appendAssistant(
                                     event.text,
@@ -154,37 +158,41 @@ class ChatViewModel : ViewModel() {
                                 )
                                 if (!event.isError) maybeCaptureMemory(context)
                             }
-                            // SSE 流式 token(预留,后续启用)
-                            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.FinalTextToken -> {}
-                            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.FinalTextEnd -> {}
+                            // ★ SSE 流式 token → 追加到 streamingText
+                            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.FinalTextToken -> {
+                                updateState {
+                                    it.copy(streamingText = it.streamingText + event.token)
+                                }
+                            }
+                            // ★ 流式结束 → 转为正式消息
+                            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.FinalTextEnd -> {
+                                val finalText = _uiState.value.streamingText
+                                updateState {
+                                    it.copy(
+                                        streamingText = "",
+                                        isLoading = false,
+                                        toolProgressCards = emptyList()
+                                    )
+                                }
+                                if (finalText.isNotEmpty()) {
+                                    appendAssistant(
+                                        finalText,
+                                        imageBase64 = event.imageBase64,
+                                        imageUrl = event.imageUrl,
+                                        cards = event.cards
+                                    )
+                                }
+                                maybeCaptureMemory(context)
+                            }
+                            // ★ 检测到工具调用 → 清除已显示的流式文本
+                            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.ClearStream -> {
+                                updateState { it.copy(streamingText = "") }
+                            }
                         }
-                    }
-                } else {
-                    // 普通对话模式
-                    updateState { it.copy(loadingStatus = "正在思考...") }
-                    val history = historyPairs()
-                    val content = AgentOrchestrator.simpleChat(
-                        context = context,
-                        provider = provider,
-                        userMessage = text,
-                        history = history.dropLast(1),
-                        systemPrompt = MyConfig.CHAT_SYSTEM_PROMPT
-                    )
-                    updateState { it.copy(isLoading = false) }
-                    if (content.isNullOrEmpty()) {
-                        appendAssistant("请求失败，请检查网络或 API 配置", isError = true)
-                    } else {
-                        // 普通对话也支持从回复推断校园服务快捷卡片
-                        val prefs = ensurePrefs(context)
-                        val cardEligible = prefs.rememberCampusLogin &&
-                                prefs.campusUsername.isNotEmpty()
-                        val cards = AgentTools.inferCampusCards(content, cardEligible)
-                        appendAssistant(content, cards = cards)
-                        maybeCaptureMemory(context)
                     }
                 }
             } catch (e: Exception) {
-                updateState { it.copy(isLoading = false) }
+                updateState { it.copy(isLoading = false, streamingText = "") }
                 appendAssistant("发生错误: ${e.message ?: "未知错误"}", isError = true)
             }
         }
@@ -288,13 +296,6 @@ class ChatViewModel : ViewModel() {
         updateState { it.copy(inputText = text) }
     }
 
-    /** 切换 agents 模式(同时持久化到 PrefsManager) */
-    fun toggleAgentsMode() {
-        val newMode = !_uiState.value.agentsMode
-        updateState { it.copy(agentsMode = newMode) }
-        prefs?.isAgentsMode = newMode
-    }
-
     /** 设置待发送图片(Uri 字符串) */
     fun setPendingImage(uriString: String?) {
         updateState { it.copy(pendingImageUriString = uriString) }
@@ -362,7 +363,7 @@ class ChatViewModel : ViewModel() {
  * @param isLoading 是否正在加载
  * @param loadingStatus 加载状态文案(如 "正在思考..." / "正在调用工具: xxx")
  * @param modelIndex 当前选中的 provider 索引
- * @param agentsMode 是否启用 agents 模式
+ * @param streamingText SSE 流式输出中的文本(逐字追加,流式结束后转为正式消息)
  * @param pendingImageUriString 待发送图片的 Uri 字符串(用字符串避免持有 Android 框架类)
  * @param showHistory 是否显示历史面板
  * @param currentSession 当前会话
@@ -374,7 +375,7 @@ data class ChatUiState(
     val isLoading: Boolean = false,
     val loadingStatus: String = "",
     val modelIndex: Int = 0,
-    val agentsMode: Boolean = false,
+    val streamingText: String = "",
     val pendingImageUriString: String? = null,
     val showHistory: Boolean = false,
     val currentSession: ChatSession = ChatHistoryManager.newSession(),

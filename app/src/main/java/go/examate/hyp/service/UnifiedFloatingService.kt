@@ -682,20 +682,25 @@ class UnifiedFloatingService : Service() {
                                 handler.post { setSubmitBtnStatus(true) }
                             }
                         }
-                        // 截图模式:只用非流式 sendPostRequest + extractContent
+                        // 截图模式:只用非流式 sendPostRequestResult + extractContent
                         else -> {
-                            val resText = HttpUtils.sendPostRequest(
-                                currentProvider.requestUrl, currentProvider.modelId, userInput,
-                                currentProvider.apiKey, MyConfig.SYSTEM_PROMPT,
-                                currentProvider.enableThinking, currentProvider.endpointType
-                            )
-                            if (resText == null) {
-                                handler.post {
-                                    errorTextView.visibility = View.VISIBLE
-                                    errorTextView.text = "请求失败,请检查网络或 API 配置"
-                                    setSubmitBtnStatus(true)
+                            val result = kotlinx.coroutines.runBlocking {
+                                HttpUtils.sendPostRequestResult(
+                                    currentProvider.requestUrl, currentProvider.modelId, userInput,
+                                    currentProvider.apiKey, MyConfig.SYSTEM_PROMPT,
+                                    currentProvider.enableThinking, currentProvider.endpointType
+                                )
+                            }
+                            val resText = when (result) {
+                                is go.examate.hyp.util.ApiResult.Success -> result.data
+                                else -> {
+                                    handler.post {
+                                        errorTextView.visibility = View.VISIBLE
+                                        errorTextView.text = "请求失败: ${result.errorMessage()}"
+                                        setSubmitBtnStatus(true)
+                                    }
+                                    return@Runnable
                                 }
-                                return@Runnable
                             }
                             val content = HttpUtils.extractContent(resText, currentProvider.endpointType)
                             handler.post {

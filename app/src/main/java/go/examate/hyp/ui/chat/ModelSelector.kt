@@ -1,6 +1,5 @@
 package go.examate.hyp.ui.chat
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -26,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import go.examate.hyp.entity.ModelProvider
+import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 
@@ -48,9 +48,11 @@ fun ModelSelector(providers: List<ModelProvider>, selectedIndex: Int, onSelect: 
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            modifier = Modifier
-                .background(Color.White, RoundedCornerShape(16.dp))
-                .width(220.dp)
+            modifier = Modifier.width(220.dp),
+            shape = RoundedCornerShape(20.dp),
+            containerColor = Color.White.copy(0.95f),
+            tonalElevation = 0.dp,
+            shadowElevation = 8.dp
         ) {
             providers.forEachIndexed { i, p ->
                 val isSelected = i == selectedIndex
@@ -58,18 +60,18 @@ fun ModelSelector(providers: List<ModelProvider>, selectedIndex: Int, onSelect: 
                     Modifier
                         .fillMaxWidth()
                         .clickable { onSelect(i); expanded = false }
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                        .padding(horizontal = 16.dp, vertical = 11.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         p.displayName,
-                        color = if (isSelected) Color(0xFF5B8DEF) else TextPrimary,
+                        color = if (isSelected) AccentBlue else TextPrimary,
                         fontSize = 14.sp,
                         fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal,
                         modifier = Modifier.weight(1f)
                     )
                     if (isSelected) {
-                        Text("✓", color = Color(0xFF5B8DEF), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        Text("✓", color = AccentBlue, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                     }
                 }
             }

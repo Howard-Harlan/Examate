@@ -68,7 +68,7 @@ private data class TopupPageInfo(
     val formFields: Map<String, String> = emptyMap()
 )
 
-/** 缴费表单字段(对齐 Python ecard.py get_pay_fee_form) */
+/** 缴费表单字段(对齐 Python ecard.py pay_fee) */
 private data class PayFeeForm(
     val typeNum: String,
     val token: String,
@@ -1437,7 +1437,7 @@ class ChnuClient(
                     val value = Regex("""value="([^"]*)"""").find(tag.value)?.groupValues?.get(1) ?: ""
                     if (name != null) fields[name] = value
                 }
-                // 项目名称(缴费项名称,如"滨湖1-5宿舍照明电费")
+                // 项目名称
                 val knownItemNames = mapOf("2" to "常工电控缴费", "3" to "滨湖1-5宿舍照明电费")
                 var itemName = knownItemNames[itemNum] ?: ""
                 val nameMatch = Regex("""(常工电控缴费|滨湖1-5宿舍照明电费|[^<]{1,20}(?:电费|电控|照明)[^<]{0,20})""").find(html)
@@ -1505,10 +1505,7 @@ class ChnuClient(
                 }
             }
 
-            // Step 4: 提交缴费(字段名完全对齐网页端 elementObj)
-            //   payMenoy=金额, cardaccNum=卡号(小写), ewalletMenoy=余额
-            //   NO inputPassword(已通过 checkpaypwd 验证)
-            //   NO limitMoney/limitMode/epId(网页端不传)
+            // Step 4: 提交缴费(恢复到14:43成功版本的字段组合)
             val balance = cardInfo["balance"] ?: "0"
             val cardaccNum = cardInfo["cardAccNum"] ?: ""
             val form = FormBody.Builder()
@@ -1516,13 +1513,13 @@ class ChnuClient(
                 .add("eWalletId", cardInfo["eWalletId"] ?: "1")
                 .add("typeNum", feeForm.typeNum)
                 .add("itemName", feeForm.itemName)
-                .add("payMenoy", amountStr)               // 网页端字段名
-                .add("ewalletMenoy", balance)              // 钱包余额
-                .add("eWalletName", feeForm.itemName.ifEmpty { "卡1号钱包" })
+                .add("payMenoy", amountStr)
+                .add("ewalletMenoy", balance)
+                .add("eWalletName", "卡1号钱包")
                 .add("areano", areaNo)
                 .add("buildingno", buildingNo)
                 .add("roomno", roomNo)
-                .add("cardaccNum", cardaccNum)             // 小写!网页端字段名
+                .add("cardaccNum", cardaccNum)
                 .add("token", feeForm.token)
                 .build()
             val req = Request.Builder().url("$baseUrl/payFee/payItemlist").post(form)
@@ -1594,14 +1591,20 @@ class ChnuClient(
         /** 从 HTML 文本解析充值/缴费结果 */
         private fun parsePayResultHtml(html: String, amount: String): PayResult {
             val plainText = stripTags(html)
-            val successKeywords = listOf("成功", "充值成功", "缴费成功", "提交成功", "success")
-            val failKeywords = listOf("失败", "余额不足", "错误", "异常", "密码错误")
-            val isSuccess = successKeywords.any { it in plainText } && !failKeywords.any { it in plainText }
-            val msg = Regex("""alert\(["']([^"']+)["']""").find(html)?.groupValues?.get(1)
-                ?: Regex("""(成功[^<。]*)""").find(plainText)?.groupValues?.get(1)
-                ?: Regex("""(失败[^<。]*)""").find(plainText)?.groupValues?.get(1)
-                ?: if (isSuccess) "操作成功" else "操作失败"
-            return PayResult(isSuccess, msg, amount)
+            // 先判断整体是成功还是失败(查整个页面,不只是提取的单条消息)
+            val hasSuccess = Regex("""(缴费成功|充值成功|操作成功|支付成功|提交成功)""").containsMatchIn(html)
+            val isPageSuccess = hasSuccess || (
+                !Regex("""(缴费失败|密码错误|充值失败|操作失败|验证失败)""").containsMatchIn(html) &&
+                // 如果页面含账单表格说明支付已处理(余额低于下限是提示,不代表失败)
+                Regex("""交易金额|交易时间|dealTime""").containsMatchIn(html)
+            )
+            // 提取消息
+            var msg = Regex("""alert\s*[(（]\s*["'`]([^"'\`]+)["'`]""").find(html)?.groupValues?.get(1)
+            if (msg == null) msg = Regex("""(缴费成功|充值成功|操作成功|提交成功)""").find(html)?.groupValues?.get(1)
+            if (msg == null) msg = Regex("""([^<。\n]{0,30}(?:不足|低于|下限)[^<。\n]{0,30})""").find(plainText)?.groupValues?.get(1)
+            if (msg == null) msg = Regex("""(失败[^<。\n]{0,30})""").find(plainText)?.groupValues?.get(1)
+            if (msg == null) msg = if (isPageSuccess) "缴费成功" else "操作失败"
+            return PayResult(isPageSuccess, msg, amount)
         }
 
         /**
@@ -1695,28 +1698,24 @@ class ChnuClient(
             try {
                 val modulus = java.math.BigInteger(modulusHex, 16)
                 val exponent = java.math.BigInteger(exponentHex, 16)
-                // chunkSize = 2 * (modulus.bitLength() / 16 - 1) = (modulus.bitLength() - 16) / 8
-                // JS: chunkSize = 2 * biHighIndex(this.m), where biHighIndex = digits.length - 1
-                // digits are base-65536, so chunkSize = 2 * (bytes/2 - 1) = modulusBytes - 2
+                // chunkSize 对齐 JS: 2 * biHighIndex(this.m) = modulusBytes - 2
                 val modulusBytes = (modulus.bitLength() + 7) / 8
-                val chunkSize = modulusBytes - 2  // same as JS: 2 * biHighIndex
+                val chunkSize = modulusBytes - 2
                 val bytes = plain.toByteArray(Charsets.UTF_8)
                 val sb = StringBuilder()
                 var i = 0
                 while (i < bytes.size) {
-                    // 取 chunkSize 字节,不足补零
                     val block = ByteArray(chunkSize)
                     var j = 0
                     while (j < chunkSize && i + j < bytes.size) {
                         block[j] = bytes[i + j]
                         j++
                     }
-                    // block → positive BigInteger (big-endian, unsigned)
+                    // JS digits[j] = a[k] + a[k+1]*256, 等价于整个 block 反转字节序
+                    block.reverse()
                     val m = java.math.BigInteger(1, block)
                     val enc = m.modPow(exponent, modulus)
-                    // HEX, 对齐 JS RSAUtils.biToHex
                     val hex = enc.toString(16)
-                    // 填充前导零至 modulus 位数的 hex 长度
                     val expectedHexLen = modulus.bitLength() / 4
                     if (hex.length < expectedHexLen) {
                         sb.append("0".repeat(expectedHexLen - hex.length))
@@ -1745,10 +1744,21 @@ class ChnuClient(
                     .map { c -> stripTags(c.groupValues[1]).trim() }.toList()
                 if (cells.size < 2) continue
                 if (cells.all { it.isEmpty() }) continue
+                // 消费: 商户(3) + 地点(4), 充值: 交易内容(2) + 银行(3)
+                val descParts = mutableListOf<String>()
+                if (typeName == "消费记录") {
+                    cells.getOrNull(3)?.let { if (it.isNotEmpty()) descParts.add(it) }
+                    cells.getOrNull(4)?.let { if (it.isNotEmpty()) descParts.add(it) }
+                } else {
+                    cells.getOrNull(2)?.let { if (it.isNotEmpty()) descParts.add(it) }
+                    cells.getOrNull(3)?.let { if (it.isNotEmpty()) descParts.add(it) }
+                }
                 records.add(BillRecord(
-                    time = cells.getOrNull(0) ?: "",
-                    amount = cells.getOrNull(1) ?: "",
-                    description = cells.drop(2).filter { it.isNotEmpty() }.joinToString(" "),
+                    time = cells.getOrNull(1) ?: "",
+                    amount = cells.getOrNull(5) ?: "",
+                    description = descParts.joinToString(" ").ifEmpty {
+                        cells.drop(2).filter { it.isNotEmpty() }.firstOrNull() ?: typeName
+                    },
                     type = typeName
                 ))
             }
@@ -1961,6 +1971,8 @@ class ChnuClient(
             private set
         @Volatile var userName: String = ""
             private set
+        @Volatile var userPhone: String = ""
+            private set
         private var authToken: String = ""
 
         fun login() {
@@ -1976,9 +1988,22 @@ class ChnuClient(
             userName = data?.optString("user_name", "") ?: ""
             // GET user/getUserInfo (with token header)
             val info = apiGetWithToken("user/getUserInfo")
-            userName = info.optJSONObject("data")?.optString("user_name", userName) ?: userName
-                .ifEmpty { info.optString("user_name", userName) }
+            val infoData = info.optJSONObject("data")
+            userName = infoData?.optString("user_name", userName) ?: userName
+            userPhone = infoData?.optString("user_phone", "") ?: ""
             loggedIn = true
+        }
+
+        /** 获取校区列表 (GET + token) — 网页版使用 common/get_campus_list */
+        fun getOrganiseList(): JSONObject {
+            checkSession()
+            return apiGetWithToken("common/get_campus_list")
+        }
+
+        /** 获取当前用户信息(含手机号) */
+        fun getUserInfo(): JSONObject {
+            checkSession()
+            return apiGetWithToken("user/getUserInfo")
         }
 
         private fun checkSession() {

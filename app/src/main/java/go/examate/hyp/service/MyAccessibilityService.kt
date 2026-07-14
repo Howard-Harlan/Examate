@@ -18,8 +18,8 @@ class MyAccessibilityService : AccessibilityService() {
     // 搜索关键字
     private var keyword: String? = null
 
-    // 被更新UI的View
-    private var textView: TextView? = null
+    // 被更新UI的View(用 WeakReference 防止 Activity 泄漏)
+    private var textViewRef: java.lang.ref.WeakReference<TextView>? = null
 
     init {
         myAService = this
@@ -31,7 +31,7 @@ class MyAccessibilityService : AccessibilityService() {
             return
         }
 
-        if (keyword != null && textView != null) getFullTextFromPart()
+        if (keyword != null && textViewRef?.get() != null) getFullTextFromPart()
     }
 
     override fun onInterrupt() {
@@ -40,6 +40,7 @@ class MyAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        textViewRef = null
         myAService = null
     }
 
@@ -47,7 +48,7 @@ class MyAccessibilityService : AccessibilityService() {
         if (nodeInfo == null) return
 
         val kw = keyword ?: return
-        val tv = textView ?: return
+        val tv = textViewRef?.get() ?: return
         // 当前节点的文本内容
         val text = nodeInfo.text
         if (text != null && !TextUtils.isEmpty(text) && text.toString().contains(kw)) {
@@ -391,7 +392,7 @@ class MyAccessibilityService : AccessibilityService() {
 
         @JvmStatic
         fun SetTextView(v: TextView?) {
-            myAService?.textView = v
+            myAService?.textViewRef = v?.let { java.lang.ref.WeakReference(it) }
         }
 
         @JvmStatic

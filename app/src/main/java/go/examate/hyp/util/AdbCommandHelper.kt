@@ -12,7 +12,8 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class AdbCommandHelper @Throws(UserNotAuthenticatedException::class)
-constructor(private val context: Context) {
+constructor(context: Context) {
+    private val context = context.applicationContext
 
     private var serviceManager: ShizukuServiceManager? = null
     private var userService: IUserService? = null

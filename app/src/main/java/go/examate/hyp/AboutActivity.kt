@@ -24,10 +24,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -49,6 +49,11 @@ import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassBackground
 import go.examate.hyp.ui.components.LiquidGlassButton
+import go.examate.hyp.ui.components.LiquidGlassIconButton
+import go.examate.hyp.ui.components.PlainDialog
+import go.examate.hyp.ui.components.PlainDialogButtons
+import go.examate.hyp.ui.components.PlainDialogContent
+import go.examate.hyp.ui.components.PlainDialogTitle
 import go.examate.hyp.ui.theme.BgPrimary
 import go.examate.hyp.ui.theme.Divider as DividerColor
 import go.examate.hyp.ui.theme.ExamateTheme
@@ -90,29 +95,34 @@ private fun AboutScreen(onBack: () -> Unit) {
             .fillMaxSize()
             .background(BgPrimary)
             .statusBarsPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp)
-            .padding(top = 16.dp, bottom = 60.dp)
     ) {
-        // 顶栏:返回 + 标题
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
+        // 顶栏:返回 + 居中标题
+        Box(
+            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)
         ) {
-            Box(
-                Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFFF3F4F6))
-                    .clickable { onBack() },
-                contentAlignment = Alignment.Center
-            ) {
-                Text("‹", color = TextPrimary, fontSize = 22.sp)
-            }
-            Spacer(Modifier.size(12.dp))
-            Text("关于", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+            LiquidGlassIconButton(
+                icon = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "返回",
+                onClick = onBack,
+                modifier = Modifier
+                    .size(40.dp)
+                    .align(Alignment.CenterStart)
+            )
+            Text(
+                "关于",
+                color = TextPrimary,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.align(Alignment.Center)
+            )
         }
 
+        Column(
+            Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp)
+                .padding(top = 16.dp, bottom = 60.dp)
+        ) {
         Spacer(Modifier.height(24.dp))
 
         // ═══ 应用信息 ═══
@@ -171,7 +181,7 @@ private fun AboutScreen(onBack: () -> Unit) {
             Column {
                 openSourceLibs.forEachIndexed { index, lib ->
                     if (index > 0) {
-                        Divider(color = DividerColor, thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 16.dp))
+                        HorizontalDivider(color = DividerColor, thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 16.dp))
                     }
                     Row(
                         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
@@ -189,66 +199,54 @@ private fun AboutScreen(onBack: () -> Unit) {
 
         Spacer(Modifier.height(20.dp))
 
+        } // 内层 Column
     }
 
     // 更新检查结果弹窗
     if (showUpdateDialog && updateResult != null) {
         when (val result = updateResult!!) {
             is UpdateChecker.Result.NewVersion -> {
-                AlertDialog(
-                    onDismissRequest = { showUpdateDialog = false },
-                    title = { Text("发现新版本") },
-                    text = {
-                        Column {
-                            Text("当前版本: ${result.currentVersion}")
-                            Text("最新版本: ${result.latestVersion}")
-                            Spacer(Modifier.height(8.dp))
-                            Text("更新内容:", fontWeight = FontWeight.Medium)
-                            Spacer(Modifier.height(4.dp))
-                            Text(result.releaseNotes, fontSize = 13.sp, lineHeight = 18.sp)
-                        }
-                    },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            // 打开下载链接(浏览器)
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(result.downloadUrl))
-                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            context.startActivity(intent)
-                            showUpdateDialog = false
-                        }) {
-                            Text("下载更新")
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showUpdateDialog = false }) {
-                            Text("稍后")
-                        }
+                PlainDialog(onDismissRequest = { showUpdateDialog = false }) {
+                    PlainDialogTitle("发现新版本")
+                    Column(Modifier.padding(horizontal = 24.dp)) {
+                        Text("当前版本: ${result.currentVersion}", color = TextHint, fontSize = 13.sp)
+                        Text("最新版本: ${result.latestVersion}", color = TextHint, fontSize = 13.sp)
+                        Spacer(Modifier.height(8.dp))
+                        Text("更新内容", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Spacer(Modifier.height(4.dp))
+                        Text(result.releaseNotes, color = TextSecondary, fontSize = 13.sp, lineHeight = 18.sp)
                     }
-                )
+                    Spacer(Modifier.height(12.dp))
+                    PlainDialogButtons(
+                        listOf(
+                            Triple("下载更新", true) {
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(result.downloadUrl))
+                                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                context.startActivity(intent)
+                                showUpdateDialog = false
+                            },
+                            Triple("稍后", false) { showUpdateDialog = false }
+                        )
+                    )
+                }
             }
             is UpdateChecker.Result.UpToDate -> {
-                AlertDialog(
-                    onDismissRequest = { showUpdateDialog = false },
-                    title = { Text("已是最新版本") },
-                    text = { Text("当前版本 $currentVersion 已是最新") },
-                    confirmButton = {
-                        TextButton(onClick = { showUpdateDialog = false }) {
-                            Text("确定")
-                        }
-                    }
-                )
+                PlainDialog(onDismissRequest = { showUpdateDialog = false }) {
+                    PlainDialogTitle("已是最新版本")
+                    PlainDialogContent("当前版本 $currentVersion 已是最新")
+                    PlainDialogButtons(
+                        listOf(Triple("确定", true) { showUpdateDialog = false })
+                    )
+                }
             }
             is UpdateChecker.Result.Error -> {
-                AlertDialog(
-                    onDismissRequest = { showUpdateDialog = false },
-                    title = { Text("检查失败") },
-                    text = { Text(result.message) },
-                    confirmButton = {
-                        TextButton(onClick = { showUpdateDialog = false }) {
-                            Text("确定")
-                        }
-                    }
-                )
+                PlainDialog(onDismissRequest = { showUpdateDialog = false }) {
+                    PlainDialogTitle("检查失败")
+                    PlainDialogContent(result.message)
+                    PlainDialogButtons(
+                        listOf(Triple("确定", true) { showUpdateDialog = false })
+                    )
+                }
             }
         }
     }

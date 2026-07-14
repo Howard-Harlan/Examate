@@ -3,6 +3,7 @@ package go.examate.hyp.service
 import android.content.Context
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.util.Log
 import go.examate.hyp.config.PrefsManager
 import go.examate.hyp.ui.screens.LanChatMessage
 import org.json.JSONObject
@@ -26,9 +27,10 @@ import java.util.concurrent.Executors
  * 回调可能在工作线程触发,UI 侧自行切主线程更新状态。
  */
 class LanChatTransport(
-    private val context: Context,
+    context: Context,
     private val callback: Callback
 ) {
+    private val context = context.applicationContext
 
     interface Callback {
         /** 收到他人消息(子线程触发) */
@@ -45,6 +47,7 @@ class LanChatTransport(
         private const val HEARTBEAT_INTERVAL_MS = 10_000L
         private const val DEVICE_TIMEOUT_MS = 30_000L
         private const val MAX_MSG_LEN = 500
+        private const val TAG = "LanChatTransport"
     }
 
     private data class DeviceInfo(val name: String, val lastSeen: Long)
@@ -60,6 +63,13 @@ class LanChatTransport(
 
     /** 已发现的在线设备(id -> 信息) */
     private val devices = ConcurrentHashMap<String, DeviceInfo>()
+
+    /** 在线设备名称列表(含自己),供 UI 展示 */
+    fun getOnlineDeviceNames(): List<String> {
+        val names = devices.values.map { it.name }.toMutableList()
+        names.add(0, myName)
+        return names
+    }
 
     private var socket: DatagramSocket? = null
     private var receiveThread: Thread? = null
@@ -112,12 +122,12 @@ class LanChatTransport(
             }
             val data = bye.toString().toByteArray(Charsets.UTF_8)
             socket?.send(DatagramPacket(data, data.size, InetAddress.getByName(BROADCAST_ADDR), PORT))
-        } catch (e: Exception) {}
+        } catch (e: Exception) { Log.w(TAG, "send bye failed", e) }
         receiveThread?.interrupt(); heartbeatThread?.interrupt()
-        try { socket?.close() } catch (e: Exception) {}
+        try { socket?.close() } catch (e: Exception) { Log.w(TAG, "socket close failed", e) }
         socket = null
         executor.shutdownNow()
-        try { multicastLock?.release() } catch (e: Exception) {}
+        try { multicastLock?.release() } catch (e: Exception) { Log.w(TAG, "multicastLock release failed", e) }
         multicastLock = null
         devices.clear()
     }
@@ -130,7 +140,7 @@ class LanChatTransport(
             multicastLock = wifi.createMulticastLock("lan_chat").apply {
                 setReferenceCounted(false); acquire()
             }
-        } catch (e: Exception) {}
+        } catch (e: Exception) { Log.w(TAG, "acquireMulticastLock failed", e) }
     }
 
     private fun buildPacket(type: String): JSONObject = JSONObject().apply {
@@ -203,7 +213,7 @@ class LanChatTransport(
             try {
                 val data = json.toString().toByteArray(Charsets.UTF_8)
                 socket?.send(DatagramPacket(data, data.size, InetAddress.getByName(BROADCAST_ADDR), PORT))
-            } catch (e: Exception) {}
+            } catch (e: Exception) { Log.w(TAG, "send failed", e) }
         }
     }
 }

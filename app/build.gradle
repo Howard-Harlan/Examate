@@ -59,12 +59,11 @@ android {
 dependencies {
 
     // Shizuku API
-    implementation 'dev.rikka.shizuku:api:13.1.5'
-    implementation 'dev.rikka.shizuku:provider:13.1.5'
+    implementation libs.shizuku.api
+    implementation libs.shizuku.provider
 
     implementation libs.appcompat
     implementation libs.material
-    implementation libs.activity
     implementation libs.constraintlayout
 
     // backdrop 液态玻璃库(实验性,仅安卓 13+ 启用)
@@ -75,7 +74,8 @@ dependencies {
     implementation libs.okhttp
 
     // ViewModel for Compose
-    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7'
+    implementation libs.lifecycle.viewmodel.compose
+    implementation libs.lifecycle.runtime.compose
 
     // Compose
     implementation platform(libs.compose.bom)
@@ -89,7 +89,7 @@ dependencies {
     debugImplementation libs.compose.ui.tooling
 
     // Coil: 图片加载(淮师心声等)
-    implementation 'io.coil-kt:coil-compose:2.6.0'
+    implementation libs.coil.compose
 
     testImplementation libs.junit
     androidTestImplementation libs.ext.junit

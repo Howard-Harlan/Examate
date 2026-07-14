@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -33,6 +35,9 @@ import androidx.compose.ui.window.Dialog
 import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassButton
+import go.examate.hyp.ui.components.LiquidGlassIconButton
+import go.examate.hyp.ui.theme.Error
+import go.examate.hyp.ui.theme.ErrorBg
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
@@ -74,21 +79,20 @@ fun CampusPageScaffold(
     content: @Composable () -> Unit
 ) {
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        // 顶栏
+        // 顶栏:液态玻璃悬浮返回按钮
         Box(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp)
+                .padding(horizontal = 10.dp, vertical = 6.dp)
         ) {
-            Box(
-                Modifier
+            LiquidGlassIconButton(
+                icon = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "返回",
+                onClick = onBack,
+                modifier = Modifier
                     .size(40.dp)
                     .align(Alignment.CenterStart)
-                    .clickable { onBack() },
-                contentAlignment = Alignment.Center
-            ) {
-                Text("←", color = TextPrimary, fontSize = 22.sp)
-            }
+            )
             Text(
                 text = title,
                 color = TextPrimary,
@@ -109,6 +113,40 @@ fun CampusPageScaffold(
         }
         // 底部栏
         bottomBar?.invoke()
+    }
+}
+
+// ════════════════════════════════════════
+//  通用 Tab 栏(液态玻璃风格)
+// ════════════════════════════════════════
+
+@Composable
+fun GlassTabBar(
+    tabs: List<String>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    FrostedGlassCard(modifier = modifier.fillMaxWidth()) {
+        Row(Modifier.padding(4.dp)) {
+            tabs.forEachIndexed { index, label ->
+                val active = index == selectedIndex
+                Box(
+                    Modifier.weight(1f).clip(RoundedCornerShape(10.dp))
+                        .background(if (active) Primary else Color.Transparent)
+                        .clickable { onSelect(index) }
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        label,
+                        color = if (active) Color.White else TextHint,
+                        fontSize = 12.sp,
+                        fontWeight = if (active) FontWeight.Medium else FontWeight.Normal
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -240,10 +278,10 @@ fun ErrorBlock(message: String) {
             .fillMaxWidth()
             .padding(vertical = 8.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFFFFF0F0))
+            .background(ErrorBg)
             .padding(14.dp)
     ) {
-        Text(message, color = Color(0xFFE53935), fontSize = 12.sp, lineHeight = 17.sp)
+        Text(message, color = Error, fontSize = 12.sp, lineHeight = 17.sp)
     }
 }
 

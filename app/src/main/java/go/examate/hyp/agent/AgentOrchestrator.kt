@@ -6,6 +6,7 @@ import go.examate.hyp.campus.CampusRepository
 import go.examate.hyp.config.PrefsManager
 import go.examate.hyp.entity.ModelProvider
 import go.examate.hyp.util.HttpUtils
+import go.examate.hyp.util.HttpUtils.SseEvent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -59,8 +60,14 @@ object AgentOrchestrator {
         ) : AgentEvent()
         /** 最终回复的流式文本 token(SSE 逐字输出) */
         data class FinalTextToken(val token: String) : AgentEvent()
-        /** 最终回复的流式输出结束 */
-        data object FinalTextEnd : AgentEvent()
+        /** 最终回复的流式输出结束,附带卡片和图片信息 */
+        data class FinalTextEnd(
+            val cards: List<go.examate.hyp.util.ActionCard> = emptyList(),
+            val imageBase64: String? = null,
+            val imageUrl: String? = null
+        ) : AgentEvent()
+        /** 清除之前流式输出的文本(检测到工具调用时,清除已显示的部分文本) */
+        data object ClearStream : AgentEvent()
     }
 
     /** Agent 回复结果 */
@@ -194,13 +201,12 @@ object AgentOrchestrator {
     )
 
     /**
-     * 执行一次完整的 Agent 对话(Flow 渐进式输出)。
+     * 执行一次完整的 Agent 对话(Flow 渐进式输出 + SSE 流式文本)。
      *
      * 相比 execute(),本函数在工具调用过程中持续 emit AgentEvent,
      * 让 ChatViewModel 可以实时更新 UI(显示工具状态气泡 + 结果卡片),
-     * 而不是等到全部完成再一次性显示。感知速度提升 3-5 倍。
-     *
-     * 另外:多个工具并行执行(用 coroutineScope + async),不再串行等待。
+     * 最后一轮(无工具调用时)用 SSE 流式逐字输出文本,体验更自然。
+     * 多个工具并行执行(用 coroutineScope + async),不再串行等待。
      */
     suspend fun executeFlow(
         context: Context,
@@ -228,26 +234,40 @@ object AgentOrchestrator {
         var imageUrl: String? = null
 
         for (iteration in 0 until MAX_ITERATIONS) {
-            // HTTP 请求放在 IO 线程,避免阻塞 flow 收集(通常在 Main 线程)
-            val apiResult = withContext(Dispatchers.IO) {
-                HttpUtils.sendChatWithHistoryResult(
-                    provider.requestUrl, provider.modelId, messages,
-                    provider.apiKey, systemPrompt, provider.enableThinking, provider.endpointType
-                )
-            }
+            // ★ 流式请求:逐字收集 token,同时实时透出给 UI
+            val fullText = StringBuilder()
+            var toolCallSeen = false
+            var streamError: String? = null
 
-            val response = when (apiResult) {
-                is go.examate.hyp.util.ApiResult.Success -> apiResult.data
-                else -> {
-                    emit(AgentEvent.FinalReply(
-                        "请求失败: ${apiResult.errorMessage()}",
-                        isError = true
-                    ))
-                    return@flow
+            HttpUtils.sendChatWithHistoryStreamFlow(
+                provider.requestUrl, provider.modelId, messages,
+                provider.apiKey, systemPrompt, provider.enableThinking, provider.endpointType
+            ).collect { sse ->
+                when (sse) {
+                    is HttpUtils.SseEvent.Token -> {
+                        fullText.append(sse.text)
+                        if (!toolCallSeen) {
+                            // 检测到 <tool_call 标记 → 停止透出,清除已显示文本
+                            if (fullText.contains("<tool_call")) {
+                                toolCallSeen = true
+                                emit(AgentEvent.ClearStream)
+                            } else {
+                                emit(AgentEvent.FinalTextToken(sse.text))
+                            }
+                        }
+                    }
+                    is HttpUtils.SseEvent.ThinkToken -> { /* 思考过程暂不透出 */ }
+                    is HttpUtils.SseEvent.Error -> { streamError = sse.message }
+                    HttpUtils.SseEvent.Done -> { /* 流结束后统一处理 */ }
                 }
             }
 
-            val rawText = HttpUtils.extractContent(response, provider.endpointType)
+            if (streamError != null) {
+                emit(AgentEvent.FinalReply(streamError!!, isError = true))
+                return@flow
+            }
+
+            val rawText = fullText.toString()
 
             if (rawText.isEmpty()) {
                 emit(AgentEvent.FinalReply(
@@ -262,9 +282,18 @@ object AgentOrchestrator {
 
             if (toolCalls.isEmpty()) {
                 val inferred = AgentTools.inferCampusCards(displayText, campusLoggedIn)
-                emit(AgentEvent.FinalReply(displayText, imageBase64, imageUrl, inferred))
+                if (toolCallSeen) {
+                    // 误判:曾清除流式文本但实际无工具调用,回退为整条回复
+                    emit(AgentEvent.FinalReply(displayText, imageBase64, imageUrl, inferred))
+                } else {
+                    // 正常流式结束
+                    emit(AgentEvent.FinalTextEnd(inferred, imageBase64, imageUrl))
+                }
                 return@flow
             }
+
+            // 有工具调用:确保流式文本已清除
+            if (!toolCallSeen) emit(AgentEvent.ClearStream)
 
             // 把 AI 的完整回复(含 <tool_call>)加入对话上下文
             messages.add("assistant" to rawText)
@@ -306,20 +335,35 @@ object AgentOrchestrator {
             }
         }
 
-        // 达到最大迭代次数,最后一次 API 调用让 AI 总结
-        val lastApiResult = withContext(Dispatchers.IO) {
-            HttpUtils.sendChatWithHistoryResult(
-                provider.requestUrl, provider.modelId, messages,
-                provider.apiKey, systemPrompt, provider.enableThinking, provider.endpointType
-            )
+        // 达到最大迭代次数,最后一次流式请求让 AI 总结
+        val fullText = StringBuilder()
+        var streamError: String? = null
+
+        HttpUtils.sendChatWithHistoryStreamFlow(
+            provider.requestUrl, provider.modelId, messages,
+            provider.apiKey, systemPrompt, provider.enableThinking, provider.endpointType
+        ).collect { sse ->
+            when (sse) {
+                is HttpUtils.SseEvent.Token -> {
+                    fullText.append(sse.text)
+                    if (!fullText.contains("<tool_call")) {
+                        emit(AgentEvent.FinalTextToken(sse.text))
+                    }
+                }
+                is HttpUtils.SseEvent.ThinkToken -> {}
+                is HttpUtils.SseEvent.Error -> { streamError = sse.message }
+                HttpUtils.SseEvent.Done -> {}
+            }
         }
-        val finalText = when (lastApiResult) {
-            is go.examate.hyp.util.ApiResult.Success ->
-                AgentTools.stripToolCalls(HttpUtils.extractContent(lastApiResult.data, provider.endpointType))
-            else -> "已达到最大工具调用次数(${lastApiResult.errorMessage()})"
+
+        if (streamError != null) {
+            emit(AgentEvent.FinalReply("已达到最大工具调用次数($streamError)", isError = true))
+            return@flow
         }
+
+        val finalText = AgentTools.stripToolCalls(fullText.toString())
         val inferred = AgentTools.inferCampusCards(finalText, campusLoggedIn)
-        emit(AgentEvent.FinalReply(finalText, imageBase64, imageUrl, inferred))
+        emit(AgentEvent.FinalTextEnd(inferred, imageBase64, imageUrl))
     }
 
     /** 工具名 → 中文标签 */

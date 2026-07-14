@@ -28,7 +28,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -59,7 +59,8 @@ fun MarkdownText(
     markdown: String,
     modifier: Modifier = Modifier,
     textColor: Color = TextPrimary,
-    fontSize: Int = 14
+    fontSize: Int = 14,
+    isStreaming: Boolean = false
 ) {
     // 外层 try/catch(放在 remember 内部,因为 Compose 不允许直接 try/catch 包 Composable 调用):
     // 万一 parseBlocks 抛异常,整条消息回退为纯文本,不让一个渲染 bug 拖垮整个 Activity(闪退)。
@@ -78,19 +79,35 @@ fun MarkdownText(
         blocks.forEach { block ->
             when (block) {
                 is MdBlock.Heading -> HeadingBlock(block, textColor, fontSize)
-                is MdBlock.CodeBlock -> RenderedCodeBlock(block, forceText = tooManyFormulas)
-                is MdBlock.MathBlock -> RenderBox(
-                    title = "LaTeX",
-                    raw = block.latex,
-                    exportText = block.latex
-                ) {
-                    if (tooManyFormulas) FallbackFormula(block.latex)
-                    else MathWebView(block.latex, displayMode = true, modifier = Modifier.fillMaxWidth().height(88.dp))
+                is MdBlock.CodeBlock -> RenderedCodeBlock(block, forceText = tooManyFormulas, isStreaming = isStreaming)
+                is MdBlock.MathBlock -> if (isStreaming) {
+                    // 流式输出途中:用斜体等宽文本展示,避免 MathWebView 创建/销毁抖动
+                    SelectionContainer {
+                        Text(
+                            text = block.latex,
+                            color = textColor,
+                            fontSize = fontSize.sp,
+                            fontStyle = FontStyle.Italic,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
+                        )
+                    }
+                } else {
+                    RenderBox(
+                        title = "LaTeX",
+                        raw = block.latex,
+                        exportText = block.latex
+                    ) {
+                        if (tooManyFormulas) FallbackFormula(block.latex)
+                        else MathWebView(block.latex, displayMode = true, modifier = Modifier.fillMaxWidth().height(88.dp))
+                    }
                 }
                 is MdBlock.ListBlock -> ListBlockView(block, textColor, fontSize)
                 is MdBlock.Quote -> QuoteBlockView(block, textColor, fontSize)
                 is MdBlock.Table -> TableRenderBox(block)
-                is MdBlock.Hr -> Divider(
+                is MdBlock.Hr -> HorizontalDivider(
                     color = textColor.copy(0.15f),
                     thickness = 0.5.dp,
                     modifier = Modifier.padding(vertical = 4.dp)
@@ -183,17 +200,24 @@ private fun parseBlocks(md: String): List<MdBlock> {
                 continue
             }
             i++
+            var closed = false
             while (i < lines.size) {
                 val current = lines[i]
                 if (current.trim().endsWith("$$")) {
                     sb.append("\n").append(current.trim().removeSuffix("$$"))
                     i++
+                    closed = true
                     break
                 }
                 sb.append("\n").append(current)
                 i++
             }
-            blocks.add(MdBlock.MathBlock(sb.toString().trim()))
+            if (closed) {
+                blocks.add(MdBlock.MathBlock(sb.toString().trim()))
+            } else {
+                // 未闭合的 $$ :流式输出途中,降级为段落,避免 KaTeX 渲染错误
+                blocks.add(MdBlock.Paragraph("$$" + sb.toString().trim()))
+            }
             continue
         }
 
@@ -205,8 +229,14 @@ private fun parseBlocks(md: String): List<MdBlock> {
                 sb.append(lines[i]).append("\n")
                 i++
             }
-            if (i < lines.size) i++
-            blocks.add(MdBlock.CodeBlock(lang, sb.toString().trimEnd()))
+            if (i < lines.size) {
+                i++ // skip closing ```
+                blocks.add(MdBlock.CodeBlock(lang, sb.toString().trimEnd()))
+            } else {
+                // 未闭合的 ``` :流式输出途中,降级为段落,避免 smiles/tex 等触发 WebView 渲染错误
+                val prefix = "```" + if (lang.isNotEmpty()) lang else ""
+                blocks.add(MdBlock.Paragraph(prefix + "\n" + sb.toString().trimEnd()))
+            }
             continue
         }
 
@@ -352,7 +382,7 @@ private fun ParagraphBlock(text: String, textColor: Color, fontSize: Int, forceT
 }
 
 @Composable
-private fun RenderedCodeBlock(block: MdBlock.CodeBlock, forceText: Boolean = false) {
+private fun RenderedCodeBlock(block: MdBlock.CodeBlock, forceText: Boolean = false, isStreaming: Boolean = false) {
     val lang = block.language.lowercase()
     when {
         lang in setOf("json", "jsonc") || prettyJsonOrNull(block.code) != null -> {
@@ -366,8 +396,13 @@ private fun RenderedCodeBlock(block: MdBlock.CodeBlock, forceText: Boolean = fal
                 CsvRenderBox(rows, block.code)
             } ?: GenericCodeBlock(block)
         }
-        lang in setOf("smiles", "smi", "mol") -> RenderBox(title = "SMILES", raw = block.code, exportText = block.code) {
-            if (forceText) FallbackFormula(block.code) else SmilesWebView(block.code, modifier = Modifier.fillMaxWidth().height(240.dp))
+        lang in setOf("smiles", "smi", "mol") -> if (isStreaming) {
+            // 流式输出途中:用纯文本展示,避免 SmilesWebView 创建/销毁抖动
+            FallbackFormula(block.code)
+        } else {
+            RenderBox(title = "SMILES", raw = block.code, exportText = block.code) {
+                if (forceText) FallbackFormula(block.code) else SmilesWebView(block.code, modifier = Modifier.fillMaxWidth().height(240.dp))
+            }
         }
         lang in setOf("tex", "latex", "math") -> RenderBox(title = "LaTeX", raw = block.code, exportText = block.code) {
             if (forceText) FallbackFormula(block.code) else MathWebView(block.code, displayMode = true, modifier = Modifier.fillMaxWidth().height(96.dp))
@@ -504,7 +539,7 @@ private fun TableView(headers: List<String>, rows: List<List<String>>) {
             }
         }
         rows.forEach { row ->
-            Divider(color = Color(0x11000000), thickness = 0.5.dp)
+            HorizontalDivider(color = Color(0x11000000), thickness = 0.5.dp)
             Row(Modifier.padding(vertical = 7.dp, horizontal = 8.dp)) {
                 val count = maxOf(headers.size, row.size)
                 repeat(count) { index ->
@@ -582,8 +617,8 @@ private fun QuoteBlockView(block: MdBlock.Quote, textColor: Color, fontSize: Int
 
 private fun splitInlineContent(text: String): List<InlineSegment> {
     val segments = mutableListOf<InlineSegment>()
-    // $smiles{...} 内联化学结构式 | $...$ 行内数学(要求无空格,避免误匹配货币)
-    val regex = Regex("\\${'$'}smiles\\{([^}]+)\\}|\\${'$'}([^${'$'}\\s]+)\\${'$'}")
+    // $smiles{...} 内联化学结构式 | $...$ 行内数学(允许空格,以 $ 为分隔符,仍可正确匹配多对 $...$)
+    val regex = Regex("\\${'$'}smiles\\{([^}]+)\\}|\\${'$'}([^${'$'}]+)\\${'$'}")
     var lastEnd = 0
     regex.findAll(text).forEach { match ->
         if (match.range.first > lastEnd) {
@@ -748,7 +783,7 @@ private fun MathWebView(latex: String, displayMode: Boolean, modifier: Modifier 
                     val dp = (heightPx / density).toInt()
                     contentHeightDp = dp.dp
                 }, "MathHeightBridge")
-                loadDataWithBaseURL("https://cdn.jsdelivr.net/", html, "text/html", "utf-8", null)
+                loadDataWithBaseURL("file:///android_asset/", html, "text/html", "utf-8", null)
             }
         },
         onRelease = { view ->
@@ -776,8 +811,8 @@ private fun buildMathHtml(latex: String, displayMode: Boolean): String {
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
-          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.css">
-          <script src="https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.js"></script>
+          <link rel="stylesheet" href="file:///android_asset/katex.min.css">
+          <script src="file:///android_asset/katex.min.js"></script>
           <style>
             html,body{margin:0;padding:0;background:transparent;color:#1b1f24;font-family:sans-serif;}
             #formula{padding:8px;overflow-x:auto;font-size:16px;}
@@ -825,7 +860,7 @@ private fun SmilesWebView(smiles: String, modifier: Modifier = Modifier) {
                 settings.loadWithOverviewMode = true
                 settings.useWideViewPort = true
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                loadDataWithBaseURL("https://cdn.jsdelivr.net/", html, "text/html", "utf-8", null)
+                loadDataWithBaseURL("file:///android_asset/", html, "text/html", "utf-8", null)
             }
         },
         onRelease = { view ->
@@ -847,7 +882,7 @@ private fun buildSmilesHtml(smiles: String): String {
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
-          <script src="https://cdn.jsdelivr.net/npm/smiles-drawer@2.4.1/dist/smiles-drawer.min.js"></script>
+          <script src="file:///android_asset/smiles-drawer.min.js"></script>
           <style>
             html,body{margin:0;padding:0;background:transparent;font-family:sans-serif;color:#1b1f24;}
             #root{min-height:190px;display:flex;align-items:center;justify-content:center;overflow:auto;padding:8px;box-sizing:border-box;}

@@ -40,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
 import java.text.SimpleDateFormat
@@ -174,7 +175,7 @@ fun LanChatWindow(
                     Modifier
                         .size(38.dp)
                         .clip(RoundedCornerShape(19.dp))
-                        .background(if (canSend) Color(0xFF5B8DEF) else Color(0xFF5B8DEF).copy(0.3f))
+                        .background(if (canSend) AccentBlue else AccentBlue.copy(0.3f))
                         .clickable { if (canSend) onSend() },
                     contentAlignment = Alignment.Center
                 ) {
@@ -193,7 +194,7 @@ fun LanChatWindow(
 @Composable
 private fun MessageBubble(msg: LanChatMessage, isMine: Boolean, timeFmt: SimpleDateFormat) {
     val alignment = if (isMine) Alignment.End else Alignment.Start
-    val bgColor = if (isMine) Color(0xFF5B8DEF) else Color(0xFFF0F0F2)
+    val bgColor = if (isMine) AccentBlue else Color(0xFFF0F0F2)
     val textColor = if (isMine) Color.White else TextPrimary
 
     Column(

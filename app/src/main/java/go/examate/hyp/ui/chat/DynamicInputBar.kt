@@ -38,6 +38,7 @@ import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.highlight.Highlight
 import com.kyant.shapes.RoundedRectangle
 import go.examate.hyp.ui.components.LocalGlassBackdrop
+import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextSecondary
 
@@ -53,9 +54,7 @@ fun DynamicInputBar(
     onPickImage: () -> Unit,
     onClearImage: () -> Unit,
     canSend: Boolean,
-    onSend: () -> Unit,
-    agentsMode: Boolean = false,
-    onToggleAgents: (() -> Unit)? = null
+    onSend: () -> Unit
 ) {
     val backdrop = LocalGlassBackdrop.current
     Column(
@@ -88,22 +87,6 @@ fun DynamicInputBar(
                 Icon(Icons.Filled.Close, contentDescription = "清除", tint = TextHint, modifier = Modifier.clickable { onClearImage() }.padding(4.dp).size(16.dp))
             }
         }
-        // 对话/Agents 模式切换(下划线指示激活态)
-        if (onToggleAgents != null) {
-            Row(
-                Modifier.fillMaxWidth().padding(bottom = 6.dp),
-                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { if (agentsMode) onToggleAgents() }.padding(horizontal = 14.dp, vertical = 2.dp)) {
-                    Text("对话", color = if (!agentsMode) Color(0xFF5B8DEF) else TextHint, fontSize = 12.sp)
-                    if (!agentsMode) Spacer(Modifier.width(24.dp).height(2.dp).background(Color(0xFF5B8DEF), RoundedCornerShape(1.dp)))
-                }
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { if (!agentsMode) onToggleAgents() }.padding(horizontal = 14.dp, vertical = 2.dp)) {
-                    Text("Agents", color = if (agentsMode) Color(0xFF5B8DEF) else TextHint, fontSize = 12.sp)
-                    if (agentsMode) Spacer(Modifier.width(24.dp).height(2.dp).background(Color(0xFF5B8DEF), RoundedCornerShape(1.dp)))
-                }
-            }
-        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier.size(38.dp).then(
@@ -113,15 +96,15 @@ fun DynamicInputBar(
                             shape = { RoundedRectangle(19.dp) },
                             effects = { vibrancy(); blur(12.dp.toPx()) },
                             highlight = { Highlight.Plain },
-                            onDrawSurface = { drawRect(Color(0xFF5B8DEF).copy(0.12f)) }
+                            onDrawSurface = { drawRect(AccentBlue.copy(0.12f)) }
                         )
                     } else {
-                        Modifier.clip(RoundedCornerShape(19.dp)).background(Color(0xFF5B8DEF).copy(0.1f))
+                        Modifier.clip(RoundedCornerShape(19.dp)).background(AccentBlue.copy(0.1f))
                     }
                 ).clickable { onPickImage() },
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Filled.Add, contentDescription = "图片", tint = Color(0xFF5B8DEF), modifier = Modifier.size(22.dp))
+                Icon(Icons.Filled.Add, contentDescription = "图片", tint = AccentBlue, modifier = Modifier.size(22.dp))
             }
             Spacer(Modifier.width(8.dp))
             OutlinedTextField(
@@ -153,10 +136,10 @@ fun DynamicInputBar(
                                     shape = { RoundedRectangle(22.dp) },
                                     effects = { vibrancy(); blur(12.dp.toPx()) },
                                     highlight = { Highlight.Plain },
-                                    onDrawSurface = { drawRect(Color(0xFF5B8DEF)) }
+                                    onDrawSurface = { drawRect(AccentBlue) }
                                 )
                             } else {
-                                Modifier.background(Color(0xFF5B8DEF))
+                                Modifier.background(AccentBlue)
                             }
                         ).clickable { onSend() }.padding(horizontal = 16.dp, vertical = 12.dp),
                         contentAlignment = Alignment.Center

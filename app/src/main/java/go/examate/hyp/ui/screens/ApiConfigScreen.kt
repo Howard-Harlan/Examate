@@ -14,11 +14,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -46,7 +49,10 @@ import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
 import com.kyant.shapes.Capsule
 import go.examate.hyp.entity.ModelProvider
+import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.FrostedGlassCard
+import go.examate.hyp.ui.components.LiquidGlassButton
+import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.components.LocalGlassBackdrop
 import go.examate.hyp.ui.components.PlainDialog
 import go.examate.hyp.ui.components.PlainDialogButtons
@@ -54,6 +60,7 @@ import go.examate.hyp.ui.components.PlainDialogContent
 import go.examate.hyp.ui.components.PlainDialogTitle
 import go.examate.hyp.ui.theme.BgPrimary
 import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.SurfaceVariant
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
@@ -177,6 +184,7 @@ fun ApiConfigScreen(
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 24.dp)
         )
+
     }
 
     // ═══ 返回时保存确认弹窗 ═══
@@ -220,35 +228,34 @@ private fun ApiConfigTopBar(
     onOpenTutorial: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Row(
+    Box(
         modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
-        Text(
-            "←",
-            color = TextSecondary,
-            fontSize = 22.sp,
+        LiquidGlassIconButton(
+            icon = Icons.AutoMirrored.Filled.ArrowBack,
+            contentDescription = "返回",
+            onClick = onBack,
             modifier = Modifier
-                .clickable { onBack() }
-                .padding(8.dp)
+                .size(40.dp)
+                .align(Alignment.CenterStart)
         )
         Text(
             "API 设置",
             color = TextPrimary,
-            fontSize = 20.sp,
+            fontSize = 17.sp,
             fontWeight = FontWeight.Medium,
-            modifier = Modifier.padding(start = 4.dp)
+            modifier = Modifier.align(Alignment.Center)
         )
-        Spacer(Modifier.weight(1f))
         Text(
             "教程",
             color = Primary,
-            fontSize = 13.sp,
+            fontSize = 14.sp,
             modifier = Modifier
+                .align(Alignment.CenterEnd)
                 .clickable { onOpenTutorial() }
-                .padding(8.dp)
+                .padding(horizontal = 12.dp, vertical = 8.dp)
         )
     }
 }
@@ -473,7 +480,7 @@ private fun EditProviderDialog(
                         Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(10.dp))
-                            .background(if (selected) Primary else Color(0xFFF3F4F6))
+                            .background(if (selected) Primary else SurfaceVariant)
                             .clickable { endpointType = value }
                             .padding(vertical = 8.dp),
                         contentAlignment = Alignment.Center

@@ -37,6 +37,7 @@ import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.IconSchool
 import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.LiquidGlassButton
+import go.examate.hyp.ui.theme.Danger
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
@@ -169,7 +170,7 @@ fun OnboardingScreen(
                         text = "免责声明",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
-                        color = Color(0xFFFF3B30)
+                        color = Danger
                     )
                     Text(
                         text = "本软件仅用于测试与学习,禁止用于考试作弊。使用本软件产生的一切后果由使用者自行承担。",

@@ -32,6 +32,20 @@ import java.util.concurrent.TimeUnit
 
 class HttpUtils {
 
+    /**
+     * 流式 SSE 事件
+     * 将流式解析与 UI 更新解耦:Flow 只产出事件,由调用方决定如何展示
+     *
+     * 注意:作为 HttpUtils 的直接嵌套类(非 companion object 内部),
+     * 以便外部文件可通过 `import go.examate.hyp.util.HttpUtils.SseEvent` 引用。
+     */
+    sealed class SseEvent {
+        data class Token(val text: String) : SseEvent()           // 正常输出
+        data class ThinkToken(val text: String) : SseEvent()      // 思考过程
+        data class Error(val message: String) : SseEvent()        // 错误
+        object Done : SseEvent()                                  // 流式结束
+    }
+
     companion object {
 
         private const val TAG = "HttpUtils"
@@ -692,47 +706,70 @@ class HttpUtils {
         }
 
         // ════════════════════════════════════════════════════
-        //  流式请求(Flow 回调 + 旧签名兼容)
+        //  图片生成(/v1/images/generations)与模型列表(/v1/models)
         // ════════════════════════════════════════════════════
 
         /**
-         * 流式 SSE 事件
-         * 将流式解析与 UI 更新解耦:Flow 只产出事件,由调用方决定如何展示
-         */
-        sealed class SseEvent {
-            data class Token(val text: String) : SseEvent()           // 正常输出
-            data class ThinkToken(val text: String) : SseEvent()      // 思考过程
-            data class Error(val message: String) : SseEvent()        // 错误
-            object Done : SseEvent()                                  // 流式结束
-        }
-
-        /**
-         * 发起流式请求,返回 Flow<SseEvent>
-         *
-         * 新代码推荐使用此方法,在协程中 collect 即可,
-         * 无需传入 Handler/TextView/ScrollView 等 UI 组件。
+         * 发送图片生成请求(OpenAI /v1/images/generations 格式)。
+         * @param body 完整的 JSON 请求体字符串(由调用方构建)
+         * @param apiKey API Key
+         * @param endpointType 鉴权类型("chat"/"anthropic"/"responses")
+         * @return 成功返回响应体字符串,失败返回 null
          */
         @JvmStatic
-        fun sendPostRequestStreamFlow(
-            url: String, modelName: String, userInput: String,
-            apiKey: String?, systemPrompt: String,
-            thinking: Boolean?, endpointType: String
-        ): Flow<SseEvent> = flow {
-            val body = when (endpointType) {
-                "anthropic" -> {
-                    val json = JSONObject(JsonStringAnthropic(modelName, userInput, systemPrompt, thinking))
-                    json.put("stream", true)
-                    json.toString()
-                }
-                "responses" -> JsonStringResponses(modelName, userInput, systemPrompt, thinking)
-                else -> JsonString(modelName, userInput, true, systemPrompt, thinking)
-            }
+        fun sendImageGenerationSync(url: String, body: String, apiKey: String?, endpointType: String): String? {
             val request = Request.Builder()
                 .url(url)
                 .post(body.toRequestBody(JSON_MEDIA_TYPE))
                 .applyAuth(endpointType, apiKey)
                 .build()
+            return try {
+                httpClient.newCall(request).execute().use { resp ->
+                    if (resp.isSuccessful) resp.body?.string() else null
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "sendImageGeneration failed", e)
+                null
+            }
+        }
 
+        /**
+         * 拉取 /v1/models 列表(GET 请求)。
+         * @param url 模型列表端点 URL
+         * @param apiKey API Key
+         * @return ApiResult<String>，成功时 data 为响应体字符串
+         */
+        @JvmStatic
+        suspend fun fetchModelsResult(url: String, apiKey: String?): ApiResult<String> = withContext(Dispatchers.IO) {
+            try {
+                val request = Request.Builder()
+                    .url(url)
+                    .applyAuth("chat", apiKey)
+                    .build()
+                httpClient.newCall(request).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        ApiResult.Success(resp.body?.string() ?: "")
+                    } else {
+                        val errBody = resp.body?.string()
+                        Log.e(TAG, "fetchModels error: ${resp.code} $errBody")
+                        ApiResult.fromHttpError(resp.code, errBody)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "fetchModels failed", e)
+                ApiResult.fromException(e)
+            }
+        }
+
+        // ════════════════════════════════════════════════════
+        //  流式请求(Flow 回调 + 旧签名兼容)
+        // ════════════════════════════════════════════════════
+
+        /**
+         * 执行 SSE 流式请求的公共逻辑(请求 + 读流 + 解析 + 错误处理 + Done)
+         * 供 sendPostRequestStreamFlow 和 sendChatWithHistoryStreamFlow 复用
+         */
+        private fun executeSseStream(request: Request, endpointType: String): Flow<SseEvent> = flow {
             try {
                 streamClient.newCall(request).execute().use { resp ->
                     if (resp.isSuccessful) {
@@ -753,21 +790,50 @@ class HttpUtils {
                 }
             } catch (e: UnknownHostException) {
                 emit(SseEvent.Error("无法解析服务器域名，请检查网络设置"))
-                Log.e(TAG, "Unknown Host Exception", e)
+                Log.e(TAG, "SSE UnknownHost", e)
             } catch (e: InterruptedIOException) {
                 emit(SseEvent.Error("请求被中断，这条消息已停止"))
-                Log.e(TAG, "Thread Interrupted")
+                Log.e(TAG, "SSE InterruptedIO", e)
             } catch (e: SocketException) {
                 emit(SseEvent.Error("访问连接失败，请检查网络设置"))
-                Log.e(TAG, "SocketException Error")
+                Log.e(TAG, "SSE SocketException", e)
             } catch (e: IOException) {
-                Log.e(TAG, "IOException Error", e)
+                Log.e(TAG, "SSE IOException", e)
             } catch (e: JSONException) {
-                Log.e(TAG, "JSONException Error in stream", e)
+                Log.e(TAG, "SSE JSONException", e)
             } finally {
                 emit(SseEvent.Done)
             }
         }.flowOn(Dispatchers.IO)
+
+        /**
+         * 发起流式请求,返回 Flow<SseEvent>
+         *
+         * 新代码推荐使用此方法,在协程中 collect 即可,
+         * 无需传入 Handler/TextView/ScrollView 等 UI 组件。
+         */
+        @JvmStatic
+        fun sendPostRequestStreamFlow(
+            url: String, modelName: String, userInput: String,
+            apiKey: String?, systemPrompt: String,
+            thinking: Boolean?, endpointType: String
+        ): Flow<SseEvent> {
+            val body = when (endpointType) {
+                "anthropic" -> {
+                    val json = JSONObject(JsonStringAnthropic(modelName, userInput, systemPrompt, thinking))
+                    json.put("stream", true)
+                    json.toString()
+                }
+                "responses" -> JsonStringResponses(modelName, userInput, systemPrompt, thinking)
+                else -> JsonString(modelName, userInput, true, systemPrompt, thinking)
+            }
+            val request = Request.Builder()
+                .url(url)
+                .post(body.toRequestBody(JSON_MEDIA_TYPE))
+                .applyAuth(endpointType, apiKey)
+                .build()
+            return executeSseStream(request, endpointType)
+        }
 
         /**
          * 发起带对话历史的流式请求,返回 Flow<SseEvent>。
@@ -778,7 +844,7 @@ class HttpUtils {
         fun sendChatWithHistoryStreamFlow(
             url: String, modelName: String, messages: List<Pair<String, String>>,
             apiKey: String?, systemPrompt: String, thinking: Boolean?, endpointType: String
-        ): Flow<SseEvent> = flow {
+        ): Flow<SseEvent> {
             val bodyStr = when (endpointType) {
                 "anthropic" -> {
                     val json = JSONObject(buildAnthropicHistoryBody(modelName, messages, systemPrompt, thinking))
@@ -794,39 +860,8 @@ class HttpUtils {
                 .post(bodyStr.toRequestBody(JSON_MEDIA_TYPE))
                 .applyAuth(endpointType, apiKey)
                 .build()
-
-            try {
-                streamClient.newCall(request).execute().use { resp ->
-                    if (resp.isSuccessful) {
-                        resp.body?.byteStream()?.bufferedReader()?.use { reader ->
-                            var line = reader.readLine()
-                            while (line != null) {
-                                if (line.length > 6 && line.startsWith("data:")) {
-                                    val event = parseSseToEvent(line.substring(6), endpointType)
-                                    if (event != null) emit(event)
-                                }
-                                line = reader.readLine()
-                            }
-                        }
-                    } else {
-                        val errBody = resp.body?.string()
-                        emit(SseEvent.Error("HTTP error ${resp.code}: $errBody"))
-                    }
-                }
-            } catch (e: UnknownHostException) {
-                emit(SseEvent.Error("无法解析服务器域名，请检查网络设置"))
-            } catch (e: InterruptedIOException) {
-                emit(SseEvent.Error("请求被中断，这条消息已停止"))
-            } catch (e: SocketException) {
-                emit(SseEvent.Error("访问连接失败，请检查网络设置"))
-            } catch (e: IOException) {
-                Log.e(TAG, "Stream IOException", e)
-            } catch (e: JSONException) {
-                Log.e(TAG, "Stream JSONException", e)
-            } finally {
-                emit(SseEvent.Done)
-            }
-        }.flowOn(Dispatchers.IO)
+            return executeSseStream(request, endpointType)
+        }
 
         /** 解析 SSE 单条 data 为 SseEvent(纯函数,无 UI 依赖) */
         private fun parseSseToEvent(lineData: String, endpointType: String): SseEvent? {
@@ -852,20 +887,30 @@ class HttpUtils {
                     when {
                         jsonObject.has("choices") -> {
                             val choicesArray = jsonObject.getJSONArray("choices")
-                            val firstChoice = choicesArray.getJSONObject(0)
-                            val deltaObject = firstChoice.getJSONObject("delta")
+                            // 流式结束时有些 API 会发送空 choices 数组,直接忽略
+                            if (choicesArray.length() == 0) return null
+                            val firstChoice = choicesArray.optJSONObject(0) ?: return null
+                            // 用 opt 安全获取 delta,有些 chunk 只有 role 没有 delta
+                            val deltaObject = firstChoice.optJSONObject("delta") ?: return null
                             when {
-                                deltaObject.has("content") && !deltaObject.isNull("content") ->
+                                deltaObject.has("content") && !deltaObject.isNull("content") &&
+                                    deltaObject.getString("content").isNotEmpty() ->
                                     SseEvent.Token(deltaObject.getString("content"))
-                                deltaObject.has("reasoning_content") && !deltaObject.isNull("reasoning_content") ->
+                                deltaObject.has("reasoning_content") && !deltaObject.isNull("reasoning_content") &&
+                                    deltaObject.getString("reasoning_content").isNotEmpty() ->
                                     SseEvent.ThinkToken(deltaObject.getString("reasoning_content"))
                                 else -> null
                             }
                         }
                         jsonObject.has("error") -> {
-                            val errorCode = jsonObject.getJSONObject("error").getString("code")
-                            val msg = if (errorCode == "data_inspection_failed") {
-                                "你好，这个问题我暂时无法回答，让我们换个话题再聊聊吧"
+                            val errorObj = jsonObject.optJSONObject("error")
+                            val msg = if (errorObj != null) {
+                                val code = errorObj.optString("code", "")
+                                if (code == "data_inspection_failed") {
+                                    "你好，这个问题我暂时无法回答，让我们换个话题再聊聊吧"
+                                } else {
+                                    errorObj.optString("message", jsonObject.toString())
+                                }
                             } else {
                                 jsonObject.toString()
                             }
@@ -877,7 +922,8 @@ class HttpUtils {
             } catch (e: JSONException) {
                 if (lineData.trim() != "[DONE]") {
                     Log.e(TAG, "Parse Json Failed", e)
-                    SseEvent.Error("[Parse Json Failed]\n${e.message}\n[Json Data]\n$lineData")
+                    // 不再把解析失败当错误输出给用户,只在日志记录
+                    null
                 } else null
             }
         }
@@ -893,22 +939,28 @@ class HttpUtils {
 
         @JvmStatic
         fun sendPostRequestStream(url: String, modelName: String, userInput: String, apiKey: String?, systemPrompt: String, handler: Handler, outputTextView: TextView?, thinkTextView: TextView?, errorTextView: TextView?, service: UnifiedFloatingService, scrollView: ScrollView?, thinking: Boolean?, endpointType: String) {
+            // 使用 WeakReference 防止悬浮窗关闭后 Activity/Window 无法回收
+            val outputRef = java.lang.ref.WeakReference(outputTextView)
+            val thinkRef = java.lang.ref.WeakReference(thinkTextView)
+            val errorRef = java.lang.ref.WeakReference(errorTextView)
+            val scrollRef = java.lang.ref.WeakReference(scrollView)
+            val serviceRef = java.lang.ref.WeakReference(service)
             runBlocking {
                 sendPostRequestStreamFlow(url, modelName, userInput, apiKey, systemPrompt, thinking, endpointType).collect { event ->
                     when (event) {
-                        is SseEvent.Token -> ApplyTokenOnUI(event.text, handler, outputTextView, scrollView)
-                        is SseEvent.ThinkToken -> ApplyTokenOnUI(event.text, handler, thinkTextView, scrollView)
-                        is SseEvent.Error -> ApplyTokenOnUI(event.message, handler, errorTextView, scrollView)
+                        is SseEvent.Token -> ApplyTokenOnUI(event.text, handler, outputRef.get(), scrollRef.get())
+                        is SseEvent.ThinkToken -> ApplyTokenOnUI(event.text, handler, thinkRef.get(), scrollRef.get())
+                        is SseEvent.Error -> ApplyTokenOnUI(event.message, handler, errorRef.get(), scrollRef.get())
                         is SseEvent.Done -> {
                             handler.post {
-                                outputTextView?.let {
+                                outputRef.get()?.let {
                                     if (it.text.isNotEmpty()) {
                                         val formatted = AnswerFormatter.format(it.text.toString())
                                         it.text = formatted
                                     }
                                 }
-                                scrollView?.fullScroll(ScrollView.FOCUS_DOWN)
-                                service.setSubmitBtnStatus(true)
+                                scrollRef.get()?.fullScroll(ScrollView.FOCUS_DOWN)
+                                serviceRef.get()?.setSubmitBtnStatus(true)
                             }
                         }
                     }

@@ -2,17 +2,13 @@ package go.examate.hyp.agent
 
 import android.content.Context
 import android.util.Base64
+import android.util.Log
 import go.examate.hyp.campus.CampusRepository
 import go.examate.hyp.config.PrefsManager
 import go.examate.hyp.entity.ModelProvider
 import go.examate.hyp.util.ActionCard
 import go.examate.hyp.util.HttpUtils
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.net.HttpURLConnection
-import java.net.URL
-import java.nio.charset.StandardCharsets
 
 /**
  * Agent 工具系统:定义 AI 可调用的工具(校园服务查询 + 生图)
@@ -86,18 +82,16 @@ object AgentTools {
     /** 生成包含工具描述的系统提示词 */
     fun buildSystemPrompt(campusLoggedIn: Boolean, agentsMode: Boolean): String {
         val sb = StringBuilder()
-        sb.append("你是一个智能助手，可以调用工具来帮助用户完成任务。\n\n")
+        sb.append("你是一个强大、有洞察力的 AI 对话伙伴，拥有深厚的知识储备和缜密的推理能力。\n")
+        sb.append("你不只是问答机器——你会主动思考、追问、补充视角，让对话更有深度和温度。\n")
+        sb.append("面对开放性问题，你能展开有见地的讨论；面对具体任务，你高效精准地完成。\n")
+        sb.append("你的回答应当自然、流畅、有逻辑，像一个睿智的朋友而非刻板的工具。\n\n")
 
-        if (agentsMode) {
-            sb.append("【Agents 模式已开启】你可以多步推理，依次调用多个工具收集信息，然后综合分析给出最终回答。\n")
-            sb.append("当需要查询信息时，必须先调用工具获取数据，再基于数据给出回答。\n")
-            sb.append("不要编造数据，所有校园信息必须来自工具返回的结果。\n\n")
-        }
-
-        sb.append("## 工具调用格式\n\n")
-        sb.append("当你需要调用工具时，在回复中包含如下格式(可多次调用):\n")
+        sb.append("## 工具调用能力\n\n")
+        sb.append("你可以调用工具获取实时信息（校园数据等）或生成图片。需要调用时，在回复中包含:\n")
         sb.append("<tool_call>{\"name\": \"工具名\", \"arguments\": {\"参数\": \"值\"}}</tool_call>\n")
-        sb.append("调用工具时,可以同时在 tool_call 标记外写一些说明文字给用户。\n\n")
+        sb.append("可以在 tool_call 标记外写简短说明。调用后，结果以 [工具结果] 返回，你需基于结果继续回答。\n")
+        sb.append("注意:需要实际数据时才调用工具，日常对话和知识问答不需要调用。不要编造校园数据。\n\n")
 
         sb.append("## 可用工具\n\n")
 
@@ -115,12 +109,11 @@ object AgentTools {
         sb.append("### 生图工具\n")
         sb.append("- `generate_image`: 根据文字描述生成图片。参数: prompt(图片描述,必填), model(模型ID,可选,默认dall-e-3)。\n\n")
 
-        sb.append("## 规则\n")
-        sb.append("1. 调用工具后，工具结果会以 [工具结果] 形式返回给你，基于结果继续回答\n")
-        sb.append("2. 工具结果中的数据请用 markdown 表格或列表整理后展示给用户\n")
-        sb.append("3. 数学公式用 LaTeX 格式输出（行内用 $...$，块级用 $$...$$）\n")
-        sb.append("4. 如果校园服务未登录，提示用户先在校园服务页面登录\n")
-        sb.append("5. 调用工具的 JSON 必须合法,参数名和值都用双引号\n")
+        sb.append("## 回复规范\n")
+        sb.append("1. 工具返回的数据用 markdown 表格或列表整理展示\n")
+        sb.append("2. 数学公式用 LaTeX 格式输出（行内用 $...$，块级用 $$...$$）\n")
+        sb.append("3. 调用工具的 JSON 必须合法，参数名和值都用双引号\n")
+        sb.append("4. 回答要简洁有力，避免空洞的套话和过度的客套\n")
 
         if (!campusLoggedIn) {
             sb.append("\n注意: 校园服务未登录，校园相关工具暂不可用，请提示用户先登录。\n")
@@ -313,40 +306,29 @@ object AgentTools {
         val baseUrl = ModelProvider.extractBaseUrl(provider.requestUrl)
         val url = "$baseUrl/v1/images/generations"
 
-        var conn: HttpURLConnection? = null
-        try {
-            val json = JSONObject()
-            json.put("model", model)
-            json.put("prompt", prompt)
-            json.put("n", 1)
-            json.put("size", "1024x1024")
-            json.put("response_format", "b64_json")
+        val json = JSONObject()
+        json.put("model", model)
+        json.put("prompt", prompt)
+        json.put("n", 1)
+        json.put("size", "1024x1024")
+        json.put("response_format", "b64_json")
 
-            conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                setRequestProperty("Authorization", "Bearer ${provider.apiKey}")
-                connectTimeout = 30000
-                readTimeout = 60000
-            }
-            conn.outputStream.use { it.write(json.toString().toByteArray()) }
+        val response = HttpUtils.sendImageGenerationSync(url, json.toString(), provider.apiKey, "chat")
+            ?: return null
 
-            if (conn.responseCode == HttpURLConnection.HTTP_OK) {
-                val response = BufferedReader(InputStreamReader(conn.inputStream, StandardCharsets.UTF_8)).use { it.readText() }
-                val respJson = JSONObject(response)
-                val data = respJson.optJSONArray("data")
-                if (data != null && data.length() > 0) {
-                    val b64 = data.getJSONObject(0).optString("b64_json", "")
-                    if (b64.isNotEmpty()) return b64
-                    val imgUrl = data.getJSONObject(0).optString("url", "")
-                    if (imgUrl.isNotEmpty()) return imgUrl
-                }
+        return try {
+            val respJson = JSONObject(response)
+            val data = respJson.optJSONArray("data")
+            if (data != null && data.length() > 0) {
+                val b64 = data.getJSONObject(0).optString("b64_json", "")
+                if (b64.isNotEmpty()) return b64
+                val imgUrl = data.getJSONObject(0).optString("url", "")
+                if (imgUrl.isNotEmpty()) return imgUrl
             }
-            return null
+            null
         } catch (e: Exception) {
-            return null
-        } finally {
-            conn?.disconnect()
+            Log.e("AgentTools", "generateImage parse failed", e)
+            null
         }
     }
 

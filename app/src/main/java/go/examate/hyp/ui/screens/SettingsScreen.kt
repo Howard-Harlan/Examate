@@ -33,14 +33,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import go.examate.hyp.config.MyConfig
 import go.examate.hyp.config.PrefsManager
 import go.examate.hyp.entity.ModelProvider
@@ -49,8 +51,8 @@ import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.components.LiquidGlassToggle
 import go.examate.hyp.ui.theme.BgPrimary
+import go.examate.hyp.ui.theme.Danger
 import go.examate.hyp.ui.theme.Primary
-import androidx.compose.material3.Divider
 import go.examate.hyp.ui.theme.Divider as DividerColor
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
@@ -95,7 +97,8 @@ fun SettingsScreen(
     val nickname = prefs.nickname
     val school = prefs.school
     val displayFields = prefs.userDisplayFields
-    val profileKey = "$refreshTick|$nickname|$school|${displayFields.sorted().joinToString()}"
+    val avatarPath = prefs.localAvatarPath
+    val profileKey = "$refreshTick|$nickname|$school|${displayFields.sorted().joinToString()}|$avatarPath"
 
     Column(
         modifier
@@ -194,7 +197,7 @@ fun SettingsScreen(
                     Spacer(Modifier.weight(1f))
                     Text(
                         text = if (shizukuGranted) "已授权" else "未授权",
-                        color = if (shizukuGranted) Color(0xFF34C759) else Color(0xFFFF3B30),
+                        color = if (shizukuGranted) Color(0xFF34C759) else Danger,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium
                     )
@@ -278,7 +281,10 @@ private fun UserProfileBar(profileKey: String, onClick: () -> Unit) {
     val context = LocalContext.current
     val prefs = PrefsManager.getInstance(context)
 
-    // 根据 profileKey 缓存:头像首字母 + 待展示字段列表
+    // 根据 profileKey 缓存:本地头像 + 首字母 + 待展示字段列表
+    val avatarBitmap = remember(profileKey) {
+        go.examate.hyp.util.AvatarHelper.loadAvatar(context)
+    }
     val avatarChar = remember(profileKey) {
         prefs.nickname.firstOrNull()?.toString() ?: "学"
     }
@@ -309,19 +315,29 @@ private fun UserProfileBar(profileKey: String, onClick: () -> Unit) {
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 头像:Primary 圆形背景 + 白色首字母
+            // 头像:优先显示本地头像,否则 Primary 圆形背景 + 首字母
             Box(
                 Modifier
                     .size(48.dp)
-                    .background(Primary, CircleShape),
+                    .background(Primary, CircleShape)
+                    .clip(CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = avatarChar,
-                    color = Color.White,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Medium
-                )
+                avatarBitmap?.let { bmp ->
+                    androidx.compose.foundation.Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = "头像",
+                        modifier = Modifier.fillMaxSize().clip(CircleShape),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                    )
+                } ?: run {
+                    Text(
+                        text = avatarChar,
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
             }
             Spacer(Modifier.width(14.dp))
             // 资料字段:首行为主标题,其余为副标题
