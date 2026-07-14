@@ -338,9 +338,9 @@ private fun PublishLostDialog(repo: CampusRepository, prefs: PrefsManager,
                 if (arr != null) {
                     val list = (0 until arr.length()).mapNotNull { i ->
                         val obj = arr.optJSONObject(i)
-                        val id = obj?.optString("id", "") ?: ""
-                        val name = obj?.optString("name", "") ?: ""
-                        if (id.isNotEmpty()) id to name else null
+                        val vid = obj?.optString("value", obj?.optString("id", "")) ?: ""
+                        val vname = obj?.optString("name", "") ?: ""
+                        if (vid.isNotEmpty()) vid to vname else null
                     }
                     campusList = list
                     if (list.isNotEmpty()) { selectedCampusId = list[0].first; selectedCampusName = list[0].second }
