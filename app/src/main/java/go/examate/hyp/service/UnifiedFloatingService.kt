@@ -27,6 +27,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.RemoteException
+import android.provider.Settings
 import android.security.keystore.UserNotAuthenticatedException
 import android.util.DisplayMetrics
 import android.util.Log
@@ -476,11 +477,27 @@ class UnifiedFloatingService : Service() {
             showWebView()
             showPopupMenu()
         }
+        // 聊天选项事件绑定:启动悬浮聊天窗(使用最近模式/房间号)
+        popupMenuView.findViewById<View>(R.id.chat_btn).setOnClickListener {
+            showPopupMenu()
+            startFloatingChat()
+        }
         // 退出选项
         popupMenuView.findViewById<View>(R.id.close_btn).setOnClickListener {
             stopService(Intent(applicationContext, UnifiedFloatingService::class.java))
             onDestroy()
         }
+    }
+
+    /**
+     * 启动悬浮聊天窗(局域网 UDP 广播模式)
+     */
+    private fun startFloatingChat() {
+        if (!Settings.canDrawOverlays(this)) {
+            Toast.makeText(this, "请先授予悬浮窗权限", Toast.LENGTH_SHORT).show()
+            return
+        }
+        startService(Intent(this, LanChatService::class.java))
     }
 
     /**
@@ -501,6 +518,9 @@ class UnifiedFloatingService : Service() {
         // browse:浏览
         popupMenuView.findViewById<View>(R.id.web_btn).visibility =
             if (enabled.contains("browse")) View.VISIBLE else View.GONE
+        // chat:聊天
+        popupMenuView.findViewById<View>(R.id.chat_btn).visibility =
+            if (enabled.contains("chat")) View.VISIBLE else View.GONE
         // close:退出,固定保留
         popupMenuView.findViewById<View>(R.id.close_btn).visibility = View.VISIBLE
     }

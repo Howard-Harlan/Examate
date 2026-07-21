@@ -96,6 +96,11 @@
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize" />
         <activity
+            android:name=".WaterCardActivity"
+            android:label="乐校通水卡"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
             android:name=".UserSettingsActivity"
             android:label="用户设置"
             android:screenOrientation="portrait" />

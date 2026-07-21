@@ -16,7 +16,21 @@ data class ChatMsg(
     val imageUrl: String? = null,
     val toolCalls: List<String> = emptyList(),
     val cards: List<ActionCard> = emptyList(),
+    val filePath: String? = null,
+    val toolSteps: List<ToolStep> = emptyList(),
     val id: String = UUID.randomUUID().toString()
+)
+
+/** 工具调用步骤状态 */
+enum class ToolStatus { RUNNING, DONE, ERROR }
+
+/** 工具调用步骤(用于链式思考容器展示) */
+data class ToolStep(
+    val name: String,
+    val label: String,
+    val status: ToolStatus = ToolStatus.RUNNING,
+    val output: String = "",
+    val card: ActionCard? = null
 )
 
 /**
@@ -96,7 +110,20 @@ object ChatHistoryManager {
                             imageBase64 = m.optString("imageBase64", "").ifEmpty { null },
                             imageUrl = m.optString("imageUrl", "").ifEmpty { null },
                             toolCalls = toolCalls,
-                            cards = cards
+                            cards = cards,
+                            filePath = m.optString("filePath", "").ifEmpty { null },
+                            toolSteps = m.optJSONArray("toolSteps")?.let { ts ->
+                                (0 until ts.length()).mapNotNull { idx ->
+                                    val s = ts.optJSONObject(idx) ?: return@mapNotNull null
+                                    ToolStep(
+                                        name = s.optString("name"),
+                                        label = s.optString("label"),
+                                        status = runCatching { ToolStatus.valueOf(s.optString("status")) }.getOrDefault(ToolStatus.DONE),
+                                        output = s.optString("output", ""),
+                                        card = null  // card 不持久化(运行时产物)
+                                    )
+                                }
+                            }.orEmpty()
                         )
                     )
                 }
@@ -152,7 +179,20 @@ object ChatHistoryManager {
                         msg.imageUriString?.let { put("imageUriString", it) }
                         msg.imageBase64?.let { put("imageBase64", it) }
                         msg.imageUrl?.let { put("imageUrl", it) }
+                        msg.filePath?.let { put("filePath", it) }
                         if (msg.toolCalls.isNotEmpty()) put("toolCalls", JSONArray(msg.toolCalls))
+                        if (msg.toolSteps.isNotEmpty()) {
+                            val tsArr = JSONArray()
+                            msg.toolSteps.forEach { ts ->
+                                tsArr.put(JSONObject().apply {
+                                    put("name", ts.name)
+                                    put("label", ts.label)
+                                    put("status", ts.status.name)
+                                    put("output", ts.output)
+                                })
+                            }
+                            put("toolSteps", tsArr)
+                        }
                         if (msg.cards.isNotEmpty()) {
                             val cdArr = JSONArray()
                             msg.cards.forEach { cd ->

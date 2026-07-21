@@ -43,6 +43,7 @@ import go.examate.hyp.ui.theme.TextSecondary
 fun QiushiScreen(
     onLanChatClick: () -> Unit,
     onCampusServiceClick: () -> Unit,
+    onWaterCardClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -79,6 +80,16 @@ fun QiushiScreen(
             subtitle = "",
             iconVector = IconSchool,
             onClick = onCampusServiceClick
+        )
+
+        Spacer(Modifier.height(14.dp))
+
+        // ═══ 乐校通水卡 ═══
+        FeatureCard(
+            title = "乐校通水卡",
+            subtitle = "",
+            iconRes = R.drawable.ic_water_card,
+            onClick = onWaterCardClick
         )
     }
 }

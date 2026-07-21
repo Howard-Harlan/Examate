@@ -116,14 +116,7 @@ fun SettingsScreen(
         // ═══ AI 设置 ═══
         SectionLabel("AI 设置")
         Spacer(Modifier.height(12.dp))
-        LiquidGlassButton(
-            text = "API 厂商设置",
-            onClick = onApiConfigClick,
-            style = ButtonStyle.Outline,
-            height = 44.dp
-        )
-        Spacer(Modifier.height(12.dp))
-        // Agent 设置:Skills + 记忆
+        // Agent 设置:Skills + 记忆 + API 厂商设置
         FrostedGlassCard(
             modifier = Modifier.fillMaxWidth().clickable { onAgentSettingsClick() }
         ) {
@@ -132,10 +125,10 @@ fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Agent 设置", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    Text("Agents 设置", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        "Skills 技能导入、记忆配置",
+                        "Skills 技能导入、记忆配置、API 厂商",
                         color = TextHint, fontSize = 11.sp, lineHeight = 15.sp
                     )
                 }
@@ -143,41 +136,24 @@ fun SettingsScreen(
             }
         }
         Spacer(Modifier.height(12.dp))
-        // 多 AI 验证:点击弹出弹窗(含开关 + provider 列表)
-        val allProviders = remember(refreshTick) { MyConfig.loadProviders(context) }
-        val validProviders = remember(allProviders) {
-            allProviders.filter { it.apiKey.isNotEmpty() && it.requestUrl.isNotEmpty() && it.modelId.isNotEmpty() }
-        }
-        var showMultiAiDialog by remember { mutableStateOf(false) }
+        // 搜题功能设置(防截屏、悬浮球、悬浮菜单项、多 AI 验证)
         FrostedGlassCard(
-            modifier = Modifier.fillMaxWidth().clickable { showMultiAiDialog = true }
+            modifier = Modifier.fillMaxWidth().clickable { onSearchSettingsClick() }
         ) {
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("多 AI 验证", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    Text("搜题功能设置", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        "会得到更好的结果但会增加 token 消耗,需要两个及以上 API",
+                        "防截屏保护、悬浮球、悬浮菜单项、多 AI 验证",
                         color = TextHint, fontSize = 11.sp, lineHeight = 15.sp
                     )
                 }
                 Text("›", color = TextHint, fontSize = 20.sp)
             }
-        }
-        if (showMultiAiDialog) {
-            MultiAiVerifyDialog(
-                providers = validProviders,
-                enabled = multiAiVerify,
-                selectedIndices = prefs.getMultiAiVerifyIndices(),
-                onEnabledChange = onMultiAiVerifyChanged,
-                onSelectedChange = { indices ->
-                    prefs.setMultiAiVerifyIndices(indices)
-                },
-                onDismiss = { showMultiAiDialog = false }
-            )
         }
         Spacer(Modifier.height(24.dp))
 
@@ -225,27 +201,6 @@ fun SettingsScreen(
             style = ButtonStyle.Outline,
             height = 44.dp
         )
-        Spacer(Modifier.height(12.dp))
-
-        // ═══ 搜题功能设置 ═══
-        FrostedGlassCard(
-            modifier = Modifier.fillMaxWidth().clickable { onSearchSettingsClick() }
-        ) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("搜题功能设置", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        "防截屏保护、悬浮球、悬浮菜单项",
-                        color = TextHint, fontSize = 11.sp, lineHeight = 15.sp
-                    )
-                }
-                Text("›", color = TextHint, fontSize = 20.sp)
-            }
-        }
         Spacer(Modifier.height(12.dp))
 
         // ═══ 关于 ═══
@@ -551,7 +506,6 @@ private fun MultiAiVerifyDialog(
                             Text(
                                 "${provider.modelId.ifEmpty { "未知模型" }} · ${
                                     when (provider.endpointType) {
-                                        "anthropic" -> "Anthropic"
                                         "responses" -> "Responses"
                                         else -> "OpenAI"
                                     }

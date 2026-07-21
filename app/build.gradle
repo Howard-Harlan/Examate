@@ -28,8 +28,8 @@ android {
         applicationId "go.examate.hyp"
         minSdk 31
         targetSdk 35
-        versionCode 5
-        versionName "1.05"
+        versionCode 6
+        versionName "1.1"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -90,6 +90,15 @@ dependencies {
 
     // Coil: 图片加载(淮师心声等)
     implementation libs.coil.compose
+
+    // 支付宝 SDK(水卡充值拉起支付宝 App/H5 网页支付)
+    // POM 中传递依赖 group/artifact 为空(已知 bug),需关闭传递依赖
+    implementation(libs.alipay.sdk) {
+        transitive = false
+    }
+
+    // 微信 SDK(水卡充值拉起微信支付)
+    implementation libs.wechat.sdk
 
     testImplementation libs.junit
     androidTestImplementation libs.ext.junit

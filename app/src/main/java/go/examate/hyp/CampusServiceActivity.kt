@@ -88,18 +88,33 @@ class CampusServiceActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        val targetRoute = intent?.getStringExtra("target_route")
+        val targetTab = intent?.getStringExtra("target_tab")
         setContent {
             ExamateTheme {
                 LiquidGlassBackground {
-                    CampusServiceRoot(onBack = { finish() })
+                    CampusServiceRoot(
+                        onBack = { finish() },
+                        initialRoute = parseRoute(targetRoute, targetTab)
+                    )
                 }
             }
+        }
+    }
+
+    private fun parseRoute(route: String?, tab: String?): CampusRoute {
+        return when (route) {
+            "ecard" -> CampusRoute.Ecard(tab)
+            "jwxt" -> CampusRoute.Jwxt
+            "sc" -> CampusRoute.Sc
+            "hsxs" -> CampusRoute.Hsxs
+            else -> CampusRoute.Home
         }
     }
 }
 
 @Composable
-private fun CampusServiceRoot(onBack: () -> Unit) {
+private fun CampusServiceRoot(onBack: () -> Unit, initialRoute: CampusRoute = CampusRoute.Home) {
     val viewModel: CampusServiceViewModel = viewModel()
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -113,6 +128,11 @@ private fun CampusServiceRoot(onBack: () -> Unit) {
     val loginError = state.loginError
     val bannerDismissed = state.loginBannerDismissed
     val studentName = state.studentName
+
+    // 应用外部传入的初始路由
+    LaunchedEffect(initialRoute) {
+        if (initialRoute !is CampusRoute.Home) viewModel.setRoute(initialRoute)
+    }
 
     // 系统返回键:子页面返回到校园服务首页,而非退出 Activity
     BackHandler(enabled = route !is CampusRoute.Home) {
@@ -131,7 +151,7 @@ private fun CampusServiceRoot(onBack: () -> Unit) {
             return
         }
         is CampusRoute.Ecard -> {
-            EcardScreen(onBack = { viewModel.setRoute(CampusRoute.Home) })
+            EcardScreen(onBack = { viewModel.setRoute(CampusRoute.Home) }, initialTab = route.tab)
             return
         }
         is CampusRoute.Sc -> {
@@ -336,7 +356,7 @@ private fun CampusServiceRoot(onBack: () -> Unit) {
                         FeatureEntryCard(
                             title = "一卡通",
                             subtitle = "余额 / 账单 / 充值 / 生活缴费",
-                            onClick = { viewModel.setRoute(CampusRoute.Ecard) }
+                            onClick = { viewModel.setRoute(CampusRoute.Ecard()) }
                         )
                         Spacer(Modifier.height(12.dp))
                         FeatureEntryCard(

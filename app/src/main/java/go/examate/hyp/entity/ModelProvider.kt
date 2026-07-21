@@ -11,7 +11,10 @@ data class ModelProvider @JvmOverloads constructor(
     var registerUrl: String = "",
     var tag: String = "",
     var inviteCode: String = "",
-    var endpointType: String = inferEndpointType(requestUrl)
+    var endpointType: String = inferEndpointType(requestUrl),
+    var label: String = "",
+    var barColor: String = "",
+    var visible: Boolean = true
 ) {
     init {
         if (endpointType.isEmpty()) {
@@ -30,16 +33,18 @@ data class ModelProvider @JvmOverloads constructor(
         json.put("tag", tag)
         json.put("inviteCode", inviteCode)
         json.put("endpointType", endpointType)
+        json.put("label", label)
+        json.put("barColor", barColor)
+        json.put("visible", visible)
         return json
     }
 
     companion object {
-        /** 根据 URL 推断 endpoint 类型:anthropic / responses / chat */
+        /** 根据 URL 推断 endpoint 类型:responses / chat */
         @JvmStatic
         fun inferEndpointType(url: String?): String {
             if (url == null) return "chat"
             return when {
-                url.contains("/v1/messages") -> "anthropic"
                 url.contains("/v1/responses") -> "responses"
                 else -> "chat"
             }
@@ -91,7 +96,10 @@ data class ModelProvider @JvmOverloads constructor(
                 json.optString("registerUrl", ""),
                 json.optString("tag", ""),
                 json.optString("inviteCode", ""),
-                endpointType
+                endpointType,
+                json.optString("label", ""),
+                json.optString("barColor", ""),
+                json.optBoolean("visible", true)
             )
         }
     }

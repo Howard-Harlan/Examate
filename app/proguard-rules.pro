@@ -40,3 +40,12 @@
 -keepclassmembers class * {
     @android.webkit.JavascriptInterface <methods>;
 }
+
+# ───────── 支付宝 SDK ─────────
+-keep class com.alipay.android.app.** { *; }
+-keep class com.alipay.mobile.** { *; }
+-keep class com.alipay.sdk.** { *; }
+-keep class com.ut.device.** { *; }
+-dontwarn com.alipay.**
+-dontwarn com.ta.utdid2.**
+-dontwarn com.ut.device.**

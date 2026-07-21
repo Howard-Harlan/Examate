@@ -26,6 +26,7 @@ fun MainScreen(
     onChatClick: () -> Unit,
     onLanChatClick: () -> Unit,
     onCampusServiceClick: () -> Unit,
+    onWaterCardClick: () -> Unit,
     onUserSettingsClick: () -> Unit,
     onShizukuClick: () -> Unit,
     onApiConfigClick: () -> Unit,
@@ -56,7 +57,8 @@ fun MainScreen(
             )
             1 -> QiushiScreen(
                 onLanChatClick = onLanChatClick,
-                onCampusServiceClick = onCampusServiceClick
+                onCampusServiceClick = onCampusServiceClick,
+                onWaterCardClick = onWaterCardClick
             )
             2 -> SettingsScreen(
                 shizukuGranted = shizukuGranted,
@@ -100,6 +102,7 @@ fun MainScreenRoot(
     onChatClick: () -> Unit,
     onLanChatClick: () -> Unit,
     onCampusServiceClick: () -> Unit,
+    onWaterCardClick: () -> Unit,
     onUserSettingsClick: () -> Unit,
     onShizukuClick: () -> Unit,
     onApiConfigClick: () -> Unit,
@@ -127,6 +130,7 @@ fun MainScreenRoot(
         onChatClick = onChatClick,
         onLanChatClick = onLanChatClick,
         onCampusServiceClick = onCampusServiceClick,
+        onWaterCardClick = onWaterCardClick,
         onUserSettingsClick = onUserSettingsClick,
         onShizukuClick = onShizukuClick,
         onApiConfigClick = onApiConfigClick,

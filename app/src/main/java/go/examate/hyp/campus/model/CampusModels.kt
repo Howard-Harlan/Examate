@@ -142,7 +142,8 @@ data class BillRecord(
     val time: String,
     val amount: String,
     val description: String,
-    val type: String
+    val type: String,
+    val balanceAfter: String = ""
 )
 
 /** 充值/缴费结果 */

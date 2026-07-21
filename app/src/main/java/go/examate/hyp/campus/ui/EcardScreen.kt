@@ -22,10 +22,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.DatePicker
-import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -74,11 +71,17 @@ private enum class EcardTab(val label: String) {
 
 /** 一卡通页面 */
 @Composable
-fun EcardScreen(onBack: () -> Unit) {
+fun EcardScreen(onBack: () -> Unit, initialTab: String? = null) {
     val viewModel: EcardViewModel = viewModel()
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
-    var tab by remember { mutableStateOf(EcardTab.BALANCE) }
+    var tab by remember { mutableStateOf(
+        when (initialTab) {
+            "bill" -> EcardTab.BILL
+            "payfee" -> EcardTab.PAYFEE
+            else -> EcardTab.BALANCE
+        }
+    ) }
 
     CampusPageScaffold(
         title = "一卡通",
@@ -366,72 +369,207 @@ private fun BillSection(state: BillState, vm: EcardViewModel) {
     }
 
     if (state.datePickerField.isNotEmpty()) {
-        val initialMillis = try {
+        val initialDate = try {
             LocalDate.parse(if (state.datePickerField == "start") state.startDate else state.endDate)
-                .atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-        } catch (_: Exception) { java.time.LocalDate.now().minusDays(30).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() }
-        val pickerState = rememberDatePickerState(initialSelectedDateMillis = initialMillis)
-        DatePickerDialog(
-            onDismissRequest = {
+        } catch (_: Exception) { java.time.LocalDate.now().minusDays(30) }
+        CustomCalendarDialog(
+            initialDate = initialDate,
+            onDismiss = {
                 if (state.datePickerField == "start") vm.showStartDatePicker(false)
                 else vm.showEndDatePicker(false)
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    pickerState.selectedDateMillis?.let { millis ->
-                        val dt = java.time.Instant.ofEpochMilli(millis).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
-                        if (state.datePickerField == "start") vm.setBillStartDate(dt.toString())
-                        else vm.setBillEndDate(dt.toString())
-                    }
-                    if (state.datePickerField == "start") vm.showStartDatePicker(false)
-                    else vm.showEndDatePicker(false)
-                }) { Text("确定", color = Primary) }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    if (state.datePickerField == "start") vm.showStartDatePicker(false)
-                    else vm.showEndDatePicker(false)
-                }) { Text("取消", color = TextSecondary) }
+            onConfirm = { date ->
+                if (state.datePickerField == "start") vm.setBillStartDate(date.toString())
+                else vm.setBillEndDate(date.toString())
+                if (state.datePickerField == "start") vm.showStartDatePicker(false)
+                else vm.showEndDatePicker(false)
             }
+        )
+    }
+}
+
+/**
+ * 自定义日历弹窗 — 解决 Material3 DatePicker 星期标题间距不均问题
+ * 7 列等宽网格,星期标题均匀分布
+ */
+@Composable
+private fun CustomCalendarDialog(
+    initialDate: LocalDate,
+    onDismiss: () -> Unit,
+    onConfirm: (LocalDate) -> Unit
+) {
+    var selectedDate by remember { mutableStateOf(initialDate) }
+    var viewMonth by remember { mutableStateOf(initialDate.withDayOfMonth(1)) }
+    val today = LocalDate.now()
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(Color.White)
+                .padding(20.dp)
         ) {
-            DatePicker(state = pickerState)
+            // 月份导航
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Box(
+                    Modifier
+                        .size(32.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .clickable { viewMonth = viewMonth.minusMonths(1) },
+                    contentAlignment = Alignment.Center
+                ) { Text("‹", color = Primary, fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+                Text(
+                    "${viewMonth.year}年${viewMonth.monthValue}月",
+                    color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium
+                )
+                Box(
+                    Modifier
+                        .size(32.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .clickable { viewMonth = viewMonth.plusMonths(1) },
+                    contentAlignment = Alignment.Center
+                ) { Text("›", color = Primary, fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // 星期标题 — 7 列等宽,均匀分布
+            val weekDays = listOf("日", "一", "二", "三", "四", "五", "六")
+            Row(Modifier.fillMaxWidth()) {
+                weekDays.forEach { day ->
+                    Text(
+                        text = day,
+                        color = TextHint,
+                        fontSize = 13.sp,
+                        modifier = Modifier.weight(1f),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            // 日期网格 — 7 列等宽
+            val firstDay = viewMonth.withDayOfMonth(1)
+            val daysInMonth = viewMonth.lengthOfMonth()
+            val startOffset = firstDay.dayOfWeek.value % 7  // 周日=0, 周一=1...
+
+            val totalCells = ((startOffset + daysInMonth + 6) / 7) * 7
+            val rows = totalCells / 7
+
+            Column(Modifier.fillMaxWidth()) {
+                for (row in 0 until rows) {
+                    Row(Modifier.fillMaxWidth()) {
+                        for (col in 0 until 7) {
+                            val index = row * 7 + col
+                            val dayNum = index - startOffset + 1
+                            if (dayNum in 1..daysInMonth) {
+                                val date = viewMonth.withDayOfMonth(dayNum)
+                                val isSelected = date == selectedDate
+                                val isToday = date == today
+                                Box(
+                                    Modifier
+                                        .weight(1f)
+                                        .height(40.dp)
+                                        .clip(androidx.compose.foundation.shape.CircleShape)
+                                        .background(
+                                            when {
+                                                isSelected -> Primary
+                                                else -> Color.Transparent
+                                            }
+                                        )
+                                        .clickable { selectedDate = date },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "$dayNum",
+                                        color = when {
+                                            isSelected -> Color.White
+                                            isToday -> Primary
+                                            else -> TextPrimary
+                                        },
+                                        fontSize = 14.sp,
+                                        fontWeight = if (isToday || isSelected) FontWeight.Medium else FontWeight.Normal
+                                    )
+                                }
+                            } else {
+                                Box(Modifier.weight(1f).height(40.dp))
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            HorizontalDivider(color = TextHint.copy(alpha = 0.15f))
+            Spacer(Modifier.height(4.dp))
+
+            // 底部按钮
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = onDismiss) { Text("取消", color = TextSecondary) }
+                TextButton(onClick = { onConfirm(selectedDate) }) { Text("确定", color = Primary) }
+            }
         }
     }
 }
 
-/** 账单项卡片 */
+/** 账单项卡片。
+ *  布局:左侧消费场所+时间,右侧消费数量(金额)+变化后余额 */
 @Composable
 private fun BillItemCard(r: BillRecord) {
     val amount = r.amount.toDoubleOrNull() ?: 0.0
-    val isExpense = amount < 0 || r.description.contains("消费")
+    // 消费记录(type 含"消费")为支出;充值记录为收入。
+    // 金额可能带负号(消费)或正号(充值),统一取绝对值展示,用颜色区分。
+    val isExpense = r.type.contains("消费") || amount < 0
+    val displayAmount = kotlin.math.abs(amount)
     FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
         Row(
             Modifier.fillMaxWidth().padding(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // 左侧:消费场所 + 时间
             Column(Modifier.weight(1f)) {
-                Text(r.description.ifEmpty { r.type }, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text(
+                    r.description.ifEmpty { r.type },
+                    color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium
+                )
                 Spacer(Modifier.height(3.dp))
                 Text(r.time, color = TextHint, fontSize = 11.sp)
             }
-            Text(
-                "${if (amount >= 0) "+" else ""}${r.amount}",
-                color = if (isExpense) Error else Success,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold
-            )
+            // 右侧:消费数量(金额) + 变化后余额
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    "${if (isExpense) "-" else "+"}¥${"%.2f".format(displayAmount)}",
+                    color = if (isExpense) Error else Success,
+                    fontSize = 15.sp, fontWeight = FontWeight.Bold
+                )
+                if (r.balanceAfter.isNotEmpty()) {
+                    Spacer(Modifier.height(2.dp))
+                    Text("余额 ¥$r.balanceAfter", color = TextHint, fontSize = 11.sp)
+                }
+            }
         }
     }
 }
 
-/** 计算支出与充值总额 */
+/** 计算支出与充值总额。
+ *  消费记录(type 含"消费"或金额为负)计入支出,其余计入充值 */
 private fun summarize(bills: List<BillRecord>): Pair<String, String> {
     var expense = 0.0
     var income = 0.0
     bills.forEach { r ->
         val amt = r.amount.toDoubleOrNull() ?: 0.0
-        if (amt < 0) expense += -amt
-        else income += amt
+        val isExpense = r.type.contains("消费") || amt < 0
+        if (isExpense) expense += kotlin.math.abs(amt)
+        else income += kotlin.math.abs(amt)
     }
     return "%.2f".format(expense) to "%.2f".format(income)
 }

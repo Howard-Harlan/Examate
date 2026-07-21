@@ -115,7 +115,7 @@ fun ShensiScreen(
 
         // ═══ 启动胶囊:点击选择启动模式 ═══
         LiquidGlassButton(
-            text = "启动",
+            text = "启动搜题",
             onClick = { showLaunchDialog = true },
             style = ButtonStyle.White,
             height = 52.dp
@@ -125,7 +125,7 @@ fun ShensiScreen(
 
         // ═══ Agents 入口 ═══
         LiquidGlassButton(
-            text = "Agents",
+            text = "All in Agent",
             onClick = onChatClick,
             style = ButtonStyle.White,
             height = 52.dp

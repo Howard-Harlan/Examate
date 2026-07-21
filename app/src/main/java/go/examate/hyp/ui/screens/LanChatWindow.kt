@@ -61,10 +61,12 @@ data class LanChatMessage(
 )
 
 /**
- * 局域网聊天悬浮窗(Compose 液态玻璃风格)
+ * 聊天悬浮窗(Compose 液态玻璃风格)
+ * @param title 标题栏文本(局域网聊天 / 房间聊天 #xxxxxx)
  */
 @Composable
 fun LanChatWindow(
+    title: String,
     messages: List<LanChatMessage>,
     onlineCount: Int,
     inputText: String,
@@ -109,7 +111,7 @@ fun LanChatWindow(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "局域网聊天",
+                    text = title,
                     color = TextPrimary,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,

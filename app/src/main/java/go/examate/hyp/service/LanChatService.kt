@@ -25,15 +25,16 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import go.examate.hyp.ui.screens.LanChatMessage
 import go.examate.hyp.ui.screens.LanChatWindow
 import go.examate.hyp.ui.theme.ExamateTheme
+import go.examate.hyp.util.LanChatCache
 import java.text.SimpleDateFormat
 
 /**
- * 局域网群聊悬浮窗服务(Compose UI)
+ * 局域网聊天悬浮窗服务(Compose UI)
  *
- * 通过 [LanChatTransport] 进行 UDP 广播通信(255.255.255.255:19876)。
- * - 通信与设备发现全部委托给 transport
- * - 悬浮窗:输入框聚焦时去掉 FLAG_NOT_FOCUSABLE 以允许输入,
- *   失焦时恢复(避免抢占全局焦点导致其他窗口无法操作)
+ * - 通信与设备发现全部委托给 [LanChatTransport]
+ * - 5 分钟消息缓存(与全屏页共用 [LanChatCache])
+ * - 输入框聚焦时去掉 FLAG_NOT_FOCUSABLE 以允许输入,
+ *   失焦时恢复(避免抢占全局焦点)
  */
 class LanChatService : Service(), LifecycleOwner, SavedStateRegistryOwner, LanChatTransport.Callback {
 
@@ -77,7 +78,8 @@ class LanChatService : Service(), LifecycleOwner, SavedStateRegistryOwner, LanCh
             lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
             lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
 
-            transport = LanChatTransport(this, this).also { it.start() }
+            // 加载缓存消息(5分钟内)
+            messages.addAll(LanChatCache.load(this))
         } catch (e: Exception) {
             Log.e(TAG, "onCreate failed", e)
             Toast.makeText(this, "启动失败: ${e.message}", Toast.LENGTH_LONG).show()
@@ -86,6 +88,10 @@ class LanChatService : Service(), LifecycleOwner, SavedStateRegistryOwner, LanCh
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // 启动 transport(onCreate 已加载缓存,这里只负责启动通信)
+        if (transport == null) {
+            transport = LanChatTransport(this, this).also { it.start() }
+        }
         return START_NOT_STICKY
     }
 
@@ -105,8 +111,10 @@ class LanChatService : Service(), LifecycleOwner, SavedStateRegistryOwner, LanCh
     // ═══ LanChatTransport.Callback ═══
 
     override fun onMessageReceived(msg: LanChatMessage) {
-        // 回调在收包线程触发,需切主线程更新 Compose 状态
-        mainHandler.post { messages.add(msg) }
+        mainHandler.post {
+            messages.add(msg)
+            LanChatCache.append(this, msg)
+        }
     }
 
     override fun onOnlineCountChanged(count: Int) {
@@ -120,9 +128,10 @@ class LanChatService : Service(), LifecycleOwner, SavedStateRegistryOwner, LanCh
     // ═══ 消息发送 ═══
 
     private fun sendMessage(text: String) {
-        // 超长由 transport 回调 onError 提示
         transport?.sendMessage(text)
-        messages.add(LanChatMessage(text, true, transport?.myName ?: Build.MODEL, System.currentTimeMillis()))
+        val msg = LanChatMessage(text, true, transport?.myName ?: Build.MODEL, System.currentTimeMillis())
+        messages.add(msg)
+        LanChatCache.append(this, msg)
     }
 
     // ═══ 悬浮窗(Compose) ═══
@@ -145,6 +154,7 @@ class LanChatService : Service(), LifecycleOwner, SavedStateRegistryOwner, LanCh
             setContent {
                 ExamateTheme {
                     LanChatWindow(
+                        title = "局域网聊天",
                         messages = messages,
                         onlineCount = onlineCount.value,
                         inputText = inputText.value,
@@ -165,8 +175,6 @@ class LanChatService : Service(), LifecycleOwner, SavedStateRegistryOwner, LanCh
                             try { windowManager.updateViewLayout(composeView, chatParams) } catch (e: Exception) { Log.w(TAG, "updateViewLayout failed", e) }
                         },
                         onInputFocusChange = { focused ->
-                            // 输入框聚焦时移除 FLAG_NOT_FOCUSABLE 让窗口可获取焦点输入;
-                            // 失焦时恢复 FLAG_NOT_FOCUSABLE,避免持续抢占全局焦点
                             updateWindowFocusable(focused)
                         }
                     )

@@ -31,7 +31,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -73,6 +73,7 @@ import go.examate.hyp.ui.chat.DynamicInputBar
 import go.examate.hyp.ui.chat.HistoryPanel
 import go.examate.hyp.ui.chat.MessageBubble
 import go.examate.hyp.ui.chat.ModelSelector
+import go.examate.hyp.ui.chat.ToolStepsTimeline
 import go.examate.hyp.ui.components.LiquidGlassBackground
 import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.components.LocalGlassBackdrop
@@ -122,12 +123,6 @@ private fun ChatScreen(onBack: () -> Unit) {
         vm.setPendingImage(uri?.toString())
     }
 
-    // Agent 聊天头像:读取开关 + 加载头像
-    val chatAvatarEnabled = remember { PrefsManager.getInstance(context).isAgentChatAvatarEnabled }
-    val agentAvatarBitmap = remember(chatAvatarEnabled) {
-        if (chatAvatarEnabled) AvatarHelper.loadAgentAvatar(context) else null
-    }
-
     LaunchedEffect(Unit) {
         if (ui.messages.isEmpty()) {
             val sessions = ChatHistoryManager.loadAll(context)
@@ -171,8 +166,7 @@ private fun ChatScreen(onBack: () -> Unit) {
             )
         ) {
             if (ui.messages.isEmpty() && ui.streamingText.isEmpty() && !ui.isLoading) {
-                // 空状态提示(reverseLayout 下第一个 item 在底部)
-                item(key = "empty") { EmptyHint() }
+                // 空状态:留空,placeholder 已在输入框显示"发掘无限可能"
             } else {
                 // ★ 底部:流式文本 或 加载指示器
                 if (ui.streamingText.isNotEmpty()) {
@@ -180,14 +174,20 @@ private fun ChatScreen(onBack: () -> Unit) {
                         MessageBubble(
                             ChatMsg("assistant", ui.streamingText, false, System.currentTimeMillis()),
                             timeFmt, context, onQuickFollowUp = onQuickFollowUp,
-                            isStreaming = true,
-                            showAvatar = chatAvatarEnabled,
-                            avatarBitmap = agentAvatarBitmap
+                            isStreaming = true
                         )
                     }
                 } else if (ui.isLoading) {
                     item(key = "loading") {
                         Column(Modifier.fillMaxWidth().padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            // ★ 链式思考容器:加载中实时展示工具调用步骤
+                            if (ui.currentToolSteps.isNotEmpty()) {
+                                ToolStepsTimeline(
+                                    steps = ui.currentToolSteps,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(Modifier.height(8.dp))
+                            }
                             CircularProgressIndicator(Modifier.width(20.dp).height(20.dp), strokeWidth = 2.dp, color = TextHint)
                             if (ui.loadingStatus.isNotEmpty()) {
                                 Spacer(Modifier.height(6.dp))
@@ -201,11 +201,15 @@ private fun ChatScreen(onBack: () -> Unit) {
                     item(key = "card_$index") { ActionCardView(card) }
                 }
                 // ★ 消息列表(reversed:最新消息在底部 = reversed 列表的第一个)
-                items(ui.messages.reversed(), key = { it.id }) { message ->
+                itemsIndexed(ui.messages.reversed(), key = { _, it -> it.id }) { index, message ->
+                    // 仅最后一条消息(且非加载/流式状态)显示操作行
+                    val isLast = index == 0
                     MessageBubble(
-                        message, timeFmt, context, onQuickFollowUp = onQuickFollowUp,
-                        showAvatar = chatAvatarEnabled,
-                        avatarBitmap = agentAvatarBitmap
+                        message, timeFmt, context,
+                        onQuickFollowUp = onQuickFollowUp,
+                        onRegenerate = { vm.regenerate(message.id, providers, context) },
+                        onDelete = { vm.deleteMessage(message.id) },
+                        showActions = isLast && !ui.isLoading && ui.streamingText.isEmpty()
                     )
                 }
             }
@@ -273,20 +277,23 @@ private fun ChatScreen(onBack: () -> Unit) {
         }
 
         // ═══ 底部输入栏 ═══
-        Box(Modifier.align(Alignment.BottomCenter)) {
+        Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 6.dp)) {
             DynamicInputBar(
                 text = ui.inputText,
                 onTextChange = { vm.updateInputText(it) },
                 hasImage = ui.pendingImageUriString != null,
+                imageUriString = ui.pendingImageUriString,
                 onPickImage = { imagePicker.launch("image/*") },
                 onClearImage = { vm.clearPendingImage() },
                 canSend = (ui.inputText.isNotBlank() || ui.pendingImageUriString != null) && !ui.isLoading && providers.isNotEmpty(),
+                isLoading = ui.isLoading,
                 onSend = {
                     val text = ui.inputText.trim()
                     if (text.isEmpty() && ui.pendingImageUriString == null) return@DynamicInputBar
                     val uri = ui.pendingImageUriString?.let { Uri.parse(it) }
                     vm.send(text, uri, providers, context)
-                }
+                },
+                onStop = { vm.stopSend() }
             )
         }
     }
@@ -305,74 +312,5 @@ private fun ChatScreen(onBack: () -> Unit) {
             onDelete = { id -> vm.deleteSession(context, id) },
             onDismiss = { vm.dismissHistory() }
         )
-    }
-}
-
-@Composable
-private fun EmptyHint() {
-    val text = "发掘无限可能"
-    val charCount = text.length
-    // 从左到右逐字显示进度(0..charCount)
-    val revealProgress = remember { Animatable(0f) }
-    // 流体闪光偏移(0..2,扫两遍)
-    val shimmerOffset = remember { Animatable(0f) }
-    var rowWidthPx by remember { mutableStateOf(0f) }
-
-    LaunchedEffect(Unit) {
-        // 1. 从左到右逐字显示
-        revealProgress.animateTo(
-            targetValue = charCount.toFloat(),
-            animationSpec = tween(durationMillis = charCount * 180, delayMillis = 300)
-        )
-        // 2. 流体在文字后闪两下
-        shimmerOffset.animateTo(
-            targetValue = 2f,
-            animationSpec = tween(durationMillis = 1600, delayMillis = 120)
-        )
-    }
-
-    Box(
-        Modifier
-            .fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Row(
-            horizontalArrangement = Arrangement.Center,
-            modifier = Modifier
-                .onSizeChanged { rowWidthPx = it.width.toFloat() }
-                .drawWithContent {
-                    drawContent()
-                    // 流体闪光:文字全部显示后启动
-                    if (shimmerOffset.value > 0f && rowWidthPx > 0f) {
-                        // 每一遍 phase 0..1,从左扫到右
-                        val phase = shimmerOffset.value % 1f
-                        // 中心 x:从 -0.5*width 到 1.5*width,光带进入并离开文字
-                        val centerX = (phase * 2f - 0.5f) * rowWidthPx
-                        val halfBand = rowWidthPx * 0.28f
-                        val brush = Brush.horizontalGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                Color.White.copy(alpha = 0.32f),
-                                Color.Transparent
-                            ),
-                            startX = centerX - halfBand,
-                            endX = centerX + halfBand
-                        )
-                        drawRect(brush = brush, size = size)
-                    }
-                }
-        ) {
-            text.forEachIndexed { index, char ->
-                val charProgress = (revealProgress.value - index).coerceIn(0f, 1f)
-                Text(
-                    text = char.toString(),
-                    color = TextHint,
-                    fontSize = 15.sp,
-                    modifier = Modifier.graphicsLayer {
-                        alpha = charProgress
-                    }
-                )
-            }
-        }
     }
 }

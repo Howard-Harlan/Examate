@@ -24,6 +24,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.effects.vibrancy
+import com.kyant.backdrop.highlight.Highlight
+import com.kyant.shapes.Capsule
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -45,6 +50,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Alignment
@@ -57,14 +63,17 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import go.examate.hyp.agent.AgentOrchestrator
 import go.examate.hyp.agent.MemoryManager
 import go.examate.hyp.agent.SkillManager
+import go.examate.hyp.config.MyConfig
 import go.examate.hyp.config.PrefsManager
 import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassBackground
 import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.components.LiquidGlassIconButton
+import go.examate.hyp.ui.components.LocalGlassBackdrop
 import go.examate.hyp.ui.components.LiquidGlassToggle
 import go.examate.hyp.ui.components.PlainDialog
 import go.examate.hyp.ui.components.PlainDialogContent
@@ -78,6 +87,7 @@ import go.examate.hyp.ui.theme.SurfaceVariant
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.util.AvatarHelper
+import kotlinx.coroutines.launch
 import java.io.File
 
 class AgentSettingsActivity : ComponentActivity() {
@@ -107,9 +117,8 @@ private fun AgentSettingsScreen(onBack: () -> Unit) {
     var memoriesExpanded by remember { mutableStateOf(false) }
     var refreshTick by remember { mutableIntStateOf(0) }
 
-    // Agent 头像 + 聊天头像开关
-    var agentAvatarBitmap by remember { mutableStateOf<Bitmap?>(AvatarHelper.loadAgentAvatar(context)) }
-    var chatAvatarEnabled by remember { mutableStateOf(PrefsManager.getInstance(context).isAgentChatAvatarEnabled) }
+    // 对话记忆开关(仅 agents 对话生效,悬浮搜题不产生记忆)
+    var memoryEnabled by remember { mutableStateOf(PrefsManager.getInstance(context).isMemoryEnabled) }
 
     LaunchedEffect(Unit) {
         SkillManager.ensureBuiltinSkills(context)
@@ -135,14 +144,6 @@ private fun AgentSettingsScreen(onBack: () -> Unit) {
         }
     }
 
-    val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) {
-            val success = AvatarHelper.saveAgentAvatar(context, uri)
-            Toast.makeText(context, if (success) "Agent 头像已更新" else "保存失败", Toast.LENGTH_SHORT).show()
-            if (success) agentAvatarBitmap = AvatarHelper.loadAgentAvatar(context)
-        }
-    }
-
     Box(
         Modifier
             .fillMaxSize()
@@ -152,7 +153,7 @@ private fun AgentSettingsScreen(onBack: () -> Unit) {
         Column(Modifier.fillMaxSize()) {
             // ═══ 顶栏:返回 + 居中标题 ═══
             Box(
-                Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)
+                Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp)
             ) {
                 LiquidGlassIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
@@ -163,7 +164,7 @@ private fun AgentSettingsScreen(onBack: () -> Unit) {
                         .align(Alignment.CenterStart)
                 )
                 Text(
-                    text = "Agent 设置",
+                    text = "Agents 设置",
                     color = TextPrimary,
                     fontSize = 17.sp,
                     fontWeight = FontWeight.Medium,
@@ -174,81 +175,35 @@ private fun AgentSettingsScreen(onBack: () -> Unit) {
             // ═══ 内容区 ═══
             LazyColumn(
                 Modifier.fillMaxSize(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // ═══ Agent 头像 + 聊天开关(集成一块) ═══
+                // API 厂商设置
                 item {
-                    FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                // 头像预览(点击换图)
-                                Box(
-                                    Modifier
-                                        .size(42.dp)
-                                        .clip(CircleShape)
-                                        .background(SurfaceVariant)
-                                        .clickable { avatarPicker.launch("image/*") },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    agentAvatarBitmap?.let { bmp ->
-                                        Image(
-                                            bitmap = bmp.asImageBitmap(),
-                                            contentDescription = "Agent 头像",
-                                            modifier = Modifier.fillMaxSize().clip(CircleShape),
-                                            contentScale = ContentScale.Crop
-                                        )
-                                    } ?: run {
-                                        Icon(
-                                            Icons.Filled.Person,
-                                            contentDescription = "默认头像",
-                                            tint = TextHint,
-                                            modifier = Modifier.size(22.dp)
-                                        )
-                                    }
-                                }
-                                Spacer(Modifier.width(12.dp))
-                                Column(Modifier.weight(1f)) {
-                                    Text("聊天显示头像", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                    Text("点击头像设置,开启后在气泡左侧显示", color = TextHint, fontSize = 11.sp)
-                                }
-                                LiquidGlassToggle(
-                                    selected = chatAvatarEnabled,
-                                    onSelect = { enabled ->
-                                        chatAvatarEnabled = enabled
-                                        PrefsManager.getInstance(context).isAgentChatAvatarEnabled = enabled
-                                    }
-                                )
-                            }
-                            // 已设置头像时显示清除按钮
-                            if (agentAvatarBitmap != null) {
-                                Spacer(Modifier.height(8.dp))
-                                Box(
-                                    Modifier.fillMaxWidth(),
-                                    contentAlignment = Alignment.CenterEnd
-                                ) {
-                                    Text(
-                                        "清除头像",
-                                        color = Danger,
-                                        fontSize = 12.sp,
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .clickable {
-                                                AvatarHelper.clearAgentAvatar(context)
-                                                agentAvatarBitmap = null
-                                                Toast.makeText(context, "已清除", Toast.LENGTH_SHORT).show()
-                                            }
-                                            .padding(horizontal = 10.dp, vertical = 6.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
+                    LiquidGlassButton(
+                        text = "API 厂商设置",
+                        onClick = { context.startActivity(Intent(context, ApiConfigActivity::class.java)) },
+                        style = ButtonStyle.Outline,
+                        height = 44.dp
+                    )
                 }
 
                 // ═══ Skills 区 ═══
                 item {
-                    SectionHeader("Skills 技能", "已导入 ${skills.size} 个,启用 ${skills.count { it.enabled }} 个")
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Skills 技能", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            Text("已导入 ${skills.size} 个,启用 ${skills.count { it.enabled }} 个", color = TextHint, fontSize = 11.sp)
+                        }
+                        // 自定义 wrap content 液态玻璃按钮(避免 LiquidGlassButton 强制 fillMaxWidth)
+                        CompactGlassButton(
+                            text = "导入",
+                            onClick = { showImportDialog = true }
+                        )
+                    }
                 }
                 // 最多显示 3 个,展开后显示全部
                 val visibleSkills = if (skillsExpanded) skills else skills.take(3)
@@ -276,20 +231,31 @@ private fun AgentSettingsScreen(onBack: () -> Unit) {
                         )
                     }
                 }
-                // 导入 Skills 按钮
-                item {
-                    LiquidGlassButton(
-                        text = "导入 Skills",
-                        onClick = { showImportDialog = true },
-                        style = ButtonStyle.White,
-                        height = 42.dp,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
 
                 // ═══ 记忆区 ═══
                 item {
-                    SectionHeader("记忆", "AI 会记住这些信息,共 ${memories.size} 条")
+                    SectionHeader("记忆", "仅 agents 对话生效,共 ${memories.size} 条")
+                }
+                // 记忆开关
+                item {
+                    FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("对话记忆", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                Text("自动捕获偏好,并在对话中注入已保存的记忆", color = TextHint, fontSize = 11.sp)
+                            }
+                            LiquidGlassToggle(
+                                selected = memoryEnabled,
+                                onSelect = {
+                                    memoryEnabled = it
+                                    PrefsManager.getInstance(context).isMemoryEnabled = it
+                                }
+                            )
+                        }
+                    }
                 }
                 item {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -565,8 +531,12 @@ private fun AddMemoryDialog(
     onDismiss: () -> Unit,
     onAdd: (content: String, category: String) -> Unit
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var content by remember { mutableStateOf("") }
     var category by remember { mutableStateOf("通用") }
+    var optimizing by remember { mutableStateOf(false) }
+    var optimizeError by remember { mutableStateOf("") }
     val categories = listOf("通用", "偏好", "重要事项", "人物", "学习")
 
     PlainDialog(onDismissRequest = onDismiss) {
@@ -588,7 +558,51 @@ private fun AddMemoryDialog(
                 }
             }
             Spacer(Modifier.height(12.dp))
-            Text("内容", color = TextHint, fontSize = 12.sp)
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("内容", color = TextHint, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                // 优化描述按钮:调用当前对话模型优化记忆描述
+                Text(
+                    if (optimizing) "优化中..." else "优化描述",
+                    color = if (optimizing) TextHint else Primary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.clickable {
+                        if (content.isNotBlank() && !optimizing) {
+                            optimizeError = ""
+                            scope.launch {
+                                optimizing = true
+                                try {
+                                    val providers = MyConfig.loadProviders(context)
+                                    val valid = providers.filter {
+                                        it.apiKey.isNotEmpty() && it.requestUrl.isNotEmpty() && it.modelId.isNotEmpty()
+                                    }
+                                    if (valid.isEmpty()) {
+                                        optimizeError = "未配置可用的 AI"
+                                    } else {
+                                        val provider = valid.first()
+                                        val systemPrompt = "你是记忆优化助手。用户会给你一段想要记住的描述，请你将其优化为一条简洁、清晰、结构化的记忆条目。" +
+                                            "要求：1)提炼核心信息，去除冗余；2)用简洁的陈述句；3)保留所有关键事实；4)只输出优化后的文本，不要任何解释或前后缀。"
+                                        val result = AgentOrchestrator.simpleChat(
+                                            context, provider,
+                                            "请优化这条记忆描述：\n$content",
+                                            emptyList(), systemPrompt
+                                        )
+                                        if (!result.isNullOrBlank()) content = result.trim()
+                                        else optimizeError = "优化失败"
+                                    }
+                                } catch (e: Exception) {
+                                    optimizeError = "优化失败: ${e.message}"
+                                } finally {
+                                    optimizing = false
+                                }
+                            }
+                        }
+                    }.padding(horizontal = 4.dp, vertical = 2.dp)
+                )
+            }
             Spacer(Modifier.height(6.dp))
             OutlinedTextField(
                 value = content, onValueChange = { content = it },
@@ -597,6 +611,10 @@ private fun AddMemoryDialog(
                 singleLine = false,
                 shape = RoundedCornerShape(12.dp)
             )
+            if (optimizeError.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Text(optimizeError, color = Danger, fontSize = 11.sp)
+            }
         }
         Spacer(Modifier.height(12.dp))
         PlainDialogButtons(
@@ -607,5 +625,38 @@ private fun AddMemoryDialog(
                 Triple("取消", false) { onDismiss() }
             )
         )
+    }
+}
+
+/**
+ * 紧凑液态玻璃按钮(wrap content,不强制 fillMaxWidth)
+ * 用于 Row 中与文字并排的小按钮
+ */
+@Composable
+private fun CompactGlassButton(
+    text: String,
+    onClick: () -> Unit
+) {
+    val backdrop = LocalGlassBackdrop.current
+    Box(
+        Modifier
+            .clip(Capsule())
+            .then(
+                if (backdrop != null) {
+                    Modifier.drawBackdrop(
+                        backdrop = backdrop,
+                        shape = { Capsule() },
+                        effects = { vibrancy(); blur(8f.dp.toPx()) },
+                        highlight = { Highlight.Plain },
+                        onDrawSurface = { drawRect(Color.White.copy(0.5f)) }
+                    )
+                } else {
+                    Modifier.background(Color.White.copy(0.7f))
+                }
+            )
+            .clickable { onClick() }
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+    ) {
+        Text(text, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
     }
 }

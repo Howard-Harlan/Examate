@@ -16,7 +16,11 @@ import go.examate.hyp.util.ChatHistoryManager
 import go.examate.hyp.util.ChatMsg
 import go.examate.hyp.util.ChatSession
 import go.examate.hyp.util.HttpUtils
+import go.examate.hyp.util.ToolStatus
+import go.examate.hyp.util.ToolStep
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,6 +40,9 @@ class ChatViewModel : ViewModel() {
 
     /** 缓存 PrefsManager 单例(内部持有 applicationContext,不会泄漏 Activity) */
     private var prefs: PrefsManager? = null
+
+    /** 当前发送任务(用于停止生成) */
+    private var sendJob: Job? = null
 
     private val _uiState = MutableStateFlow(
         ChatUiState(currentSession = ChatHistoryManager.newSession())
@@ -81,14 +88,15 @@ class ChatViewModel : ViewModel() {
                 isLoading = true,
                 loadingStatus = "",
                 toolProgressCards = emptyList(),
-                streamingText = ""
+                streamingText = "",
+                currentToolSteps = emptyList()
             )
         }
         ensurePrefs(context)
 
         val provider = providers[_uiState.value.modelIndex.coerceIn(0, providers.size - 1)]
 
-        viewModelScope.launch {
+        sendJob = viewModelScope.launch {
             try {
                 if (imageUri != null) {
                     // 图片消息:走原有 vision 逻辑
@@ -122,78 +130,246 @@ class ChatViewModel : ViewModel() {
                         userMessage = text,
                         history = history.dropLast(1),
                         agentsMode = true
-                    ).collect { event ->
-                        when (event) {
-                            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.Thinking -> {
-                                updateState { it.copy(loadingStatus = event.text) }
-                            }
-                            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.ToolStarted -> {
-                                updateState { it.copy(loadingStatus = event.label) }
-                            }
-                            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.ToolDone -> {
-                                val card = event.card
-                                if (card != null) {
-                                    updateState {
-                                        it.copy(toolProgressCards = it.toolProgressCards + card)
-                                    }
-                                }
-                                updateState { it.copy(loadingStatus = "${event.name} 完成") }
-                            }
-                            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.FinalReply -> {
-                                // 非流式回复(错误 / 误判回退)
-                                updateState {
-                                    it.copy(
-                                        isLoading = false,
-                                        toolProgressCards = emptyList(),
-                                        streamingText = ""
-                                    )
-                                }
-                                appendAssistant(
-                                    event.text,
-                                    isError = event.isError,
-                                    imageBase64 = event.imageBase64,
-                                    imageUrl = event.imageUrl,
-                                    toolCalls = emptyList(),
-                                    cards = event.cards
-                                )
-                                if (!event.isError) maybeCaptureMemory(context)
-                            }
-                            // ★ SSE 流式 token → 追加到 streamingText
-                            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.FinalTextToken -> {
-                                updateState {
-                                    it.copy(streamingText = it.streamingText + event.token)
-                                }
-                            }
-                            // ★ 流式结束 → 转为正式消息
-                            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.FinalTextEnd -> {
-                                val finalText = _uiState.value.streamingText
-                                updateState {
-                                    it.copy(
-                                        streamingText = "",
-                                        isLoading = false,
-                                        toolProgressCards = emptyList()
-                                    )
-                                }
-                                if (finalText.isNotEmpty()) {
-                                    appendAssistant(
-                                        finalText,
-                                        imageBase64 = event.imageBase64,
-                                        imageUrl = event.imageUrl,
-                                        cards = event.cards
-                                    )
-                                }
-                                maybeCaptureMemory(context)
-                            }
-                            // ★ 检测到工具调用 → 清除已显示的流式文本
-                            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.ClearStream -> {
-                                updateState { it.copy(streamingText = "") }
-                            }
-                        }
-                    }
+                    ).collect { event -> handleAgentEvent(event, context) }
                 }
+            } catch (e: CancellationException) {
+                // 用户主动停止:清理加载状态,保留已生成的流式文本(如果有)
+                val partial = _uiState.value.streamingText
+                val steps = _uiState.value.currentToolSteps
+                updateState { it.copy(isLoading = false, streamingText = "", toolProgressCards = emptyList(), currentToolSteps = emptyList()) }
+                if (partial.isNotBlank()) {
+                    appendAssistant(partial, toolSteps = steps)
+                }
+                throw e
             } catch (e: Exception) {
                 updateState { it.copy(isLoading = false, streamingText = "") }
                 appendAssistant("发生错误: ${e.message ?: "未知错误"}", isError = true)
+            }
+        }
+    }
+
+    /** 停止当前生成(取消正在进行的请求,保留已输出的部分文本) */
+    fun stopSend() {
+        sendJob?.cancel()
+        sendJob = null
+        val partial = _uiState.value.streamingText
+        val steps = _uiState.value.currentToolSteps
+        updateState {
+            it.copy(
+                isLoading = false,
+                streamingText = "",
+                loadingStatus = "",
+                toolProgressCards = emptyList(),
+                currentToolSteps = emptyList()
+            )
+        }
+        if (partial.isNotBlank()) {
+            appendAssistant(partial, toolSteps = steps)
+        }
+    }
+
+    /**
+     * 重新生成指定助手消息:找到该消息前最近的一条 user 消息,
+     * 把该助手消息及其之后的所有消息删除,然后用相同 user 文本重新发送。
+     *
+     * @param messageId 要重新生成的助手消息 id
+     * @param providers 当前 provider 列表(send 需要)
+     * @param context 用于读取图片流 / 初始化 prefs
+     */
+    fun regenerate(messageId: String, providers: List<ModelProvider>, context: Context) {
+        if (providers.isEmpty()) return
+        val state = _uiState.value
+        if (state.isLoading) return  // 正在生成时不允许重新生成
+
+        val targetIdx = state.messages.indexOfFirst { it.id == messageId }
+        if (targetIdx < 0) return
+        val targetMsg = state.messages[targetIdx]
+        if (targetMsg.role != "assistant") return
+
+        // 向前找最近一条 user 消息
+        val userIdx = (0 until targetIdx).reversed().firstOrNull {
+            state.messages[it].role == "user"
+        } ?: return
+        val userMsg = state.messages[userIdx]
+
+        // 删除该 user 消息之后的所有消息(含原助手回复),保留 user 消息
+        val kept = state.messages.subList(0, userIdx + 1).toList()
+
+        updateState {
+            it.copy(
+                messages = kept,
+                inputText = "",
+                pendingImageUriString = null,
+                isLoading = true,
+                loadingStatus = "",
+                toolProgressCards = emptyList(),
+                streamingText = "",
+                currentToolSteps = emptyList()
+            )
+        }
+        ensurePrefs(context)
+
+        val provider = providers[_uiState.value.modelIndex.coerceIn(0, providers.size - 1)]
+        val userText = userMsg.content
+        val imageUri = userMsg.imageUriString?.let { Uri.parse(it) }
+
+        sendJob = viewModelScope.launch {
+            try {
+                if (imageUri != null) {
+                    updateState { it.copy(loadingStatus = "正在识别图片...") }
+                    val imageBytes = withContext(Dispatchers.IO) {
+                        context.contentResolver.openInputStream(imageUri)?.use { stream ->
+                            stream.readBytes()
+                        }
+                    }
+                    val result = HttpUtils.sendImageRequestResult(
+                        provider.requestUrl, provider.modelId, imageBytes,
+                        provider.apiKey, MyConfig.CHAT_SYSTEM_PROMPT, provider.endpointType
+                    )
+                    updateState { it.copy(isLoading = false) }
+                    when (result) {
+                        is go.examate.hyp.util.ApiResult.Success -> {
+                            val content = HttpUtils.extractContent(result.data, provider.endpointType)
+                            appendAssistant(
+                                if (content.isEmpty()) "解析失败:\n${result.data}" else content,
+                                isError = content.isEmpty()
+                            )
+                        }
+                        else -> appendAssistant("请求失败: ${result.errorMessage()}", isError = true)
+                    }
+                } else {
+                    val history = historyPairs()
+                    AgentOrchestrator.executeFlow(
+                        context = context,
+                        provider = provider,
+                        userMessage = userText,
+                        history = history.dropLast(1),
+                        agentsMode = true
+                    ).collect { event -> handleAgentEvent(event, context) }
+                }
+            } catch (e: CancellationException) {
+                val partial = _uiState.value.streamingText
+                val steps = _uiState.value.currentToolSteps
+                updateState { it.copy(isLoading = false, streamingText = "", toolProgressCards = emptyList(), currentToolSteps = emptyList()) }
+                if (partial.isNotBlank()) {
+                    appendAssistant(partial, toolSteps = steps)
+                }
+                throw e
+            } catch (e: Exception) {
+                updateState { it.copy(isLoading = false, streamingText = "") }
+                appendAssistant("发生错误: ${e.message ?: "未知错误"}", isError = true)
+            }
+        }
+    }
+
+    /**
+     * 删除指定消息(按 id)。删除 user 消息时,其后紧跟的 assistant 回复一并删除,
+     * 避免出现孤立的助手回复。
+     */
+    fun deleteMessage(messageId: String) {
+        val state = _uiState.value
+        val idx = state.messages.indexOfFirst { it.id == messageId }
+        if (idx < 0) return
+        val msg = state.messages[idx]
+        var endIdx = idx + 1
+        // 删除 user 消息时连带删除其后连续的 assistant 消息
+        if (msg.role == "user") {
+            while (endIdx < state.messages.size && state.messages[endIdx].role == "assistant") {
+                endIdx++
+            }
+        }
+        val newMessages = state.messages.toMutableList().apply {
+            subList(idx, endIdx).clear()
+        }
+        updateState { it.copy(messages = newMessages) }
+    }
+
+    /**
+     * 统一处理 AgentOrchestrator 的事件(send / regenerate 共用,避免重复代码)。
+     */
+    private suspend fun handleAgentEvent(
+        event: go.examate.hyp.agent.AgentOrchestrator.AgentEvent,
+        context: Context
+    ) {
+        when (event) {
+            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.Thinking -> {
+                updateState { it.copy(loadingStatus = event.text) }
+            }
+            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.ToolStarted -> {
+                updateState {
+                    it.copy(
+                        loadingStatus = event.label,
+                        currentToolSteps = it.currentToolSteps + ToolStep(
+                            name = event.name,
+                            label = event.label,
+                            status = ToolStatus.RUNNING
+                        )
+                    )
+                }
+            }
+            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.ToolDone -> {
+                val card = event.card
+                if (card != null) {
+                    updateState { it.copy(toolProgressCards = it.toolProgressCards + card) }
+                }
+                updateState {
+                    val updated = it.currentToolSteps.map { step ->
+                        if (step.name == event.name && step.status == ToolStatus.RUNNING) {
+                            step.copy(status = ToolStatus.DONE, output = event.output, card = card)
+                        } else step
+                    }
+                    it.copy(loadingStatus = "${event.name} 完成", currentToolSteps = updated)
+                }
+            }
+            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.FinalReply -> {
+                val steps = _uiState.value.currentToolSteps
+                updateState {
+                    it.copy(
+                        isLoading = false,
+                        toolProgressCards = emptyList(),
+                        streamingText = "",
+                        currentToolSteps = emptyList()
+                    )
+                }
+                appendAssistant(
+                    event.text,
+                    isError = event.isError,
+                    imageBase64 = event.imageBase64,
+                    imageUrl = event.imageUrl,
+                    cards = event.cards,
+                    filePath = event.filePath,
+                    toolSteps = steps
+                )
+                if (!event.isError) maybeCaptureMemory(context)
+            }
+            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.FinalTextToken -> {
+                updateState { it.copy(streamingText = it.streamingText + event.token) }
+            }
+            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.FinalTextEnd -> {
+                val finalText = _uiState.value.streamingText
+                val steps = _uiState.value.currentToolSteps
+                updateState {
+                    it.copy(
+                        streamingText = "",
+                        isLoading = false,
+                        toolProgressCards = emptyList(),
+                        currentToolSteps = emptyList()
+                    )
+                }
+                if (finalText.isNotEmpty()) {
+                    appendAssistant(
+                        finalText,
+                        imageBase64 = event.imageBase64,
+                        imageUrl = event.imageUrl,
+                        cards = event.cards,
+                        filePath = event.filePath,
+                        toolSteps = steps
+                    )
+                }
+                maybeCaptureMemory(context)
+            }
+            is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.ClearStream -> {
+                updateState { it.copy(streamingText = "") }
             }
         }
     }
@@ -210,13 +386,15 @@ class ChatViewModel : ViewModel() {
         imageBase64: String? = null,
         imageUrl: String? = null,
         toolCalls: List<String> = emptyList(),
-        cards: List<ActionCard> = emptyList()
+        cards: List<ActionCard> = emptyList(),
+        filePath: String? = null,
+        toolSteps: List<ToolStep> = emptyList()
     ) {
         updateState {
             it.copy(
                 messages = it.messages + ChatMsg(
                     "assistant", text, isError, System.currentTimeMillis(),
-                    null, imageBase64, imageUrl, toolCalls, cards
+                    null, imageBase64, imageUrl, toolCalls, cards, filePath, toolSteps
                 )
             )
         }
@@ -381,5 +559,7 @@ data class ChatUiState(
     val currentSession: ChatSession = ChatHistoryManager.newSession(),
     val historyList: List<ChatSession> = emptyList(),
     /** Agents 模式下,工具执行过程实时产出的结果卡片(余额/成绩等),显示在加载指示器下方 */
-    val toolProgressCards: List<ActionCard> = emptyList()
+    val toolProgressCards: List<ActionCard> = emptyList(),
+    /** 当前发送过程中实时累积的工具调用步骤(用于链式思考容器展示) */
+    val currentToolSteps: List<ToolStep> = emptyList()
 )

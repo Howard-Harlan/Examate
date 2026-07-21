@@ -6,6 +6,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,10 +14,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -37,14 +43,19 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import go.examate.hyp.config.MyConfig
 import go.examate.hyp.config.PrefsManager
+import go.examate.hyp.entity.ModelProvider
+import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassBackground
+import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.components.LiquidGlassToggle
 import go.examate.hyp.ui.theme.BgPrimary
 import go.examate.hyp.ui.theme.Divider as DividerColor
 import go.examate.hyp.ui.theme.ExamateTheme
+import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 
@@ -74,7 +85,14 @@ private fun SearchSettingsScreen(onBack: () -> Unit) {
     var edgeAttach by remember { mutableStateOf(prefs.isEdgeAttach) }
     var transparentFloat by remember { mutableStateOf(prefs.isTransparentFloat) }
     var floatingMenuItems by remember { mutableStateOf(prefs.floatingMenuItems) }
-    var memoryEnabled by remember { mutableStateOf(prefs.isMemoryEnabled) }
+
+    // 多 AI 验证
+    val allProviders = remember { MyConfig.loadProviders(context) }
+    val validProviders = remember(allProviders) {
+        allProviders.filter { it.apiKey.isNotEmpty() && it.requestUrl.isNotEmpty() && it.modelId.isNotEmpty() }
+    }
+    var multiAiVerify by remember { mutableStateOf(prefs.isMultiAiVerify) }
+    var multiAiSelected by remember { mutableStateOf(prefs.getMultiAiVerifyIndices()) }
 
     Column(
         Modifier
@@ -111,23 +129,64 @@ private fun SearchSettingsScreen(onBack: () -> Unit) {
         ) {
         Spacer(Modifier.height(24.dp))
 
-        // AI 对话设置
+        // 多 AI 验证
         Text(
-            "AI 对话",
+            "多 AI 验证",
             color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium,
             modifier = Modifier.padding(start = 4.dp, bottom = 10.dp)
         )
         FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
             Column {
                 ToggleRow(
-                    title = "对话记忆",
-                    subtitle = "自动记住用户偏好(默认关闭,待优化)",
-                    checked = memoryEnabled,
+                    title = if (multiAiVerify) "已开启" else "已关闭",
+                    subtitle = "同时请求多个 AI,选择题投票,问答题取首个(增加 token 消耗)",
+                    checked = multiAiVerify,
                     onCheckedChange = {
-                        memoryEnabled = it
-                        prefs.isMemoryEnabled = it
+                        multiAiVerify = it
+                        prefs.isMultiAiVerify = it
                     }
                 )
+                if (multiAiVerify && validProviders.isNotEmpty()) {
+                    HorizontalDivider(color = DividerColor, thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 18.dp))
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("选择参与的 AI", color = TextPrimary, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                        val activeCount = if (multiAiSelected.isEmpty()) validProviders.size else multiAiSelected.size
+                        Text("$activeCount / ${validProviders.size}", color = TextHint, fontSize = 12.sp)
+                    }
+                    validProviders.forEachIndexed { index, provider ->
+                        val isSelected = multiAiSelected.isEmpty() || multiAiSelected.contains(index)
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                val current = if (multiAiSelected.isEmpty()) {
+                                    validProviders.indices.toMutableSet()
+                                } else {
+                                    multiAiSelected.toMutableSet()
+                                }
+                                if (current.contains(index)) current.remove(index)
+                                else current.add(index)
+                                multiAiSelected = if (current.size == validProviders.size) emptySet() else current
+                                prefs.setMultiAiVerifyIndices(multiAiSelected)
+                            }.padding(horizontal = 18.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                Modifier.size(18.dp).clip(CircleShape)
+                                    .background(if (isSelected) Primary else Color(0xFFE5E7EB)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (isSelected) Text("✓", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(provider.displayName.ifEmpty { "未命名" }, color = if (isSelected) TextPrimary else TextHint, fontSize = 13.sp)
+                                Text(provider.modelId.ifEmpty { "未知模型" }, color = TextHint, fontSize = 11.sp, modifier = Modifier.padding(top = 1.dp))
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -187,7 +246,8 @@ private fun SearchSettingsScreen(onBack: () -> Unit) {
                     "select" to "框选",
                     "ask" to "问问AI",
                     "auto" to "自动答题",
-                    "browse" to "浏览"
+                    "browse" to "浏览",
+                    "chat" to "聊天"
                 )
                 menuOptions.forEachIndexed { index, (id, label) ->
                     if (index > 0) {

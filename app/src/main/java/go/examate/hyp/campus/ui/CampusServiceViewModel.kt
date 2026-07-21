@@ -205,7 +205,8 @@ data class CampusServiceUiState(
 sealed class CampusRoute {
     object Home : CampusRoute()
     object Jwxt : CampusRoute()
-    object Ecard : CampusRoute()
+    /** @param tab Ecard 目标 Tab: "balance"/"bill"/"payfee",null 默认余额 */
+    data class Ecard(val tab: String? = null) : CampusRoute()
     object Sc : CampusRoute()
     object Hsxs : CampusRoute()
 }

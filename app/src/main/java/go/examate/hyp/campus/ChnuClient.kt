@@ -74,7 +74,11 @@ private data class PayFeeForm(
     val token: String,
     val limitMoney: String,
     val limitMode: String,
-    val itemName: String
+    val itemName: String,
+    /** 缴费页面 <samp id="balance"> 实时钱包余额(网页端 itemPay() 以此作为 ewalletMenoy 提交) */
+    val balance: String = "",
+    /** 钱包下限(moneyMin),服务端校验 balance - payMoney < moneyMin 时使用 */
+    val moneyMin: String = "0"
 )
 
 class ChnuClient(
@@ -1442,12 +1446,20 @@ class ChnuClient(
                 var itemName = knownItemNames[itemNum] ?: ""
                 val nameMatch = Regex("""(常工电控缴费|滨湖1-5宿舍照明电费|[^<]{1,20}(?:电费|电控|照明)[^<]{0,20})""").find(html)
                 if (nameMatch != null) itemName = nameMatch.groupValues[1].trim()
+                // ★ 实时钱包余额:网页端 itemPay() 用 $(".active #balance").html() 作为 ewalletMenoy 提交。
+                //   之前用 cardInfo["balance"](登录时的快照),用户消费后会过期,服务端校验 balance-payMoney<moneyMin 失败→"钱包余额低于下限"。
+                //   现改为从缴费页面 <samp id="balance"> 83.02 </samp> 实时提取。
+                val balanceMatch = Regex("""<samp[^>]*id="balance"[^>]*>\s*([0-9.]+)\s*</samp>""").find(html)
+                val pageBalance = balanceMatch?.groupValues?.get(1)?.trim() ?: ""
+                val moneyMin = fields["moneyMin"] ?: "0"
                 return PayFeeForm(
                     typeNum = fields["typeNum"] ?: "",
                     token = fields["token"] ?: "",
                     limitMoney = fields["limitMoney"] ?: "",
                     limitMode = fields["limitMode"] ?: "",
-                    itemName = itemName
+                    itemName = itemName,
+                    balance = pageBalance,
+                    moneyMin = moneyMin
                 )
             }
         }
@@ -1472,6 +1484,10 @@ class ChnuClient(
         ): PayResult {
             checkSession()
             val amountStr = "%.2f".format(amount)
+
+            // Step 0: 刷新实时钱包余额(避免登录快照过期导致"余额低于下限"误报)
+            //   getBalance() 会更新 cardInfo["balance"] 为当前真实余额
+            try { getBalance() } catch (_: Exception) { /* 降级:用已有快照 */ }
 
             // Step 1: RSA加密密码
             val encryptedPwd = rsaEncryptPassword(queryPassword)
@@ -1505,8 +1521,11 @@ class ChnuClient(
                 }
             }
 
-            // Step 4: 提交缴费(恢复到14:43成功版本的字段组合)
-            val balance = cardInfo["balance"] ?: "0"
+            // Step 4: 提交缴费(对齐网页端 itemPay() JS 的 elementObj 字段)
+            // ★ ewalletMenoy 优先用缴费页面的实时余额(<samp id="balance">),
+            //   为空则用 Step 0 刷新的 cardInfo["balance"](已是最新的)。
+            //   移除本地预校验——服务端是权威校验方,本地用可能过期的数据会误报"余额低于下限"。
+            val balance = feeForm.balance.ifBlank { cardInfo["balance"] ?: "0" }
             val cardaccNum = cardInfo["cardAccNum"] ?: ""
             val form = FormBody.Builder()
                 .add("itemNum", itemNum)
@@ -1518,6 +1537,9 @@ class ChnuClient(
                 .add("eWalletName", "卡1号钱包")
                 .add("areano", areaNo)
                 .add("buildingno", buildingNo)
+                // ★ 补齐网页端提交的楼层/楼栋名(服务端可能用于写入缴费记录)
+                .add("floorno", "")
+                .add("buildingname", "")
                 .add("roomno", roomNo)
                 .add("cardaccNum", cardaccNum)
                 .add("token", feeForm.token)
@@ -1759,7 +1781,8 @@ class ChnuClient(
                     description = descParts.joinToString(" ").ifEmpty {
                         cells.drop(2).filter { it.isNotEmpty() }.firstOrNull() ?: typeName
                     },
-                    type = typeName
+                    type = typeName,
+                    balanceAfter = cells.getOrNull(6) ?: ""
                 ))
             }
             return records

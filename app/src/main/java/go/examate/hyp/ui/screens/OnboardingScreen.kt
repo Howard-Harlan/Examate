@@ -124,14 +124,6 @@ fun OnboardingScreen(
                     letterSpacing = (-0.5).sp
                 )
 
-                Spacer(Modifier.height(6.dp))
-
-                Text(
-                    text = "智能解题 · 悬浮搜题助手",
-                    fontSize = 13.sp,
-                    color = TextHint,
-                    letterSpacing = 0.5.sp
-                )
             }
 
             Spacer(Modifier.height(36.dp))

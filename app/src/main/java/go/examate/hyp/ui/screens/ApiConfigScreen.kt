@@ -13,11 +13,14 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -47,12 +50,14 @@ import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
+import com.kyant.backdrop.highlight.Highlight
 import com.kyant.shapes.Capsule
 import go.examate.hyp.entity.ModelProvider
 import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.components.LiquidGlassIconButton
+import go.examate.hyp.ui.components.LiquidGlassToggle
 import go.examate.hyp.ui.components.LocalGlassBackdrop
 import go.examate.hyp.ui.components.PlainDialog
 import go.examate.hyp.ui.components.PlainDialogButtons
@@ -65,6 +70,7 @@ import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.window.Dialog
 import kotlin.math.roundToInt
 
 @Composable
@@ -78,7 +84,9 @@ fun ApiConfigScreen(
     onToast: (String) -> Unit
 ) {
     val providers = remember { mutableStateListOf(*initialProviders.toTypedArray()) }
-    var editingIndex by remember { mutableIntStateOf(-1) }
+    var editingIndex by remember { mutableIntStateOf(-1) }       // 单击:编辑基本信息
+    var contentEditingIndex by remember { mutableIntStateOf(-1) } // 长按→编辑按钮:编辑内容信息
+    var actionModeIndex by remember { mutableIntStateOf(-1) }     // 长按:显示编辑/排序操作栏
 
     // ═══ 拖拽排序状态 ═══
     val density = LocalDensity.current
@@ -93,7 +101,8 @@ fun ApiConfigScreen(
         return providers.zip(initialProviders).any { (a, b) ->
             a.displayName != b.displayName || a.modelId != b.modelId ||
                 a.requestUrl != b.requestUrl || a.apiKey != b.apiKey ||
-                a.endpointType != b.endpointType
+                a.endpointType != b.endpointType ||
+                a.label != b.label || a.barColor != b.barColor || a.visible != b.visible
         }
     }
     var showSaveConfirm by remember { mutableStateOf(false) }
@@ -112,14 +121,14 @@ fun ApiConfigScreen(
             .background(BgPrimary)
     ) {
         Column(Modifier.fillMaxSize()) {
-            // ═══ 顶部:标题栏 ═══
+            // ═══ 顶部:标题栏(教程+编辑共处胶囊) ═══
             ApiConfigTopBar(
                 modifier = Modifier.padding(top = 48.dp),
                 onBack = { handleBack() },
-                onOpenTutorial = onOpenTutorial
+                onTutorial = { onOpenTutorial() }
             )
 
-            // ═══ 列表(长按拖拽排序,不再分组,用色条颜色区分) ═══
+            // ═══ 列表(单击=基本信息,长按=显示操作栏,长按拖动=排序) ═══
             LazyColumn(
                 Modifier
                     .weight(1f)
@@ -133,6 +142,7 @@ fun ApiConfigScreen(
                             provider = provider,
                             isDragging = index == draggingIndex,
                             dragOffsetY = if (index == draggingIndex) dragOffsetY else 0f,
+                            showActions = actionModeIndex == index,
                             onDragStart = {
                                 draggingIndex = index
                                 dragOffsetY = 0f
@@ -140,14 +150,12 @@ fun ApiConfigScreen(
                             onDrag = { dragAmount ->
                                 dragOffsetY += dragAmount
                                 var target = draggingIndex
-                                // 向下 swap
                                 while (dragOffsetY > itemHeightPx / 2 && target < providers.size - 1) {
                                     val item = providers.removeAt(target)
                                     providers.add(target + 1, item)
                                     target++
                                     dragOffsetY -= itemHeightPx
                                 }
-                                // 向上 swap
                                 while (dragOffsetY < -itemHeightPx / 2 && target > 0) {
                                     val item = providers.removeAt(target)
                                     providers.add(target - 1, item)
@@ -164,7 +172,17 @@ fun ApiConfigScreen(
                                 draggingIndex = -1
                                 dragOffsetY = 0f
                             },
-                            onClick = { editingIndex = index }
+                            onClick = {
+                                if (actionModeIndex == index) {
+                                    actionModeIndex = -1
+                                } else {
+                                    actionModeIndex = -1
+                                    editingIndex = index
+                                }
+                            },
+                            onLongClick = { actionModeIndex = index },
+                            onEditContent = { contentEditingIndex = index; actionModeIndex = -1 },
+                            onDismissActions = { actionModeIndex = -1 }
                         )
                     }
                 }
@@ -184,7 +202,6 @@ fun ApiConfigScreen(
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 24.dp)
         )
-
     }
 
     // ═══ 返回时保存确认弹窗 ═══
@@ -201,7 +218,7 @@ fun ApiConfigScreen(
         }
     }
 
-    // ═══ 编辑对话框 ═══
+    // ═══ 单击:编辑基本信息 ═══
     if (editingIndex in providers.indices) {
         EditProviderDialog(
             provider = providers[editingIndex],
@@ -220,14 +237,120 @@ fun ApiConfigScreen(
             onToast = onToast
         )
     }
+
+    // ═══ 长按:编辑内容信息(标签/颜色/显隐性) ═══
+    if (contentEditingIndex in providers.indices) {
+        ContentEditDialog(
+            provider = providers[contentEditingIndex],
+            onDismiss = { contentEditingIndex = -1 },
+            onApply = { updated ->
+                providers[contentEditingIndex] = updated
+                contentEditingIndex = -1
+            }
+        )
+    }
 }
+
+// ═══════════════════════════════════════════
+//  单个 AI 内容编辑弹窗:标签 / 颜色 / 显隐性
+// ═══════════════════════════════════════════
+
+@Composable
+private fun ContentEditDialog(
+    provider: ModelProvider,
+    onDismiss: () -> Unit,
+    onApply: (ModelProvider) -> Unit
+) {
+    var label by remember { mutableStateOf(provider.label) }
+    var selectedColor by remember { mutableStateOf(provider.barColor) }
+    var visible by remember { mutableStateOf(provider.visible) }
+
+    val presetColors = listOf(
+        "" to "默认",
+        "#5B8DEF" to "蓝",
+        "#1D9E75" to "绿",
+        "#E24B4A" to "红",
+        "#F59E0B" to "橙",
+        "#8B5CF6" to "紫",
+        "#6B7280" to "灰"
+    )
+
+    PlainDialog(onDismissRequest = onDismiss) {
+        PlainDialogTitle("编辑 - ${provider.displayName.ifEmpty { "未命名" }}")
+        Column(Modifier.padding(horizontal = 24.dp)) {
+            // 标签
+            Text("自定义标签", color = TextHint, fontSize = 12.sp)
+            Spacer(Modifier.height(6.dp))
+            OutlinedTextField(
+                value = label, onValueChange = { label = it },
+                placeholder = { Text("如:主力/备用/免费", fontSize = 12.sp) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp)
+            )
+            Spacer(Modifier.height(16.dp))
+
+            // 竖条颜色
+            Text("竖条颜色", color = TextHint, fontSize = 12.sp)
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                presetColors.forEach { (hex, name) ->
+                    val color = if (hex.isNotEmpty()) {
+                        try { Color(android.graphics.Color.parseColor(hex)) }
+                        catch (_: Exception) { Color(0xFF9CA3AF) }
+                    } else Color(0xFF9CA3AF)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Box(
+                            Modifier.size(32.dp).clip(CircleShape)
+                                .background(color)
+                                .clickable { selectedColor = hex },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (selectedColor == hex) {
+                                Text("✓", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        Text(name, color = TextHint, fontSize = 9.sp, modifier = Modifier.padding(top = 2.dp))
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+
+            // 显隐性
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("显示在列表中", color = TextPrimary, fontSize = 13.sp)
+                    Text("关闭后不出现在 agents 回复和悬浮窗解题列表", color = TextHint, fontSize = 10.sp)
+                }
+                LiquidGlassToggle(selected = visible, onSelect = { visible = it })
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        PlainDialogButtons(
+            listOf(
+                Triple("取消", false) { onDismiss() },
+                Triple("保存", true) {
+                    onApply(provider.copy(label = label, barColor = selectedColor, visible = visible))
+                }
+            )
+        )
+    }
+}
+
+// ═══════════════════════════════════════════
+//  顶栏:返回 + 标题 + 教程胶囊(液态玻璃)
+// ═══════════════════════════════════════════
 
 @Composable
 private fun ApiConfigTopBar(
     onBack: () -> Unit,
-    onOpenTutorial: () -> Unit,
+    onTutorial: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val backdrop = LocalGlassBackdrop.current
     Box(
         modifier
             .fillMaxWidth()
@@ -248,15 +371,29 @@ private fun ApiConfigTopBar(
             fontWeight = FontWeight.Medium,
             modifier = Modifier.align(Alignment.Center)
         )
-        Text(
-            "教程",
-            color = Primary,
-            fontSize = 14.sp,
-            modifier = Modifier
+        // 教程按钮:液态玻璃胶囊
+        Box(
+            Modifier
                 .align(Alignment.CenterEnd)
-                .clickable { onOpenTutorial() }
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-        )
+                .clip(Capsule())
+                .then(
+                    if (backdrop != null) {
+                        Modifier.drawBackdrop(
+                            backdrop = backdrop,
+                            shape = { Capsule() },
+                            effects = { vibrancy(); blur(8f.dp.toPx()) },
+                            highlight = { Highlight.Plain },
+                            onDrawSurface = { drawRect(Color.White.copy(0.5f)) }
+                        )
+                    } else {
+                        Modifier.background(Color.White.copy(0.7f))
+                    }
+                )
+                .clickable { onTutorial() }
+                .padding(horizontal = 14.dp, vertical = 8.dp)
+        ) {
+            Text("教程", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        }
     }
 }
 
@@ -265,17 +402,27 @@ private fun ProviderRow(
     provider: ModelProvider,
     isDragging: Boolean,
     dragOffsetY: Float,
+    showActions: Boolean,
     onDragStart: () -> Unit,
     onDrag: (Float) -> Unit,
     onDragEnd: () -> Unit,
     onDragCancel: () -> Unit,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onEditContent: () -> Unit,
+    onDismissActions: () -> Unit
 ) {
     val tag = provider.tag ?: ""
-    val barColor = when (tag) {
-        "稳定" -> Primary
-        "免费" -> Color(0xFF6B7280)
-        else -> Color(0xFF9CA3AF)
+    val barColor = run {
+        val custom = provider.barColor
+        if (custom.isNotEmpty()) {
+            try { Color(android.graphics.Color.parseColor(custom)) }
+            catch (_: Exception) {
+                when (tag) { "稳定" -> Primary; "免费" -> Color(0xFF6B7280); else -> Color(0xFF9CA3AF) }
+            }
+        } else {
+            when (tag) { "稳定" -> Primary; "免费" -> Color(0xFF6B7280); else -> Color(0xFF9CA3AF) }
+        }
     }
 
     FrostedGlassCard(
@@ -283,64 +430,124 @@ private fun ProviderRow(
             .fillMaxWidth()
             .padding(bottom = 12.dp)
             .zIndex(if (isDragging) 1f else 0f)
-            .graphicsLayer { if (isDragging) translationY = dragOffsetY }
+            .graphicsLayer {
+                if (isDragging) translationY = dragOffsetY
+                alpha = if (showActions) 0.92f else 1f
+            }
             .pointerInput(Unit) {
+                var hasMoved = false
                 detectDragGesturesAfterLongPress(
-                    onDragStart = { onDragStart() },
+                    onDragStart = { hasMoved = false },
                     onDrag = { change, dragAmount ->
+                        if (!hasMoved) {
+                            hasMoved = true
+                            onDragStart()
+                        }
                         change.consume()
                         onDrag(dragAmount.y)
                     },
-                    onDragEnd = { onDragEnd() },
-                    onDragCancel = { onDragCancel() }
+                    onDragEnd = {
+                        if (hasMoved) onDragEnd() else onLongClick()
+                    },
+                    onDragCancel = {
+                        if (hasMoved) onDragCancel()
+                    }
                 )
             },
         cornerRadius = 16.dp
     ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .clickable { onClick() }
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
+        Box(Modifier.fillMaxWidth()) {
+            Row(
                 Modifier
-                    .width(4.dp)
-                    .height(36.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(barColor)
-            )
-            Column(
-                Modifier
-                    .weight(1f)
-                    .padding(start = 14.dp)
+                    .fillMaxWidth()
+                    .clickable { if (showActions) onDismissActions() else onClick() }
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    provider.displayName,
-                    color = TextPrimary,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium
+                Box(
+                    Modifier
+                        .width(4.dp)
+                        .height(36.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(barColor)
                 )
-                Text(
-                    provider.modelId,
-                    color = TextHint,
-                    fontSize = 11.sp,
-                    modifier = Modifier.padding(top = 2.dp)
-                )
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .padding(start = 14.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            provider.displayName,
+                            color = if (provider.visible) TextPrimary else TextHint,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        if (provider.label.isNotEmpty()) {
+                            Spacer(Modifier.width(6.dp))
+                            Box(
+                                Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(barColor.copy(alpha = 0.15f))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(provider.label, color = barColor, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                        if (!provider.visible) {
+                            Spacer(Modifier.width(6.dp))
+                            Text("隐藏", color = TextHint, fontSize = 10.sp)
+                        }
+                    }
+                    Text(
+                        provider.modelId,
+                        color = TextHint,
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
+                if (!showActions) {
+                    Text(
+                        "⠿",
+                        color = TextHint.copy(alpha = 0.5f),
+                        fontSize = 18.sp,
+                        modifier = Modifier.padding(end = 6.dp)
+                    )
+                    Text("›", color = TextHint, fontSize = 20.sp)
+                }
             }
-            // 拖拽手柄提示
-            Text(
-                "⠿",
-                color = TextHint.copy(alpha = 0.5f),
-                fontSize = 18.sp,
-                modifier = Modifier.padding(end = 6.dp)
-            )
-            Text(
-                "›",
-                color = TextHint,
-                fontSize = 20.sp
-            )
+
+            // ═══ 长按操作栏:编辑 / 排序 ═══
+            if (showActions) {
+                Row(
+                    Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = 14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // 编辑按钮:内容信息(标签/颜色/显隐性)
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Primary)
+                            .clickable { onEditContent() }
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        Text("编辑", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    }
+                    // 排序按钮:提示长按拖动排序
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF6B7280))
+                            .clickable { onDismissActions() }
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        Text("排序", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    }
+                }
+            }
         }
     }
 }
@@ -449,11 +656,6 @@ private fun EditProviderDialog(
     var showDeleteConfirm by remember { mutableStateOf(false) }
 
     // 接口格式选项:OpenAI(chat/responses 兼容)/ Anthropic
-    val endpointOptions = listOf(
-        "chat" to "OpenAI",
-        "anthropic" to "Anthropic"
-    )
-
     PlainDialog(onDismissRequest = onDismiss) {
         PlainDialogTitle("API 配置")
         Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp, 0.dp, 24.dp, 12.dp)) {
@@ -466,39 +668,6 @@ private fun EditProviderDialog(
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.fillMaxWidth()
             )
-            Spacer(Modifier.height(12.dp))
-
-            // ═══ 接口格式选择(移到地址上方,仅 OpenAI / Anthropic) ═══
-            FieldLabel("接口格式")
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                endpointOptions.forEach { (value, label) ->
-                    val selected = endpointType == value
-                    Box(
-                        Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(if (selected) Primary else SurfaceVariant)
-                            .clickable { endpointType = value }
-                            .padding(vertical = 8.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            label,
-                            color = if (selected) Color.White else TextHint,
-                            fontSize = 12.sp,
-                            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal
-                        )
-                    }
-                }
-            }
-            val endpointHint = when (endpointType) {
-                "anthropic" -> "端点:/v1/messages(认证用 x-api-key)"
-                else -> "端点:/v1/chat/completions"
-            }
-            Text(endpointHint, color = TextHint, fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp))
             Spacer(Modifier.height(12.dp))
 
             // ═══ API 地址 ═══
@@ -607,7 +776,10 @@ private fun EditProviderDialog(
                             provider.registerUrl ?: "",
                             provider.tag ?: "",
                             provider.inviteCode ?: "",
-                            endpointType
+                            endpointType,
+                            provider.label,
+                            provider.barColor,
+                            provider.visible
                         )
                     )
                 }
