@@ -9,6 +9,7 @@ import android.security.keystore.UserNotAuthenticatedException
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import android.util.Log
+import android.widget.Toast
 
 import go.examate.hyp.R
 import go.examate.hyp.util.AdbCommandHelper
@@ -111,6 +112,8 @@ class MyQSTileService : TileService() {
         if (MyAccessibilityService.getMyAccessibilityServiceInstance() == null) { // 启动无障碍
             if (!EnableAccessibleService()) {
                 commandHelper?.TryExecuteCommand("pm grant " + packageName + " android.permission.WRITE_SECURE_SETTINGS")
+            } else {
+                Toast.makeText(this, "无障碍已开启,请再次点击磁贴启动搜题", Toast.LENGTH_LONG).show()
             }
         }
         //检查权限

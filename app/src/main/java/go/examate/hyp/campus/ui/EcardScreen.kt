@@ -19,28 +19,28 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import go.examate.hyp.campus.CampusException
-import go.examate.hyp.campus.CampusRepository
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import go.examate.hyp.campus.model.BankCard
 import go.examate.hyp.campus.model.BillRecord
 import go.examate.hyp.campus.model.EcardBalance
@@ -48,16 +48,20 @@ import go.examate.hyp.campus.model.PayArea
 import go.examate.hyp.campus.model.PayBuilding
 import go.examate.hyp.campus.model.PayResult
 import go.examate.hyp.campus.model.RoomElectricity
-import go.examate.hyp.config.PrefsManager
 import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.theme.Divider as DividerColor
+import go.examate.hyp.ui.theme.Error
+import go.examate.hyp.ui.theme.ErrorBg
 import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.Success
+import go.examate.hyp.ui.theme.SuccessBg
+import go.examate.hyp.ui.theme.SurfaceVariant
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
-import kotlinx.coroutines.launch
+import go.examate.hyp.ui.theme.Warning
 import java.time.LocalDate
 
 /** 一卡通功能 Tab(充值合并到余额页) */
@@ -67,67 +71,36 @@ private enum class EcardTab(val label: String) {
 
 /** 一卡通页面 */
 @Composable
-fun EcardScreen(onBack: () -> Unit) {
-    val context = LocalContext.current
-    val prefs = PrefsManager.getInstance(context)
-    val repo = remember { CampusRepository.getInstance() }
-    val scope = rememberCoroutineScope()
+fun EcardScreen(onBack: () -> Unit, initialTab: String? = null) {
+    val viewModel: EcardViewModel = viewModel()
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
 
-    var tab by remember { mutableStateOf(EcardTab.BALANCE) }
+    var tab by remember { mutableStateOf(
+        when (initialTab) {
+            "bill" -> EcardTab.BILL
+            "payfee" -> EcardTab.PAYFEE
+            else -> EcardTab.BALANCE
+        }
+    ) }
 
     CampusPageScaffold(
         title = "一卡通",
         onBack = onBack,
         bottomBar = {
             Spacer(Modifier.height(10.dp))
-            EcardTabBar(
-                tabs = EcardTab.values().toList(),
-                selected = tab,
-                onSelect = { tab = it }
+            GlassTabBar(
+                tabs = EcardTab.values().map { it.label },
+                selectedIndex = tab.ordinal,
+                onSelect = { tab = EcardTab.values()[it] }
             )
             Spacer(Modifier.height(16.dp))
         }
     ) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             when (tab) {
-                EcardTab.BALANCE -> BalanceSection(repo, prefs, scope)
-                EcardTab.BILL -> BillSection(repo, prefs, scope)
-                EcardTab.PAYFEE -> PayFeeSection(repo, prefs, scope)
-            }
-        }
-    }
-}
-
-/** 一卡通 Tab 栏 */
-@Composable
-private fun EcardTabBar(
-    tabs: List<EcardTab>,
-    selected: EcardTab,
-    onSelect: (EcardTab) -> Unit
-) {
-    FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            Modifier.fillMaxWidth().padding(6.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            tabs.forEach { t ->
-                val isActive = t == selected
-                Box(
-                    Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(if (isActive) Primary else Color.Transparent)
-                        .clickable { onSelect(t) }
-                        .padding(vertical = 8.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        t.label,
-                        color = if (isActive) Color.White else TextHint,
-                        fontSize = 12.sp,
-                        fontWeight = if (isActive) FontWeight.Medium else FontWeight.Normal
-                    )
-                }
+                EcardTab.BALANCE -> BalanceSection(state.balance, viewModel)
+                EcardTab.BILL -> BillSection(state.bill, viewModel)
+                EcardTab.PAYFEE -> PayFeeSection(state.payFee, viewModel)
             }
         }
     }
@@ -138,57 +111,25 @@ private fun EcardTabBar(
 // ════════════════════════════════════════
 
 @Composable
-private fun BalanceSection(
-    repo: CampusRepository,
-    prefs: PrefsManager,
-    scope: kotlinx.coroutines.CoroutineScope
-) {
-    var loading by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf("") }
-    var balance by remember { mutableStateOf<EcardBalance?>(null) }
-    var loaded by remember { mutableStateOf(false) }
-    var forceRefresh by remember { mutableStateOf(false) }
+private fun BalanceSection(state: BalanceState, vm: EcardViewModel) {
+    LaunchedEffect(Unit) { vm.loadBalance() }
 
-    // 充值表单
-    var amount by remember { mutableStateOf("") }
-    var queryPwd by remember { mutableStateOf("") }
-    var topping by remember { mutableStateOf(false) }
-    var topResult by remember { mutableStateOf<PayResult?>(null) }
-    var topError by remember { mutableStateOf("") }
-
-    if (!loaded && !loading && error.isEmpty()) {
-        loading = true
-        scope.launch {
-            try {
-                balance = repo.getBalance(prefs, forceRefresh = forceRefresh)
-            } catch (e: CampusException) {
-                error = e.message ?: "查询失败"
-            } catch (e: Exception) {
-                error = "网络异常: ${e.message}"
-            } finally {
-                loading = false
-                loaded = true
-                forceRefresh = false
-            }
-        }
-    }
-
-    if (loading && balance == null) {
+    if (state.loading && state.balance == null) {
         LoadingBlock("正在查询余额...")
         return
     }
-    if (error.isNotEmpty() && balance == null) {
-        ErrorBlock(error)
+    if (state.error.isNotEmpty() && state.balance == null) {
+        ErrorBlock(state.error)
         Spacer(Modifier.height(10.dp))
         LiquidGlassButton(
-            text = "重试", onClick = { forceRefresh = true; error = ""; loaded = false },
+            text = "重试", onClick = { vm.retryBalance() },
             style = ButtonStyle.Outline, height = 40.dp
         )
         return
     }
 
     Column {
-        balance?.let { b ->
+        state.balance?.let { b ->
             // 余额大卡片
             Box(
                 Modifier
@@ -231,12 +172,13 @@ private fun BalanceSection(
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 LiquidGlassButton(
-                    text = "刷新", onClick = { forceRefresh = true; loaded = false },
+                    text = "刷新", onClick = { vm.refreshBalance() },
                     style = ButtonStyle.Outline, height = 40.dp,
                     modifier = Modifier.weight(1f)
                 )
                 LiquidGlassButton(
-                    text = "充值", onClick = { topping = true },
+                    text = if (state.loadingCards) "加载中..." else "充值",
+                    onClick = { vm.loadTopupCards() },
                     style = ButtonStyle.White, height = 40.dp,
                     modifier = Modifier.weight(1f)
                 )
@@ -292,9 +234,15 @@ private fun BalanceSection(
             }
         }
 
+        // 选卡/获取卡失败提示(不在弹窗内时)
+        if (state.topError.isNotEmpty() && !state.topping && !state.showCardPicker) {
+            Spacer(Modifier.height(12.dp))
+            ErrorBlock(state.topError)
+        }
+
         // 充值结果
-        if (topResult != null) {
-            topResult?.let { r ->
+        if (state.topResult != null) {
+            state.topResult?.let { r ->
                 Spacer(Modifier.height(14.dp))
                 PayResultBox(r, "充值")
             }
@@ -302,37 +250,32 @@ private fun BalanceSection(
     }
 
     // 充值弹窗
-    if (topping) {
+    if (state.topping) {
         PayFormDialog(
             title = "一卡通充值",
-            amount = amount,
-            onAmountChange = { if (it.all { ch -> ch.isDigit() || ch == '.' }) amount = it },
-            password = queryPwd,
-            onPasswordChange = { queryPwd = it },
+            amount = state.amount,
+            onAmountChange = { if (it.all { ch -> ch.isDigit() || ch == '.' }) vm.setTopAmount(it) },
+            password = state.queryPwd,
+            onPasswordChange = { vm.setTopQueryPwd(it) },
             submitting = false,
-            error = topError,
+            error = state.topError,
             submitText = "确认充值",
-            onSubmit = {
-                val amt = amount.toDoubleOrNull()
-                if (amt == null || amt <= 0) {
-                    topError = "请输入有效金额"; topResult = null; return@PayFormDialog
-                }
-                if (queryPwd.isBlank()) {
-                    topError = "请输入密码"; topResult = null; return@PayFormDialog
-                }
-                topping = false
-                topError = ""; topResult = null
-                scope.launch {
-                    try {
-                        topResult = repo.topUp(prefs, amt, queryPwd)
-                    } catch (e: CampusException) {
-                        topError = e.message ?: "充值失败"
-                    } catch (e: Exception) {
-                        topError = "网络异常: ${e.message}"
-                    }
-                }
+            onSubmit = { vm.submitTopUp() },
+            onDismiss = { vm.dismissTopping() }
+        )
+    }
+
+    // 签约银行卡选择弹窗(多张卡时)
+    if (state.showCardPicker) {
+        SingleChoiceDialog(
+            title = "选择签约银行卡",
+            options = state.topupCards.map { card ->
+                val label = card.cardNumberShort.ifEmpty { "尾号 " + card.cardNumberFull.takeLast(4) }
+                card to label
             },
-            onDismiss = { topping = false }
+            selected = state.selectedCard ?: state.topupCards.first(),
+            onConfirm = { card -> vm.selectTopupCard(card) },
+            onDismiss = { vm.dismissCardPicker() }
         )
     }
 }
@@ -342,167 +285,291 @@ private fun BalanceSection(
 // ════════════════════════════════════════
 
 @Composable
-private fun BillSection(
-    repo: CampusRepository,
-    prefs: PrefsManager,
-    scope: kotlinx.coroutines.CoroutineScope
-) {
-    val today = LocalDate.now()
-    var startDate by remember { mutableStateOf(today.minusDays(30).toString()) }
-    var endDate by remember { mutableStateOf(today.toString()) }
-    var recordType by remember { mutableStateOf("") }
-    var showTypePicker by remember { mutableStateOf(false) }
-
-    var loading by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf("") }
-    var bills by remember { mutableStateOf<List<BillRecord>>(emptyList()) }
-    var queried by remember { mutableStateOf(false) }
-
+private fun BillSection(state: BillState, vm: EcardViewModel) {
     SectionTitle("查询条件", "选择日期范围与记录类型")
     FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
-            Text("开始日期", color = TextHint, fontSize = 12.sp)
-            OutlinedTextField(
-                value = startDate,
-                onValueChange = { startDate = it },
-                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                singleLine = true,
-                placeholder = { Text("YYYY-MM-DD", color = TextHint, fontSize = 13.sp) },
-                shape = RoundedCornerShape(10.dp)
-            )
-            Spacer(Modifier.height(10.dp))
-            Text("结束日期", color = TextHint, fontSize = 12.sp)
-            OutlinedTextField(
-                value = endDate,
-                onValueChange = { endDate = it },
-                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                singleLine = true,
-                placeholder = { Text("YYYY-MM-DD", color = TextHint, fontSize = 13.sp) },
-                shape = RoundedCornerShape(10.dp)
-            )
-            Spacer(Modifier.height(10.dp))
-            Divider(color = DividerColor, thickness = 0.5.dp)
+            QueryParamRow(label = "开始日期", value = state.startDate,
+                onClick = { vm.showStartDatePicker(true) })
+            QueryParamRow(label = "结束日期", value = state.endDate,
+                onClick = { vm.showEndDatePicker(true) })
+            Spacer(Modifier.height(2.dp))
+            HorizontalDivider(color = DividerColor, thickness = 0.5.dp)
             Spacer(Modifier.height(6.dp))
             QueryParamRow(
                 label = "记录类型",
-                value = RECORD_TYPE_OPTIONS.first { it.first == recordType }.second,
-                onClick = { showTypePicker = true }
+                value = RECORD_TYPE_OPTIONS.first { it.first == state.recordType }.second,
+                onClick = { vm.showBillTypePicker(true) }
             )
         }
     }
     Spacer(Modifier.height(10.dp))
     LiquidGlassButton(
-        text = if (loading) "查询中..." else "查询账单",
-        onClick = {
-            if (loading) return@LiquidGlassButton
-            loading = true; error = ""; queried = true
-            scope.launch {
-                try {
-                    bills = repo.getBillRecords(prefs, startDate, endDate, recordType)
-                } catch (e: CampusException) {
-                    error = e.message ?: "查询失败"
-                } catch (e: Exception) {
-                    error = "网络异常: ${e.message}"
-                } finally {
-                    loading = false
-                }
-            }
-        },
+        text = if (state.loading) "查询中..." else "查询账单",
+        onClick = { vm.queryBills() },
         style = ButtonStyle.White, height = 44.dp
     )
     Spacer(Modifier.height(14.dp))
 
-    if (loading) {
+    if (state.loading) {
         LoadingBlock()
-    } else if (error.isNotEmpty()) {
-        ErrorBlock(error)
-    } else if (queried) {
-        if (bills.isEmpty()) {
+    } else if (state.error.isNotEmpty()) {
+        ErrorBlock(state.error)
+    } else if (state.queried) {
+        if (state.bills.isEmpty()) {
             EmptyBlock("该时间范围内暂无账单记录")
         } else {
-            val (totalExpense, totalIncome) = summarize(bills)
-            SectionTitle("账单汇总(共 ${bills.size} 条)")
+            val (totalExpense, totalIncome) = summarize(state.bills)
+            SectionTitle("账单汇总(共 ${state.bills.size} 条)")
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(
                     Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(14.dp))
-                        .background(Color(0xFFFFF0F0))
+                        .background(ErrorBg)
                         .padding(14.dp)
                 ) {
                     Column {
                         Text("支出", color = TextHint, fontSize = 11.sp)
                         Spacer(Modifier.height(4.dp))
-                        Text("¥$totalExpense", color = Color(0xFFE53935), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Text("¥$totalExpense", color = Error, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     }
                 }
                 Box(
                     Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(14.dp))
-                        .background(Color(0xFFE8F5E9))
+                        .background(SuccessBg)
                         .padding(14.dp)
                 ) {
                     Column {
                         Text("充值", color = TextHint, fontSize = 11.sp)
                         Spacer(Modifier.height(4.dp))
-                        Text("¥$totalIncome", color = Color(0xFF2E7D32), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Text("¥$totalIncome", color = Success, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
             Spacer(Modifier.height(14.dp))
             SectionTitle("账单明细")
-            bills.forEach { r ->
+            state.bills.forEach { r ->
                 BillItemCard(r)
                 CardSpacer()
             }
         }
     }
 
-    if (showTypePicker) {
+    if (state.showTypePicker) {
         SingleChoiceDialog(
             title = "选择记录类型",
             options = RECORD_TYPE_OPTIONS,
-            selected = recordType,
-            onConfirm = { recordType = it; showTypePicker = false },
-            onDismiss = { showTypePicker = false }
+            selected = state.recordType,
+            onConfirm = { vm.setBillRecordType(it) },
+            onDismiss = { vm.showBillTypePicker(false) }
+        )
+    }
+
+    if (state.datePickerField.isNotEmpty()) {
+        val initialDate = try {
+            LocalDate.parse(if (state.datePickerField == "start") state.startDate else state.endDate)
+        } catch (_: Exception) { java.time.LocalDate.now().minusDays(30) }
+        CustomCalendarDialog(
+            initialDate = initialDate,
+            onDismiss = {
+                if (state.datePickerField == "start") vm.showStartDatePicker(false)
+                else vm.showEndDatePicker(false)
+            },
+            onConfirm = { date ->
+                if (state.datePickerField == "start") vm.setBillStartDate(date.toString())
+                else vm.setBillEndDate(date.toString())
+                if (state.datePickerField == "start") vm.showStartDatePicker(false)
+                else vm.showEndDatePicker(false)
+            }
         )
     }
 }
 
-/** 账单项卡片 */
+/**
+ * 自定义日历弹窗 — 解决 Material3 DatePicker 星期标题间距不均问题
+ * 7 列等宽网格,星期标题均匀分布
+ */
+@Composable
+private fun CustomCalendarDialog(
+    initialDate: LocalDate,
+    onDismiss: () -> Unit,
+    onConfirm: (LocalDate) -> Unit
+) {
+    var selectedDate by remember { mutableStateOf(initialDate) }
+    var viewMonth by remember { mutableStateOf(initialDate.withDayOfMonth(1)) }
+    val today = LocalDate.now()
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(Color.White)
+                .padding(20.dp)
+        ) {
+            // 月份导航
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Box(
+                    Modifier
+                        .size(32.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .clickable { viewMonth = viewMonth.minusMonths(1) },
+                    contentAlignment = Alignment.Center
+                ) { Text("‹", color = Primary, fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+                Text(
+                    "${viewMonth.year}年${viewMonth.monthValue}月",
+                    color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium
+                )
+                Box(
+                    Modifier
+                        .size(32.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .clickable { viewMonth = viewMonth.plusMonths(1) },
+                    contentAlignment = Alignment.Center
+                ) { Text("›", color = Primary, fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // 星期标题 — 7 列等宽,均匀分布
+            val weekDays = listOf("日", "一", "二", "三", "四", "五", "六")
+            Row(Modifier.fillMaxWidth()) {
+                weekDays.forEach { day ->
+                    Text(
+                        text = day,
+                        color = TextHint,
+                        fontSize = 13.sp,
+                        modifier = Modifier.weight(1f),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            // 日期网格 — 7 列等宽
+            val firstDay = viewMonth.withDayOfMonth(1)
+            val daysInMonth = viewMonth.lengthOfMonth()
+            val startOffset = firstDay.dayOfWeek.value % 7  // 周日=0, 周一=1...
+
+            val totalCells = ((startOffset + daysInMonth + 6) / 7) * 7
+            val rows = totalCells / 7
+
+            Column(Modifier.fillMaxWidth()) {
+                for (row in 0 until rows) {
+                    Row(Modifier.fillMaxWidth()) {
+                        for (col in 0 until 7) {
+                            val index = row * 7 + col
+                            val dayNum = index - startOffset + 1
+                            if (dayNum in 1..daysInMonth) {
+                                val date = viewMonth.withDayOfMonth(dayNum)
+                                val isSelected = date == selectedDate
+                                val isToday = date == today
+                                Box(
+                                    Modifier
+                                        .weight(1f)
+                                        .height(40.dp)
+                                        .clip(androidx.compose.foundation.shape.CircleShape)
+                                        .background(
+                                            when {
+                                                isSelected -> Primary
+                                                else -> Color.Transparent
+                                            }
+                                        )
+                                        .clickable { selectedDate = date },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "$dayNum",
+                                        color = when {
+                                            isSelected -> Color.White
+                                            isToday -> Primary
+                                            else -> TextPrimary
+                                        },
+                                        fontSize = 14.sp,
+                                        fontWeight = if (isToday || isSelected) FontWeight.Medium else FontWeight.Normal
+                                    )
+                                }
+                            } else {
+                                Box(Modifier.weight(1f).height(40.dp))
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            HorizontalDivider(color = TextHint.copy(alpha = 0.15f))
+            Spacer(Modifier.height(4.dp))
+
+            // 底部按钮
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = onDismiss) { Text("取消", color = TextSecondary) }
+                TextButton(onClick = { onConfirm(selectedDate) }) { Text("确定", color = Primary) }
+            }
+        }
+    }
+}
+
+/** 账单项卡片。
+ *  布局:左侧消费场所+时间,右侧消费数量(金额)+变化后余额 */
 @Composable
 private fun BillItemCard(r: BillRecord) {
     val amount = r.amount.toDoubleOrNull() ?: 0.0
-    val isExpense = amount < 0 || r.description.contains("消费")
+    // 消费记录(type 含"消费")为支出;充值记录为收入。
+    // 金额可能带负号(消费)或正号(充值),统一取绝对值展示,用颜色区分。
+    val isExpense = r.type.contains("消费") || amount < 0
+    val displayAmount = kotlin.math.abs(amount)
     FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
         Row(
             Modifier.fillMaxWidth().padding(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // 左侧:消费场所 + 时间
             Column(Modifier.weight(1f)) {
-                Text(r.description.ifEmpty { r.type }, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text(
+                    r.description.ifEmpty { r.type },
+                    color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium
+                )
                 Spacer(Modifier.height(3.dp))
                 Text(r.time, color = TextHint, fontSize = 11.sp)
             }
-            Text(
-                "${if (amount >= 0) "+" else ""}${r.amount}",
-                color = if (isExpense) Color(0xFFE53935) else Color(0xFF2E7D32),
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold
-            )
+            // 右侧:消费数量(金额) + 变化后余额
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    "${if (isExpense) "-" else "+"}¥${"%.2f".format(displayAmount)}",
+                    color = if (isExpense) Error else Success,
+                    fontSize = 15.sp, fontWeight = FontWeight.Bold
+                )
+                if (r.balanceAfter.isNotEmpty()) {
+                    Spacer(Modifier.height(2.dp))
+                    Text("余额 ¥$r.balanceAfter", color = TextHint, fontSize = 11.sp)
+                }
+            }
         }
     }
 }
 
-/** 计算支出与充值总额 */
+/** 计算支出与充值总额。
+ *  消费记录(type 含"消费"或金额为负)计入支出,其余计入充值 */
 private fun summarize(bills: List<BillRecord>): Pair<String, String> {
     var expense = 0.0
     var income = 0.0
     bills.forEach { r ->
         val amt = r.amount.toDoubleOrNull() ?: 0.0
-        if (amt < 0) expense += -amt
-        else income += amt
+        val isExpense = r.type.contains("消费") || amt < 0
+        if (isExpense) expense += kotlin.math.abs(amt)
+        else income += kotlin.math.abs(amt)
     }
     return "%.2f".format(expense) to "%.2f".format(income)
 }
@@ -513,139 +580,54 @@ private fun summarize(bills: List<BillRecord>): Pair<String, String> {
 
 /** 缴费项目 */
 private val PAY_ITEMS = listOf(
-    "3" to "宿舍照明电费",
-    "2" to "常工电控缴费"
+    "2" to "常工电控缴费",
+    "3" to "宿舍照明电费"
 )
 
 @Composable
-private fun PayFeeSection(
-    repo: CampusRepository,
-    prefs: PrefsManager,
-    scope: kotlinx.coroutines.CoroutineScope
-) {
-    var itemNum by remember { mutableStateOf("3") }
-    var showItemPicker by remember { mutableStateOf(false) }
-    var area by remember { mutableStateOf<PayArea?>(null) }
-    var building by remember { mutableStateOf<PayBuilding?>(null) }
-    var room by remember { mutableStateOf<PayBuilding?>(null) }
-    var amount by remember { mutableStateOf("") }
-    var queryPwd by remember { mutableStateOf("") }
-
-    var loadingAreas by remember { mutableStateOf(false) }
-    var loadingBuildings by remember { mutableStateOf(false) }
-    var loadingRooms by remember { mutableStateOf(false) }
-    var areas by remember { mutableStateOf<List<PayArea>>(emptyList()) }
-    var buildings by remember { mutableStateOf<List<PayBuilding>>(emptyList()) }
-    var rooms by remember { mutableStateOf<List<PayBuilding>>(emptyList()) }
-    var listError by remember { mutableStateOf("") }
-    var showAreaPicker by remember { mutableStateOf(false) }
-    var showBuildingPicker by remember { mutableStateOf(false) }
-    var showRoomPicker by remember { mutableStateOf(false) }
-
-    var submitting by remember { mutableStateOf(false) }
-    var submitError by remember { mutableStateOf("") }
-    var result by remember { mutableStateOf<PayResult?>(null) }
-
-    // 房间电费查询
-    var elecLoading by remember { mutableStateOf(false) }
-    var elecError by remember { mutableStateOf("") }
-    var elecResult by remember { mutableStateOf<RoomElectricity?>(null) }
-
+private fun PayFeeSection(state: PayFeeState, vm: EcardViewModel) {
     Column {
         SectionTitle("生活缴费", "选择校区/楼栋/房间后缴费")
         FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
             Column {
                 QueryParamRow(
                     label = "缴费项目",
-                    value = PAY_ITEMS.first { it.first == itemNum }.second,
-                    onClick = { showItemPicker = true }
+                    value = PAY_ITEMS.first { it.first == state.itemNum }.second,
+                    onClick = { vm.showItemPicker(true) }
                 )
-                Divider(color = DividerColor, thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 16.dp))
+                HorizontalDivider(color = DividerColor, thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 16.dp))
                 QueryParamRow(
                     label = "校区",
-                    value = area?.name ?: "请选择",
-                    onClick = {
-                        if (loadingAreas) return@QueryParamRow
-                        if (areas.isEmpty()) {
-                            loadingAreas = true; listError = ""
-                            scope.launch {
-                                try {
-                                    areas = repo.getPayAreas(prefs, itemNum)
-                                } catch (e: CampusException) {
-                                    listError = e.message ?: "查询失败"
-                                } catch (e: Exception) {
-                                    listError = "网络异常: ${e.message}"
-                                } finally {
-                                    loadingAreas = false
-                                }
-                            }
-                        }
-                        showAreaPicker = true
-                    }
+                    value = state.area?.name ?: "请选择",
+                    onClick = { vm.onAreaClick() }
                 )
-                Divider(color = DividerColor, thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 16.dp))
+                HorizontalDivider(color = DividerColor, thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 16.dp))
                 QueryParamRow(
                     label = "楼栋",
-                    value = building?.name ?: "请选择",
-                    onClick = {
-                        if (area == null) return@QueryParamRow
-                        if (loadingBuildings) return@QueryParamRow
-                        if (buildings.isEmpty() || building == null) {
-                            loadingBuildings = true; listError = ""
-                            scope.launch {
-                                try {
-                                    buildings = repo.getBuildings(prefs, area!!.id, itemNum)
-                                } catch (e: CampusException) {
-                                    listError = e.message ?: "查询失败"
-                                } catch (e: Exception) {
-                                    listError = "网络异常: ${e.message}"
-                                } finally {
-                                    loadingBuildings = false
-                                }
-                            }
-                        }
-                        showBuildingPicker = true
-                    }
+                    value = state.building?.name ?: "请选择",
+                    onClick = { vm.onBuildingClick() }
                 )
-                Divider(color = DividerColor, thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 16.dp))
+                HorizontalDivider(color = DividerColor, thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 16.dp))
                 QueryParamRow(
                     label = "房间",
-                    value = room?.name ?: "请选择",
-                    onClick = {
-                        if (building == null) return@QueryParamRow
-                        if (loadingRooms) return@QueryParamRow
-                        if (rooms.isEmpty() || room == null) {
-                            loadingRooms = true; listError = ""
-                            scope.launch {
-                                try {
-                                    rooms = repo.getRooms(prefs, area!!.id, building!!.id, itemNum)
-                                } catch (e: CampusException) {
-                                    listError = e.message ?: "查询失败"
-                                } catch (e: Exception) {
-                                    listError = "网络异常: ${e.message}"
-                                } finally {
-                                    loadingRooms = false
-                                }
-                            }
-                        }
-                        showRoomPicker = true
-                    }
+                    value = state.room?.name ?: "请选择",
+                    onClick = { vm.onRoomClick() }
                 )
             }
         }
 
-        if (loadingAreas || loadingBuildings || loadingRooms) {
+        if (state.loadingAreas || state.loadingBuildings || state.loadingRooms) {
             Spacer(Modifier.height(10.dp))
             LoadingBlock("正在查询...")
         }
-        if (listError.isNotEmpty()) {
+        if (state.listError.isNotEmpty()) {
             Spacer(Modifier.height(10.dp))
-            ErrorBlock(listError)
+            ErrorBlock(state.listError)
         }
         Spacer(Modifier.height(12.dp))
 
         // 房间电费查询(仅当房间已选择时显示)
-        if (area != null && building != null && room != null) {
+        if (state.area != null && state.building != null && state.room != null) {
             FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Text("房间电费", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
@@ -656,47 +638,31 @@ private fun PayFeeSection(
                     )
                     Spacer(Modifier.height(12.dp))
                     LiquidGlassButton(
-                        text = if (elecLoading) "查询中..." else "查询电费",
-                        onClick = {
-                            if (elecLoading) return@LiquidGlassButton
-                            elecLoading = true; elecError = ""; elecResult = null
-                            scope.launch {
-                                try {
-                                    elecResult = repo.getRoomElectricity(
-                                        prefs, area!!.id, building!!.id, room!!.id, itemNum
-                                    )
-                                } catch (e: CampusException) {
-                                    elecError = e.message ?: "查询失败"
-                                } catch (e: Exception) {
-                                    elecError = "网络异常: ${e.message}"
-                                } finally {
-                                    elecLoading = false
-                                }
-                            }
-                        },
+                        text = if (state.elecLoading) "查询中..." else "查询电费",
+                        onClick = { vm.queryElectricity() },
                         style = ButtonStyle.Outline, height = 42.dp
                     )
-                    if (elecLoading) {
+                    if (state.elecLoading) {
                         Spacer(Modifier.height(10.dp))
                         LoadingBlock("正在查询电费...")
-                    } else if (elecError.isNotEmpty()) {
+                    } else if (state.elecError.isNotEmpty()) {
                         Spacer(Modifier.height(10.dp))
-                        ErrorBlock(elecError)
-                    } else if (elecResult != null) {
-                        elecResult?.let { e ->
+                        ErrorBlock(state.elecError)
+                    } else if (state.elecResult != null) {
+                        state.elecResult?.let { e ->
                             Spacer(Modifier.height(10.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Box(
                                     Modifier
                                         .weight(1f)
                                         .clip(RoundedCornerShape(14.dp))
-                                        .background(Color(0xFFE8F5E9))
+                                        .background(SuccessBg)
                                         .padding(14.dp)
                                 ) {
                                     Column {
                                         Text("剩余金额", color = TextHint, fontSize = 11.sp)
                                         Spacer(Modifier.height(4.dp))
-                                        Text("¥${e.balance}", color = Color(0xFF2E7D32), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                        Text("¥${e.balance}", color = Success, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                                 Box(
@@ -709,7 +675,7 @@ private fun PayFeeSection(
                                     Column {
                                         Text("昨日用电", color = TextHint, fontSize = 11.sp)
                                         Spacer(Modifier.height(4.dp))
-                                        Text("${e.dailyUsed} 度", color = Color(0xFFEF6C00), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                        Text("${e.dailyUsed} 度", color = Warning, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -725,8 +691,8 @@ private fun PayFeeSection(
             Column(Modifier.padding(16.dp)) {
                 Text("缴费金额(元)", color = TextHint, fontSize = 12.sp)
                 OutlinedTextField(
-                    value = amount,
-                    onValueChange = { if (it.all { ch -> ch.isDigit() || ch == '.' }) amount = it },
+                    value = state.amount,
+                    onValueChange = { if (it.all { ch -> ch.isDigit() || ch == '.' }) vm.setPayAmount(it) },
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                     singleLine = true,
                     placeholder = { Text("请输入金额", color = TextHint, fontSize = 13.sp) },
@@ -736,105 +702,66 @@ private fun PayFeeSection(
                 Spacer(Modifier.height(12.dp))
                 Text("输入密码", color = TextHint, fontSize = 12.sp)
                 OutlinedTextField(
-                    value = queryPwd,
-                    onValueChange = { queryPwd = it },
+                    value = state.queryPwd,
+                    onValueChange = { vm.setPayPwd(it) },
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                     singleLine = true,
-                    placeholder = { Text("通常为身份证后六位", color = TextHint, fontSize = 13.sp) },
+                    placeholder = { Text("输入密码", color = TextHint, fontSize = 13.sp) },
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                     shape = RoundedCornerShape(10.dp)
                 )
                 Spacer(Modifier.height(16.dp))
                 LiquidGlassButton(
-                    text = if (submitting) "缴费中..." else "确认缴费",
-                    onClick = {
-                        if (submitting) return@LiquidGlassButton
-                        if (area == null || building == null || room == null) {
-                            submitError = "请先选择校区、楼栋和房间"; result = null; return@LiquidGlassButton
-                        }
-                        val amt = amount.toDoubleOrNull()
-                        if (amt == null || amt <= 0) {
-                            submitError = "请输入有效金额"; result = null; return@LiquidGlassButton
-                        }
-                        if (queryPwd.isBlank()) {
-                            submitError = "请输入密码"; result = null; return@LiquidGlassButton
-                        }
-                        submitting = true; submitError = ""; result = null
-                        scope.launch {
-                            try {
-                                result = repo.payFee(
-                                    prefs, area!!.id, building!!.id, room!!.id,
-                                    amt, queryPwd, itemNum
-                                )
-                            } catch (e: CampusException) {
-                                submitError = e.message ?: "缴费失败"
-                            } catch (e: Exception) {
-                                submitError = "网络异常: ${e.message}"
-                            } finally {
-                                submitting = false
-                            }
-                        }
-                    },
+                    text = if (state.submitting) "缴费中..." else "确认缴费",
+                    onClick = { vm.submitPayFee() },
                     style = ButtonStyle.White, height = 46.dp
                 )
             }
         }
         Spacer(Modifier.height(14.dp))
 
-        if (submitting) {
+        if (state.submitting) {
             LoadingBlock("正在提交缴费...")
-        } else if (submitError.isNotEmpty()) {
-            ErrorBlock(submitError)
-        } else if (result != null) {
-            result?.let { r -> PayResultBox(r, "缴费") }
+        } else if (state.submitError.isNotEmpty()) {
+            ErrorBlock(state.submitError)
+        } else if (state.result != null) {
+            state.result?.let { r -> PayResultBox(r, "缴费") }
         }
     }
 
     // 选择弹窗
-    if (showItemPicker) {
+    if (state.showItemPicker) {
         SingleChoiceDialog(
-            "选择缴费项目", PAY_ITEMS, itemNum,
-            { itemNum = it; showItemPicker = false; area = null; building = null; room = null; areas = emptyList(); buildings = emptyList(); rooms = emptyList() },
-            { showItemPicker = false }
+            "选择缴费项目", PAY_ITEMS, state.itemNum,
+            { vm.setItemNum(it) },
+            { vm.showItemPicker(false) }
         )
     }
-    if (showAreaPicker) {
-        val opts = areas.map { it.id to it.name }
+    if (state.showAreaPicker) {
+        val opts = state.areas.map { it.id to it.name }
         SingleChoiceDialog(
-            "选择校区", opts, area?.id ?: "",
-            { id ->
-                area = areas.firstOrNull { it.id == id }
-                building = null; room = null; buildings = emptyList(); rooms = emptyList()
-                showAreaPicker = false
-            },
-            { showAreaPicker = false }
+            "选择校区", opts, state.area?.id ?: "",
+            { id -> vm.selectArea(id) },
+            { vm.dismissAreaPicker() }
         )
     }
-    if (showBuildingPicker) {
-        val opts = buildings.map { it.id to it.name }
+    if (state.showBuildingPicker) {
+        val opts = state.buildings.map { it.id to it.name }
         SingleChoiceDialog(
-            "选择楼栋", opts, building?.id ?: "",
-            { id ->
-                building = buildings.firstOrNull { it.id == id }
-                room = null; rooms = emptyList()
-                showBuildingPicker = false
-            },
-            { showBuildingPicker = false }
+            "选择楼栋", opts, state.building?.id ?: "",
+            { id -> vm.selectBuilding(id) },
+            { vm.dismissBuildingPicker() }
         )
     }
-    if (showRoomPicker) {
+    if (state.showRoomPicker) {
         // 房间较多:使用可搜索 + 可滚动列表弹窗
         SearchableListDialog(
             title = "选择房间",
-            items = rooms,
-            selectedId = room?.id ?: "",
-            onConfirm = { id ->
-                room = rooms.firstOrNull { it.id == id }
-                elecResult = null; elecError = ""
-                showRoomPicker = false
-            },
-            onDismiss = { showRoomPicker = false }
+            items = state.rooms,
+            selectedId = state.room?.id ?: "",
+            onConfirm = { id -> vm.selectRoom(id) },
+            onDismiss = { vm.dismissRoomPicker() }
         )
     }
 }
@@ -972,7 +899,7 @@ private fun PayFormDialog(
                         Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFFF3F4F6))
+                            .background(SurfaceVariant)
                             .clickable { onAmountChange(q) }
                             .padding(vertical = 10.dp),
                         contentAlignment = Alignment.Center
@@ -988,14 +915,14 @@ private fun PayFormDialog(
                 onValueChange = onPasswordChange,
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 singleLine = true,
-                placeholder = { Text("通常为身份证后六位", color = TextHint, fontSize = 13.sp) },
+                placeholder = { Text("输入密码", color = TextHint, fontSize = 13.sp) },
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                 shape = RoundedCornerShape(10.dp)
             )
             if (error.isNotEmpty()) {
                 Spacer(Modifier.height(10.dp))
-                Text(error, color = Color(0xFFE53935), fontSize = 12.sp, lineHeight = 17.sp)
+                Text(error, color = Error, fontSize = 12.sp, lineHeight = 17.sp)
             }
             Spacer(Modifier.height(16.dp))
             LiquidGlassButton(
@@ -1010,8 +937,8 @@ private fun PayFormDialog(
 /** 充值/缴费结果展示卡片 */
 @Composable
 private fun PayResultBox(r: PayResult, label: String) {
-    val bgColor = if (r.success) Color(0xFFE8F5E9) else Color(0xFFFFF0F0)
-    val fgColor = if (r.success) Color(0xFF2E7D32) else Color(0xFFE53935)
+    val bgColor = if (r.success) SuccessBg else ErrorBg
+    val fgColor = if (r.success) Success else Error
     Box(
         Modifier
             .fillMaxWidth()

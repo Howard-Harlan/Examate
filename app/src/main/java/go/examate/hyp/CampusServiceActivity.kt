@@ -23,6 +23,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -32,22 +36,24 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import go.examate.hyp.campus.CampusException
-import go.examate.hyp.campus.CampusRepository
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import go.examate.hyp.campus.ui.CampusRoute
+import go.examate.hyp.campus.ui.CampusServiceViewModel
 import go.examate.hyp.campus.ui.EcardScreen
+import go.examate.hyp.campus.ui.HsxsScreen
 import go.examate.hyp.campus.ui.JwxtScreen
+import go.examate.hyp.campus.ui.LoginState
 import go.examate.hyp.campus.ui.ScScreen
 import go.examate.hyp.config.PrefsManager
 import go.examate.hyp.ui.components.ButtonStyle
@@ -55,13 +61,18 @@ import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.IconSchool
 import go.examate.hyp.ui.components.LiquidGlassBackground
 import go.examate.hyp.ui.components.LiquidGlassButton
+import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.theme.BgPrimary
+import go.examate.hyp.ui.theme.Error
+import go.examate.hyp.ui.theme.ErrorBg
 import go.examate.hyp.ui.theme.ExamateTheme
 import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.Success
+import go.examate.hyp.ui.theme.SuccessBg
+import go.examate.hyp.ui.theme.SurfaceVariant
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
-import kotlinx.coroutines.launch
 
 /**
  * 校园服务页:统一入口,管理登录态与三系统导航。
@@ -77,86 +88,78 @@ class CampusServiceActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        val targetRoute = intent?.getStringExtra("target_route")
+        val targetTab = intent?.getStringExtra("target_tab")
         setContent {
             ExamateTheme {
                 LiquidGlassBackground {
-                    CampusServiceRoot(onBack = { finish() })
+                    CampusServiceRoot(
+                        onBack = { finish() },
+                        initialRoute = parseRoute(targetRoute, targetTab)
+                    )
                 }
             }
         }
     }
-}
 
-/** 页面路由 */
-private sealed class CampusRoute {
-    object Home : CampusRoute()
-    object Jwxt : CampusRoute()
-    object Ecard : CampusRoute()
-    object Sc : CampusRoute()
+    private fun parseRoute(route: String?, tab: String?): CampusRoute {
+        return when (route) {
+            "ecard" -> CampusRoute.Ecard(tab)
+            "jwxt" -> CampusRoute.Jwxt
+            "sc" -> CampusRoute.Sc
+            "hsxs" -> CampusRoute.Hsxs
+            else -> CampusRoute.Home
+        }
+    }
 }
-
-/** 登录状态 */
-private enum class LoginState { Idle, Logging, LoggedIn, Failed }
 
 @Composable
-private fun CampusServiceRoot(onBack: () -> Unit) {
-    val context = LocalContext.current
-    val prefs = PrefsManager.getInstance(context)
-    val repo = remember { CampusRepository.getInstance() }
-    val scope = rememberCoroutineScope()
+private fun CampusServiceRoot(onBack: () -> Unit, initialRoute: CampusRoute = CampusRoute.Home) {
+    val viewModel: CampusServiceViewModel = viewModel()
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
 
-    var school by remember { mutableStateOf(prefs.school) }
-    var showPicker by remember { mutableStateOf(false) }
-    var route by remember { mutableStateOf<CampusRoute>(CampusRoute.Home) }
-    var username by remember { mutableStateOf(prefs.campusUsername) }
-    var password by remember { mutableStateOf(prefs.campusPassword) }
-    var rememberLogin by remember { mutableStateOf(prefs.rememberCampusLogin) }
-    // 启动时若 repo 已登录则直接显示已登录态
-    var loginState by remember {
-        mutableStateOf(if (repo.isLoggedIn) LoginState.LoggedIn else LoginState.Idle)
+    val school = state.school
+    val showPicker = state.showPicker
+    val route = state.route
+    val username = state.username
+    val password = state.password
+    val rememberLogin = state.rememberLogin
+    val loginState = state.loginState
+    val loginError = state.loginError
+    val bannerDismissed = state.loginBannerDismissed
+    val studentName = state.studentName
+
+    // 应用外部传入的初始路由
+    LaunchedEffect(initialRoute) {
+        if (initialRoute !is CampusRoute.Home) viewModel.setRoute(initialRoute)
     }
-    var loginError by remember { mutableStateOf("") }
 
     // 系统返回键:子页面返回到校园服务首页,而非退出 Activity
     BackHandler(enabled = route !is CampusRoute.Home) {
-        route = CampusRoute.Home
+        viewModel.setRoute(CampusRoute.Home)
     }
 
     // 自动登录:已绑定学校 + 记住登录 + 有保存的账号密码 + 未登录
     LaunchedEffect(Unit) {
-        if (!repo.isLoggedIn && prefs.rememberCampusLogin &&
-            prefs.campusUsername.isNotEmpty() && prefs.campusPassword.isNotEmpty() &&
-            prefs.school.isNotEmpty()
-        ) {
-            loginState = LoginState.Logging
-            loginError = ""
-            try {
-                repo.login(prefs.campusUsername.trim(), prefs.campusPassword)
-                username = prefs.campusUsername
-                password = prefs.campusPassword
-                loginState = LoginState.LoggedIn
-            } catch (e: CampusException) {
-                loginError = e.message ?: "自动登录失败"
-                loginState = LoginState.Failed
-            } catch (e: Exception) {
-                loginError = "网络异常: ${e.message ?: "请检查网络连接"}"
-                loginState = LoginState.Failed
-            }
-        }
+        viewModel.autoLogin()
     }
 
     // 子路由:直接渲染对应子页面(已登录才能进入)
     when (route) {
         is CampusRoute.Jwxt -> {
-            JwxtScreen(onBack = { route = CampusRoute.Home })
+            JwxtScreen(onBack = { viewModel.setRoute(CampusRoute.Home) })
             return
         }
         is CampusRoute.Ecard -> {
-            EcardScreen(onBack = { route = CampusRoute.Home })
+            EcardScreen(onBack = { viewModel.setRoute(CampusRoute.Home) }, initialTab = route.tab)
             return
         }
         is CampusRoute.Sc -> {
-            ScScreen(onBack = { route = CampusRoute.Home })
+            ScScreen(onBack = { viewModel.setRoute(CampusRoute.Home) })
+            return
+        }
+        is CampusRoute.Hsxs -> {
+            HsxsScreen(onBack = { viewModel.setRoute(CampusRoute.Home) })
             return
         }
         else -> { /* 主页继续往下渲染 */ }
@@ -170,16 +173,18 @@ private fun CampusServiceRoot(onBack: () -> Unit) {
             .imePadding()
             .statusBarsPadding()
     ) {
-        // 顶栏
+        // 顶栏:返回按钮 + 标题
         Box(
-            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)
+            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)
         ) {
-            Box(
-                Modifier.size(40.dp).align(Alignment.CenterStart).clickable { onBack() },
-                contentAlignment = Alignment.Center
-            ) {
-                Text("←", color = TextPrimary, fontSize = 22.sp)
-            }
+            LiquidGlassIconButton(
+                icon = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "返回",
+                onClick = onBack,
+                modifier = Modifier
+                    .size(40.dp)
+                    .align(Alignment.CenterStart)
+            )
             Text(
                 text = "校园服务",
                 color = TextPrimary,
@@ -220,7 +225,7 @@ private fun CampusServiceRoot(onBack: () -> Unit) {
                                 Spacer(Modifier.height(18.dp))
                                 LiquidGlassButton(
                                     text = "去绑定",
-                                    onClick = { showPicker = true },
+                                    onClick = { viewModel.setShowPicker(true) },
                                     style = ButtonStyle.White,
                                     height = 42.dp
                                 )
@@ -243,7 +248,7 @@ private fun CampusServiceRoot(onBack: () -> Unit) {
                             Column(Modifier.padding(18.dp)) {
                                 OutlinedTextField(
                                     value = username,
-                                    onValueChange = { username = it },
+                                    onValueChange = { viewModel.setUsername(it) },
                                     modifier = Modifier.fillMaxWidth(),
                                     label = { Text("学号/工号", color = TextHint, fontSize = 13.sp) },
                                     singleLine = true,
@@ -252,7 +257,7 @@ private fun CampusServiceRoot(onBack: () -> Unit) {
                                 Spacer(Modifier.height(12.dp))
                                 OutlinedTextField(
                                     value = password,
-                                    onValueChange = { password = it },
+                                    onValueChange = { viewModel.setPassword(it) },
                                     modifier = Modifier.fillMaxWidth(),
                                     label = { Text("密码", color = TextHint, fontSize = 13.sp) },
                                     singleLine = true,
@@ -269,7 +274,7 @@ private fun CampusServiceRoot(onBack: () -> Unit) {
                                 Row(
                                     Modifier.fillMaxWidth()
                                         .clip(RoundedCornerShape(10.dp))
-                                        .background(Color(0xFFF3F4F6))
+                                        .background(SurfaceVariant)
                                         .padding(horizontal = 14.dp, vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
@@ -280,8 +285,7 @@ private fun CampusServiceRoot(onBack: () -> Unit) {
                                     Switch(
                                         checked = rememberLogin,
                                         onCheckedChange = {
-                                            rememberLogin = it
-                                            prefs.rememberCampusLogin = it
+                                            viewModel.setRememberLogin(it)
                                         },
                                         colors = SwitchDefaults.colors(
                                             checkedThumbColor = Color.White,
@@ -296,10 +300,10 @@ private fun CampusServiceRoot(onBack: () -> Unit) {
                                     Box(
                                         Modifier.fillMaxWidth()
                                             .clip(RoundedCornerShape(8.dp))
-                                            .background(Color(0xFFFFF0F0))
+                                            .background(ErrorBg)
                                             .padding(12.dp)
                                     ) {
-                                        Text(loginError, color = Color(0xFFE53935), fontSize = 12.sp, lineHeight = 17.sp)
+                                        Text(loginError, color = Error, fontSize = 12.sp, lineHeight = 17.sp)
                                     }
                                     Spacer(Modifier.height(12.dp))
                                 }
@@ -307,28 +311,7 @@ private fun CampusServiceRoot(onBack: () -> Unit) {
                                 LiquidGlassButton(
                                     text = if (loginState == LoginState.Logging) "登录中..." else "登录",
                                     onClick = {
-                                        if (loginState == LoginState.Logging) return@LiquidGlassButton
-                                        if (username.isBlank() || password.isBlank()) {
-                                            loginError = "请输入学号和密码"
-                                            loginState = LoginState.Failed
-                                            return@LiquidGlassButton
-                                        }
-                                        loginState = LoginState.Logging
-                                        loginError = ""
-                                        scope.launch {
-                                            try {
-                                                repo.login(username.trim(), password)
-                                                prefs.campusUsername = username.trim()
-                                                prefs.campusPassword = password
-                                                loginState = LoginState.LoggedIn
-                                            } catch (e: CampusException) {
-                                                loginError = e.message ?: "登录失败"
-                                                loginState = LoginState.Failed
-                                            } catch (e: Exception) {
-                                                loginError = "网络异常: ${e.message ?: "请检查网络连接"}"
-                                                loginState = LoginState.Failed
-                                            }
-                                        }
+                                        viewModel.login(username, password)
                                     },
                                     style = ButtonStyle.White,
                                     height = 46.dp
@@ -341,56 +324,56 @@ private fun CampusServiceRoot(onBack: () -> Unit) {
                 else -> {
                     // ═══ 已登录:功能入口在上方 ═══
                     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-                        // 登录状态条
-                        Row(
-                            Modifier.fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Color(0xFFE8F5E9))
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("✓", color = Color(0xFF2E7D32), fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                            Spacer(Modifier.width(8.dp))
-                            Text("已登录 $school · $username", color = Color(0xFF2E7D32), fontSize = 12.sp)
+                        // 登录状态条(可关闭,显示学生姓名)
+                        if (!bannerDismissed) {
+                            val displayName = if (studentName.isNotEmpty()) studentName else username
+                            Row(
+                                Modifier.fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(SuccessBg)
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("✓", color = Success, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                Spacer(Modifier.width(8.dp))
+                                Text("已登录 $school · $displayName", color = Success, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = "关闭",
+                                    tint = Success,
+                                    modifier = Modifier.size(16.dp).clickable { viewModel.dismissLoginBanner() }
+                                )
+                            }
+                            Spacer(Modifier.height(16.dp))
                         }
-
-                        Spacer(Modifier.height(16.dp))
-                        Text(
-                            "功能入口",
-                            color = TextPrimary,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(start = 4.dp, bottom = 12.dp)
-                        )
 
                         FeatureEntryCard(
                             title = "教务系统",
                             subtitle = "课表 / 成绩 / 教学评价 / 选课",
-                            onClick = { route = CampusRoute.Jwxt }
+                            onClick = { viewModel.setRoute(CampusRoute.Jwxt) }
                         )
                         Spacer(Modifier.height(12.dp))
                         FeatureEntryCard(
                             title = "一卡通",
                             subtitle = "余额 / 账单 / 充值 / 生活缴费",
-                            onClick = { route = CampusRoute.Ecard }
+                            onClick = { viewModel.setRoute(CampusRoute.Ecard()) }
                         )
                         Spacer(Modifier.height(12.dp))
                         FeatureEntryCard(
                             title = "第二课堂",
                             subtitle = "成绩汇总 / 成绩明细",
-                            onClick = { route = CampusRoute.Sc }
+                            onClick = { viewModel.setRoute(CampusRoute.Sc) }
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        FeatureEntryCard(
+                            title = "淮师心声",
+                            subtitle = "失物招领 / 满意度调查",
+                            onClick = { viewModel.setRoute(CampusRoute.Hsxs) }
                         )
                         Spacer(Modifier.height(20.dp))
                         LiquidGlassButton(
                             text = "退出登录",
-                            onClick = {
-                                repo.logout()
-                                // 退出登录后取消记住登录,避免下次进入又自动登录
-                                rememberLogin = false
-                                prefs.rememberCampusLogin = false
-                                loginState = LoginState.Idle
-                                loginError = ""
-                            },
+                            onClick = { viewModel.logout() },
                             style = ButtonStyle.Outline,
                             height = 42.dp
                         )
@@ -405,11 +388,10 @@ private fun CampusServiceRoot(onBack: () -> Unit) {
         SchoolPickerDialog(
             currentSchool = school,
             onPick = { picked ->
-                prefs.school = picked
-                school = picked
-                showPicker = false
+                viewModel.setSchool(picked)
+                viewModel.setShowPicker(false)
             },
-            onDismiss = { showPicker = false }
+            onDismiss = { viewModel.setShowPicker(false) }
         )
     }
 }

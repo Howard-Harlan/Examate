@@ -1,11 +1,8 @@
 package go.examate.hyp.util
 
 import android.util.Log
+import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.net.HttpURLConnection
-import java.net.URL
 
 /**
  * 从厂商的 /v1/models 接口同步可用模型列表。
@@ -35,49 +32,30 @@ object ModelSyncUtil {
     @JvmStatic
     fun fetchModels(requestUrl: String?, apiKey: String?, callback: SyncCallback) {
         Thread {
-            try {
-                // 检查 API Key
-                if (apiKey.isNullOrBlank()) {
-                    callback.onError("请先填写 API Key，同步模型需要身份验证")
-                    return@Thread
-                }
+            // 检查 API Key
+            if (apiKey.isNullOrBlank()) {
+                callback.onError("请先填写 API Key，同步模型需要身份验证")
+                return@Thread
+            }
 
-                val modelsUrl = deriveModelsUrl(requestUrl)
-                Log.d(TAG, "Fetching models from: $modelsUrl")
+            val modelsUrl = deriveModelsUrl(requestUrl)
+            Log.d(TAG, "Fetching models from: $modelsUrl")
 
-                val url = URL(modelsUrl)
-                val conn = (url.openConnection() as HttpURLConnection).apply {
-                    requestMethod = "GET"
-                    connectTimeout = 10000
-                    readTimeout = 15000
-                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                    setRequestProperty("Authorization", "Bearer $apiKey")
-                }
-
-                val code = conn.responseCode
-                if (code == HttpURLConnection.HTTP_OK) {
-                    val response = BufferedReader(InputStreamReader(conn.inputStream, java.nio.charset.StandardCharsets.UTF_8)).use { it.readText() }
-                    conn.disconnect()
-
-                    val models = parseModelsResponse(response)
+            val result = runBlocking { HttpUtils.fetchModelsResult(modelsUrl, apiKey) }
+            when (result) {
+                is ApiResult.Success -> {
+                    val models = parseModelsResponse(result.data)
                     Log.d(TAG, "Fetched ${models.size} models")
                     callback.onSuccess(models)
-                } else if (code == 401 || code == 403) {
-                    conn.disconnect()
-                    Log.e(TAG, "HTTP $code: Unauthorized")
-                    callback.onError("认证失败 (HTTP $code)，请检查 API Key 是否正确")
-                } else {
-                    val detail = conn.errorStream?.use { es ->
-                        BufferedReader(InputStreamReader(es, java.nio.charset.StandardCharsets.UTF_8)).use { it.readText() }
-                    } ?: "No error stream"
-                    conn.disconnect()
-                    Log.e(TAG, "HTTP $code: $detail")
-                    val msg = if (detail.length > 150) detail.substring(0, 150) + "..." else detail
-                    callback.onError("HTTP $code: $msg")
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Fetch failed: ${e.message}")
-                callback.onError("请求失败: ${e.message}")
+                is ApiResult.AuthError -> {
+                    Log.e(TAG, "Auth failed: ${result.message}")
+                    callback.onError("认证失败，请检查 API Key 是否正确")
+                }
+                else -> {
+                    Log.e(TAG, "Fetch failed: ${result.errorMessage()}")
+                    callback.onError("请求失败: ${result.errorMessage()}")
+                }
             }
         }.start()
     }

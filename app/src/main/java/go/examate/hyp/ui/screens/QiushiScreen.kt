@@ -43,6 +43,7 @@ import go.examate.hyp.ui.theme.TextSecondary
 fun QiushiScreen(
     onLanChatClick: () -> Unit,
     onCampusServiceClick: () -> Unit,
+    onWaterCardClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -55,24 +56,18 @@ fun QiushiScreen(
             .padding(bottom = 120.dp)
     ) {
         Text(
-            text = "探索",
+            text = "Explore",
             color = TextPrimary,
             fontSize = 38.sp,
             fontWeight = FontWeight.Medium,
             letterSpacing = (-0.8).sp
         )
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text = "更多实用功能",
-            color = TextHint,
-            fontSize = 13.sp
-        )
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(20.dp))
 
         // ═══ 局域网聊天 ═══
         FeatureCard(
             title = "局域网聊天",
-            subtitle = "与同一 WiFi 下的设备实时通信,无需联网",
+            subtitle = "",
             iconRes = R.drawable.ic_lan_chat,
             onClick = onLanChatClick
         )
@@ -82,9 +77,19 @@ fun QiushiScreen(
         // ═══ 校园服务 ═══
         FeatureCard(
             title = "校园服务",
-            subtitle = "查询课表、成绩、校园卡等(需先绑定学校)",
+            subtitle = "",
             iconVector = IconSchool,
             onClick = onCampusServiceClick
+        )
+
+        Spacer(Modifier.height(14.dp))
+
+        // ═══ 乐校通水卡 ═══
+        FeatureCard(
+            title = "乐校通水卡",
+            subtitle = "",
+            iconRes = R.drawable.ic_water_card,
+            onClick = onWaterCardClick
         )
     }
 }
@@ -138,12 +143,14 @@ private fun FeatureCard(
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Medium
                 )
-                Text(
-                    text = subtitle,
-                    color = TextSecondary,
-                    fontSize = 12.sp,
-                    lineHeight = 16.sp
-                )
+                if (subtitle.isNotEmpty()) {
+                    Text(
+                        text = subtitle,
+                        color = TextSecondary,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp
+                    )
+                }
             }
             Text("›", color = TextHint, fontSize = 22.sp, fontWeight = FontWeight.Light)
         }

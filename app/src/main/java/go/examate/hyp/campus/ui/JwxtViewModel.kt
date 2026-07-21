@@ -79,10 +79,13 @@ class JwxtViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setGradeXn(xn: String) {
         _uiState.update { it.copy(grade = it.grade.copy(xn = xn)) }
+        // 切换学年后自动重新查询(仅在已经查过一次后,避免首次进入就触发)
+        if (_uiState.value.grade.queried) queryGrades()
     }
 
     fun setGradeXq(xq: String) {
         _uiState.update { it.copy(grade = it.grade.copy(xq = xq)) }
+        if (_uiState.value.grade.queried) queryGrades()
     }
 
     fun queryGrades() {
@@ -128,10 +131,12 @@ class JwxtViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setSelectedCourseXn(xn: String) {
         _uiState.update { it.copy(selectedCourse = it.selectedCourse.copy(xn = xn)) }
+        if (_uiState.value.selectedCourse.queried) querySelectedCourses()
     }
 
     fun setSelectedCourseXq(xq: String) {
         _uiState.update { it.copy(selectedCourse = it.selectedCourse.copy(xq = xq)) }
+        if (_uiState.value.selectedCourse.queried) querySelectedCourses()
     }
 
     fun querySelectedCourses() {

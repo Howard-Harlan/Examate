@@ -7,6 +7,8 @@ import android.content.Intent
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.TextView
+import java.util.concurrent.atomic.AtomicInteger
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -20,17 +22,19 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -49,6 +53,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import go.examate.hyp.ui.theme.TextPrimary
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -57,32 +63,110 @@ fun MarkdownText(
     markdown: String,
     modifier: Modifier = Modifier,
     textColor: Color = TextPrimary,
-    fontSize: Int = 14
+    fontSize: Int = 14,
+    isStreaming: Boolean = false
 ) {
-    val blocks = remember(markdown) { parseBlocks(markdown) }
+    // ★ 统一用 Compose 原生渲染(参考 rikkahub 的纯 AST 路径)。
+    //   全部走 parseBlocks + 各 Block 组件,不会丢内容。
+    //   数学公式用原生文本渲染(衬线斜体),化学结构式才用 WebView(SmilesWebView)。
+    //
+    //   流式时后台解析不阻塞 UI;非流式时同步解析快速显示。
+    //   万一 parseBlocks 抛异常,整条消息回退为纯文本,不让一个渲染 bug 拖垮整个 Activity(闪退)。
+    val blocks = if (isStreaming) {
+        produceState<List<MdBlock>>(initialValue = emptyList(), markdown) {
+            value = withContext(Dispatchers.Default) {
+                try { parseBlocks(markdown) } catch (_: Exception) { emptyList() }
+            }
+        }.value
+    } else {
+        remember(markdown) {
+            try { parseBlocks(markdown) } catch (_: Exception) { emptyList() }
+        }
+    }
+
+    if (blocks.isEmpty() && markdown.isNotBlank()) {
+        FallbackFormula(markdown)
+        return
+    }
+
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         blocks.forEach { block ->
             when (block) {
                 is MdBlock.Heading -> HeadingBlock(block, textColor, fontSize)
-                is MdBlock.CodeBlock -> RenderedCodeBlock(block)
-                is MdBlock.MathBlock -> RenderBox(
-                    title = "LaTeX",
-                    raw = block.latex,
-                    exportText = block.latex
-                ) {
-                    MathWebView(block.latex, displayMode = true, modifier = Modifier.fillMaxWidth().height(88.dp))
-                }
+                is MdBlock.CodeBlock -> RenderedCodeBlock(block, forceText = false, isStreaming = isStreaming)
+                is MdBlock.MathBlock -> MathTextBlock(block.latex, textColor, fontSize)
                 is MdBlock.ListBlock -> ListBlockView(block, textColor, fontSize)
                 is MdBlock.Quote -> QuoteBlockView(block, textColor, fontSize)
                 is MdBlock.Table -> TableRenderBox(block)
-                is MdBlock.Hr -> Divider(
+                is MdBlock.Hr -> HorizontalDivider(
                     color = textColor.copy(0.15f),
                     thickness = 0.5.dp,
                     modifier = Modifier.padding(vertical = 4.dp)
                 )
-                is MdBlock.Paragraph -> ParagraphBlock(block.text, textColor, fontSize)
+                is MdBlock.Paragraph -> ParagraphBlock(block.text, textColor, fontSize, forceText = false)
             }
         }
+    }
+}
+
+// 整个会话同时存在的 WebView(化学结构式)上限。
+// 数学公式已改用原生文本渲染,只有 SMILES 化学结构式才用 WebView。
+private const val MAX_ACTIVE_WEBVIEWS = 16
+private val activeWebViewCount = AtomicInteger(0)
+
+private fun createSafeWebView(ctx: Context): WebView? = try {
+    if (activeWebViewCount.get() >= MAX_ACTIVE_WEBVIEWS) null else WebView(ctx)
+} catch (_: Throwable) { null }
+
+private fun makeFallbackView(ctx: Context, text: String): TextView =
+    TextView(ctx).apply {
+        setText(text)
+        setTextColor(android.graphics.Color.parseColor("#1b1f24"))
+        textSize = 13f
+        setTypeface(android.graphics.Typeface.MONOSPACE)
+        val pad = (8 * ctx.resources.displayMetrics.density).toInt()
+        setPadding(pad, pad, pad, pad)
+    }
+
+@Composable
+private fun FallbackFormula(latex: String) {
+    SelectionContainer {
+        Text(
+            text = latex,
+            color = TextPrimary,
+            fontSize = 12.sp,
+            lineHeight = 16.sp,
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+        )
+    }
+}
+
+/**
+ * 块级数学公式渲染 — 用 Compose 原生文本展示(衬线斜体居中)。
+ *
+ * 不用 WebView/KaTeX 渲染:基本数学符号和计算式子用原生 Text 即可清晰展示,
+ * 且不会出现 WebView 渲染失败/内容丢失的问题。化学结构式等复杂图形才用 WebView(SmilesWebView)。
+ * 长公式可横向滚动,居中显示,字号略大于正文。
+ */
+@Composable
+private fun MathTextBlock(latex: String, textColor: Color, fontSize: Int) {
+    SelectionContainer {
+        Text(
+            text = latex,
+            color = textColor.copy(0.9f),
+            fontSize = (fontSize + 1).sp,
+            lineHeight = (fontSize + 8).sp,
+            fontStyle = FontStyle.Italic,
+            fontFamily = FontFamily.Serif,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(vertical = 4.dp)
+        )
     }
 }
 
@@ -97,13 +181,21 @@ private sealed class MdBlock {
     data object Hr : MdBlock()
 }
 
-private data class ListItem(val text: String, val ordered: Boolean, val level: Int)
+private data class ListItem(val text: String, val ordered: Boolean, val level: Int, val checked: Boolean? = null)
 private data class InlineSegment(val text: String, val kind: InlineKind)
 private enum class InlineKind { Text, Math, Smiles }
 
 private fun parseBlocks(md: String): List<MdBlock> {
     val blocks = mutableListOf<MdBlock>()
-    val lines = md.replace("\r\n", "\n").lines()
+    // 清理残留的工具调用标记(避免 AI 回复中未被 strip 的标记泄漏到 UI)
+    val cleaned = md
+        .replace(Regex("<tool_call>[\\s\\S]*?</tool_call>"), "")
+        .replace(Regex("<tool_call>[\\s\\S]*?(?:\\n\\n|$)"), "")
+        .replace(Regex("<delegate>[\\s\\S]*?</delegate>"), "")
+        .replace(Regex("<delegate>[\\s\\S]*?(?:\\n\\n|$)"), "")
+        .replace(Regex("<!-- ANCHOR:[^>]*-->"), "")
+        .replace(Regex("\\{\\{ANCHOR:[^}]*\\}\\}"), "")
+    val lines = cleaned.replace("\r\n", "\n").lines()
     var i = 0
     while (i < lines.size) {
         val line = lines[i]
@@ -122,17 +214,24 @@ private fun parseBlocks(md: String): List<MdBlock> {
                 continue
             }
             i++
+            var closed = false
             while (i < lines.size) {
                 val current = lines[i]
                 if (current.trim().endsWith("$$")) {
                     sb.append("\n").append(current.trim().removeSuffix("$$"))
                     i++
+                    closed = true
                     break
                 }
                 sb.append("\n").append(current)
                 i++
             }
-            blocks.add(MdBlock.MathBlock(sb.toString().trim()))
+            if (closed) {
+                blocks.add(MdBlock.MathBlock(sb.toString().trim()))
+            } else {
+                // 未闭合的 $$ :流式输出途中,降级为段落,避免 KaTeX 渲染错误
+                blocks.add(MdBlock.Paragraph("$$" + sb.toString().trim()))
+            }
             continue
         }
 
@@ -144,8 +243,14 @@ private fun parseBlocks(md: String): List<MdBlock> {
                 sb.append(lines[i]).append("\n")
                 i++
             }
-            if (i < lines.size) i++
-            blocks.add(MdBlock.CodeBlock(lang, sb.toString().trimEnd()))
+            if (i < lines.size) {
+                i++ // skip closing ```
+                blocks.add(MdBlock.CodeBlock(lang, sb.toString().trimEnd()))
+            } else {
+                // 未闭合的 ``` :流式输出途中,降级为段落,避免 smiles/tex 等触发 WebView 渲染错误
+                val prefix = "```" + if (lang.isNotEmpty()) lang else ""
+                blocks.add(MdBlock.Paragraph(prefix + "\n" + sb.toString().trimEnd()))
+            }
             continue
         }
 
@@ -186,11 +291,22 @@ private fun parseBlocks(md: String): List<MdBlock> {
 
         if (isListLine(trimmed)) {
             val items = mutableListOf<ListItem>()
+            // ★ 任务列表正则(参考 rikkahub:支持 - [ ] 和 - [x] checkbox 语法)
+            val taskUnchecked = Regex("^[-*]\\s+\\[\\s]\\s+(.+)")
+            val taskChecked = Regex("^[-*]\\s+\\[[xX]]\\s+(.+)")
             while (i < lines.size) {
                 val raw = lines[i]
                 val l = raw.trim()
                 val orderedMatch = Regex("^(\\d+)\\.\\s(.+)").matchEntire(l)
                 when {
+                    taskChecked.matchEntire(l) != null -> {
+                        items.add(ListItem(taskChecked.matchEntire(l)!!.groupValues[1], ordered = false, level = raw.takeWhile { it == ' ' }.length / 2, checked = true))
+                        i++
+                    }
+                    taskUnchecked.matchEntire(l) != null -> {
+                        items.add(ListItem(taskUnchecked.matchEntire(l)!!.groupValues[1], ordered = false, level = raw.takeWhile { it == ' ' }.length / 2, checked = false))
+                        i++
+                    }
                     l.startsWith("- ") || l.startsWith("* ") -> {
                         items.add(ListItem(l.substring(2), ordered = false, level = raw.takeWhile { it == ' ' }.length / 2))
                         i++
@@ -232,7 +348,10 @@ private fun startsNewBlock(lines: List<String>, index: Int): Boolean {
 }
 
 private fun isListLine(text: String): Boolean =
-    text.startsWith("- ") || text.startsWith("* ") || Regex("^\\d+\\.\\s").containsMatchIn(text)
+    // "* " 开头排除 "**"(粗体标记),避免把粗体行误判为列表项
+    text.startsWith("- ") ||
+        (text.startsWith("* ") && !text.startsWith("**")) ||
+        Regex("^\\d+\\.\\s").containsMatchIn(text)
 
 private fun looksLikeTable(lines: List<String>, index: Int): Boolean {
     if (index + 1 >= lines.size) return false
@@ -245,7 +364,7 @@ private fun splitTableRow(row: String): List<String> =
     row.trim().trim('|').split("|").map { it.trim() }
 
 @Composable
-private fun ParagraphBlock(text: String, textColor: Color, fontSize: Int) {
+private fun ParagraphBlock(text: String, textColor: Color, fontSize: Int, forceText: Boolean = false) {
     val raw = text.trim()
     val prettyJson = remember(raw) { prettyJsonOrNull(raw) }
     val csv = remember(raw) { parseCsvOrNull(raw) }
@@ -260,10 +379,17 @@ private fun ParagraphBlock(text: String, textColor: Color, fontSize: Int) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 segments.forEach { seg ->
                     when (seg.kind) {
-                        InlineKind.Math -> RenderBox(title = "LaTeX", raw = seg.text, exportText = seg.text) {
-                            MathWebView(seg.text, displayMode = false, modifier = Modifier.fillMaxWidth().height(60.dp))
-                        }
-                        InlineKind.Smiles -> RenderBox(title = "SMILES", raw = seg.text, exportText = seg.text) {
+                        // 行内数学:直接融入文段(无框),用衬线斜体示意数学语义。
+                        // 块级公式 $$...$$ 用 MathTextBlock 原生文本渲染。
+                        InlineKind.Math -> Text(
+                            text = seg.text,
+                            fontFamily = FontFamily.Serif,
+                            fontStyle = FontStyle.Italic,
+                            color = textColor.copy(0.85f),
+                            fontSize = fontSize.sp,
+                            modifier = Modifier.padding(horizontal = 2.dp)
+                        )
+                        InlineKind.Smiles -> if (forceText) FallbackFormula(seg.text) else RenderBox(title = "SMILES", raw = seg.text, exportText = seg.text) {
                             SmilesWebView(seg.text, modifier = Modifier.fillMaxWidth().height(210.dp))
                         }
                         InlineKind.Text -> if (seg.text.isNotBlank()) {
@@ -284,7 +410,7 @@ private fun ParagraphBlock(text: String, textColor: Color, fontSize: Int) {
 }
 
 @Composable
-private fun RenderedCodeBlock(block: MdBlock.CodeBlock) {
+private fun RenderedCodeBlock(block: MdBlock.CodeBlock, forceText: Boolean = false, isStreaming: Boolean = false) {
     val lang = block.language.lowercase()
     when {
         lang in setOf("json", "jsonc") || prettyJsonOrNull(block.code) != null -> {
@@ -298,11 +424,30 @@ private fun RenderedCodeBlock(block: MdBlock.CodeBlock) {
                 CsvRenderBox(rows, block.code)
             } ?: GenericCodeBlock(block)
         }
-        lang in setOf("smiles", "smi", "mol") -> RenderBox(title = "SMILES", raw = block.code, exportText = block.code) {
-            SmilesWebView(block.code, modifier = Modifier.fillMaxWidth().height(240.dp))
+        lang in setOf("smiles", "smi", "mol") -> if (isStreaming) {
+            // 流式输出途中:用纯文本展示,避免 SmilesWebView 创建/销毁抖动
+            FallbackFormula(block.code)
+        } else {
+            RenderBox(title = "SMILES", raw = block.code, exportText = block.code) {
+                if (forceText) FallbackFormula(block.code) else SmilesWebView(block.code, modifier = Modifier.fillMaxWidth().height(240.dp))
+            }
         }
         lang in setOf("tex", "latex", "math") -> RenderBox(title = "LaTeX", raw = block.code, exportText = block.code) {
-            MathWebView(block.code, displayMode = true, modifier = Modifier.fillMaxWidth().height(96.dp))
+            // ★ 用原生文本展示数学公式,不用 MathWebView(避免渲染失败/内容丢失)
+            SelectionContainer {
+                Text(
+                    text = block.code,
+                    color = TextPrimary.copy(0.9f),
+                    fontSize = 13.sp,
+                    lineHeight = 20.sp,
+                    fontStyle = FontStyle.Italic,
+                    fontFamily = FontFamily.Serif,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(vertical = 4.dp)
+                )
+            }
         }
         else -> GenericCodeBlock(block)
     }
@@ -377,14 +522,42 @@ private fun BoxAction(text: String, onClick: () -> Unit) {
 
 @Composable
 private fun GenericCodeBlock(block: MdBlock.CodeBlock) {
+    // ★ 代码块折叠(参考 rikkahub:超过阈值行数默认折叠,避免长代码撑满屏幕)
+    val lineCount = remember(block.code) { block.code.count { it == '\n' } + 1 }
+    val collapsible = lineCount > COLLAPSE_LINE_THRESHOLD
+    var expanded by remember(block.code) { mutableStateOf(!collapsible) }
+
     RenderBox(
         title = if (block.language.isBlank()) "Code" else block.language.uppercase(),
         raw = block.code,
         exportText = block.code
     ) {
-        CodeText(block.code, Modifier.fillMaxWidth())
+        Column {
+            CodeText(
+                block.code,
+                Modifier.fillMaxWidth().then(
+                    if (collapsible && !expanded) Modifier.heightIn(max = 120.dp) else Modifier
+                )
+            )
+            if (collapsible) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = if (expanded) "收起" else "展开全部 ($lineCount 行)",
+                    color = Color(0xFF3867D6),
+                    fontSize = 12.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(0x0F3867D6))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .clickable { expanded = !expanded }
+                )
+            }
+        }
     }
 }
+
+/** 代码块超过此行数时默认折叠 */
+private const val COLLAPSE_LINE_THRESHOLD = 15
 
 @Composable
 private fun CodeText(text: String, modifier: Modifier = Modifier) {
@@ -431,16 +604,22 @@ private fun TableView(headers: List<String>, rows: List<List<String>>) {
         if (headers.isNotEmpty()) {
             Row(Modifier.background(Color(0xFFEFF3FA)).padding(vertical = 7.dp, horizontal = 8.dp)) {
                 headers.forEach { cell ->
-                    Text(cell, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.widthIn(min = 92.dp, max = 180.dp))
+                    Text(
+                        cell, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.widthIn(min = 80.dp).padding(horizontal = 4.dp)
+                    )
                 }
             }
         }
         rows.forEach { row ->
-            Divider(color = Color(0x11000000), thickness = 0.5.dp)
+            HorizontalDivider(color = Color(0x11000000), thickness = 0.5.dp)
             Row(Modifier.padding(vertical = 7.dp, horizontal = 8.dp)) {
                 val count = maxOf(headers.size, row.size)
                 repeat(count) { index ->
-                    Text(row.getOrNull(index).orEmpty(), color = TextPrimary, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.widthIn(min = 92.dp, max = 180.dp))
+                    Text(
+                        row.getOrNull(index).orEmpty(), color = TextPrimary, fontSize = 12.sp, lineHeight = 16.sp,
+                        modifier = Modifier.widthIn(min = 80.dp).padding(horizontal = 4.dp)
+                    )
                 }
             }
         }
@@ -471,15 +650,22 @@ private fun ListBlockView(block: MdBlock.ListBlock, textColor: Color, fontSize: 
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         block.items.forEachIndexed { idx, item ->
             Row(Modifier.padding(start = (item.level * 12).dp)) {
+                // ★ 任务列表 checkbox 样式(参考 rikkahub:☑/☐ 符号区分已完成/未完成)
+                val prefix = when {
+                    item.checked == true -> "☑ "
+                    item.checked == false -> "☐ "
+                    item.ordered -> "${idx + 1}. "
+                    else -> "- "
+                }
                 Text(
-                    text = if (item.ordered) "${idx + 1}. " else "- ",
-                    color = textColor,
+                    text = prefix,
+                    color = if (item.checked == true) textColor.copy(0.5f) else textColor,
                     fontSize = fontSize.sp
                 )
                 SelectionContainer {
                     Text(
                         text = renderInline(item.text, textColor),
-                        color = textColor,
+                        color = if (item.checked == true) textColor.copy(0.5f) else textColor,
                         fontSize = fontSize.sp,
                         lineHeight = (fontSize + 6).sp
                     )
@@ -491,30 +677,38 @@ private fun ListBlockView(block: MdBlock.ListBlock, textColor: Color, fontSize: 
 
 @Composable
 private fun QuoteBlockView(block: MdBlock.Quote, textColor: Color, fontSize: Int) {
-    Row(Modifier.fillMaxWidth()) {
-        Spacer(Modifier.width(8.dp))
-        Box(
-            Modifier
-                .width(3.dp)
-                .height(24.dp)
-                .background(textColor.copy(0.3f))
-        )
-        Spacer(Modifier.width(8.dp))
-        SelectionContainer {
-            Text(
-                text = renderInline(block.text, textColor),
-                color = textColor.copy(0.8f),
-                fontSize = fontSize.sp,
-                fontStyle = FontStyle.Italic,
-                lineHeight = (fontSize + 6).sp
+    // ★ 引用块样式增强(参考 rikkahub:左竖线 + 背景色 + 内边距,视觉层次更清晰)
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .background(textColor.copy(0.05f))
+    ) {
+        Row(Modifier.padding(10.dp)) {
+            Box(
+                Modifier
+                    .width(3.dp)
+                    .height(IntrinsicSize.Max)
+                    .background(textColor.copy(0.3f))
             )
+            Spacer(Modifier.width(10.dp))
+            SelectionContainer {
+                Text(
+                    text = renderInline(block.text, textColor),
+                    color = textColor.copy(0.8f),
+                    fontSize = fontSize.sp,
+                    fontStyle = FontStyle.Italic,
+                    lineHeight = (fontSize + 6).sp
+                )
+            }
         }
     }
 }
 
 private fun splitInlineContent(text: String): List<InlineSegment> {
     val segments = mutableListOf<InlineSegment>()
-    val regex = Regex("\\${'$'}smiles\\{([^}]+)}|\\${'$'}([^${'$'}]+)\\${'$'}")
+    // $smiles{...} 内联化学结构式 | $...$ 行内数学(允许空格,以 $ 为分隔符,仍可正确匹配多对 $...$)
+    val regex = Regex("\\${'$'}smiles\\{([^}]+)\\}|\\${'$'}([^${'$'}]+)\\${'$'}")
     var lastEnd = 0
     regex.findAll(text).forEach { match ->
         if (match.range.first > lastEnd) {
@@ -532,31 +726,92 @@ private fun splitInlineContent(text: String): List<InlineSegment> {
     return segments.ifEmpty { listOf(InlineSegment(text, InlineKind.Text)) }
 }
 
+/**
+ * 行内 Markdown 渲染 — 递归下降解析,支持嵌套格式(粗体内含斜体/代码/删除线等)。
+ *
+ * 之前的扁平扫描用 indexOf("**", i+2) 最近匹配 + append(substring),
+ * 粗体内部子串不递归解析,导致 `**粗体 *斜体* 粗体**` 里斜体失效、
+ * `**外层 **内层** 外层**` 会提前闭合产生孤立 `*`。
+ *
+ * 现改为递归:遇到 ** * ` ~~ [ 时,对内部子串递归调用 parseInlineRec,
+ * 用 parentStyle.merge(...) 让粗体+斜体等样式可叠加。
+ */
 private fun renderInline(text: String, baseColor: Color): AnnotatedString = buildAnnotatedString {
+    parseInlineRec(text, baseColor, SpanStyle())
+}
+
+private fun AnnotatedString.Builder.parseInlineRec(
+    text: String,
+    baseColor: Color,
+    parentStyle: SpanStyle
+) {
     var i = 0
     while (i < text.length) {
-        if (i + 1 < text.length && text[i] == '*' && text[i + 1] == '*') {
-            val end = text.indexOf("**", i + 2)
+        // 链接 [text](url) — 链接文本内可嵌套粗体/斜体
+        if (text[i] == '[') {
+            val closeBracket = text.indexOf(']', i + 1)
+            if (closeBracket != -1 && closeBracket + 1 < text.length && text[closeBracket + 1] == '(') {
+                val closeParen = text.indexOf(')', closeBracket + 2)
+                if (closeParen != -1) {
+                    val linkText = text.substring(i + 1, closeBracket)
+                    val url = text.substring(closeBracket + 2, closeParen)
+                    pushStringAnnotation(tag = "URL", annotation = url)
+                    val linkStyle = parentStyle.merge(
+                        SpanStyle(color = Color(0xFF0066CC), fontWeight = FontWeight.Medium)
+                    )
+                    withStyle(linkStyle) {
+                        parseInlineRec(linkText, baseColor, linkStyle)
+                    }
+                    pop()
+                    i = closeParen + 1
+                    continue
+                }
+            }
+        }
+        // 删除线 ~~text~~ — 内部可嵌套粗体/斜体/代码
+        if (i + 1 < text.length && text[i] == '~' && text[i + 1] == '~') {
+            val end = text.indexOf("~~", i + 2)
             if (end != -1) {
-                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(text.substring(i + 2, end)) }
+                val inner = text.substring(i + 2, end)
+                val merged = parentStyle.merge(
+                    SpanStyle(textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough)
+                )
+                withStyle(merged) { parseInlineRec(inner, baseColor, merged) }
                 i = end + 2
                 continue
             }
         }
+        // 粗体 **text** — 内部递归解析(支持粗体内嵌套斜体/代码/删除线)
+        if (i + 1 < text.length && text[i] == '*' && text[i + 1] == '*') {
+            val end = text.indexOf("**", i + 2)
+            if (end != -1) {
+                val inner = text.substring(i + 2, end)
+                val merged = parentStyle.merge(SpanStyle(fontWeight = FontWeight.Bold))
+                withStyle(merged) { parseInlineRec(inner, baseColor, merged) }
+                i = end + 2
+                continue
+            }
+        }
+        // 斜体 *text* — 内部递归解析(排除 ** 的情况)
         if (text[i] == '*' && (i == 0 || text[i - 1] != '*')) {
             val end = text.indexOf('*', i + 1)
             if (end != -1 && end != i + 1 && (end + 1 >= text.length || text[end + 1] != '*')) {
-                withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(text.substring(i + 1, end)) }
+                val inner = text.substring(i + 1, end)
+                val merged = parentStyle.merge(SpanStyle(fontStyle = FontStyle.Italic))
+                withStyle(merged) { parseInlineRec(inner, baseColor, merged) }
                 i = end + 1
                 continue
             }
         }
+        // 行内代码 `code` — 代码内容原样显示(不递归),但代码本身继承外层样式(如粗体)
         if (text[i] == '`') {
             val end = text.indexOf('`', i + 1)
             if (end != -1) {
-                withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = baseColor.copy(0.08f))) {
-                    append(text.substring(i + 1, end))
-                }
+                val inner = text.substring(i + 1, end)
+                val merged = parentStyle.merge(
+                    SpanStyle(fontFamily = FontFamily.Monospace, background = baseColor.copy(0.08f))
+                )
+                withStyle(merged) { append(inner) }
                 i = end + 1
                 continue
             }
@@ -564,171 +819,6 @@ private fun renderInline(text: String, baseColor: Color): AnnotatedString = buil
         append(text[i])
         i++
     }
-}
-
-@SuppressLint("SetJavaScriptEnabled")
-@Composable
-private fun MathWebView(latex: String, displayMode: Boolean, modifier: Modifier = Modifier) {
-    val html = remember(latex, displayMode) { buildMathHtml(latex, displayMode) }
-    var contentHeightDp by remember { mutableStateOf(if (displayMode) 88.dp else 60.dp) }
-    AndroidView(
-        factory = { ctx ->
-            WebView(ctx).apply {
-                webViewClient = WebViewClient()
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true
-                settings.loadWithOverviewMode = true
-                settings.useWideViewPort = true
-                setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                addJavascriptInterface(MathHeightBridge { heightPx ->
-                    val density = ctx.resources.displayMetrics.density
-                    val dp = (heightPx / density).toInt()
-                    contentHeightDp = dp.dp
-                }, "MathHeightBridge")
-                loadDataWithBaseURL("https://cdn.bootcdn.net/", html, "text/html", "utf-8", null)
-            }
-        },
-        update = { it.loadDataWithBaseURL("https://cdn.bootcdn.net/", html, "text/html", "utf-8", null) },
-        modifier = modifier.heightIn(min = 40.dp, max = 600.dp).then(
-            Modifier.height(contentHeightDp)
-        )
-    )
-}
-
-private class MathHeightBridge(private val onHeightReady: (Int) -> Unit) {
-    @JavascriptInterface
-    fun postHeight(heightPx: Int) {
-        onHeightReady(heightPx)
-    }
-}
-
-private fun buildMathHtml(latex: String, displayMode: Boolean): String {
-    val encodedLatex = JSONObject.quote(latex)
-    return """
-        <!doctype html>
-        <html>
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/KaTeX/0.17.0/katex.min.css">
-          <script src="https://cdn.bootcdn.net/ajax/libs/KaTeX/0.17.0/katex.min.js"></script>
-          <style>
-            html,body{margin:0;padding:0;background:transparent;color:#1b1f24;font-family:sans-serif;}
-            #formula{padding:8px;overflow-x:auto;font-size:16px;}
-            .error{font-family:monospace;color:#b42318;white-space:pre-wrap;}
-          </style>
-        </head>
-        <body>
-          <div id="formula"></div>
-          <script>
-            function renderFormula(){
-              var target = document.getElementById('formula');
-              if (!window.katex) { target.textContent = 'KaTeX loading failed'; target.className = 'error'; return; }
-              try {
-                katex.render($encodedLatex, target, { throwOnError:false, displayMode:$displayMode });
-              } catch(e) {
-                target.textContent = e.message;
-                target.className = 'error';
-              }
-              requestAnimationFrame(function() {
-                requestAnimationFrame(function() {
-                  var h = document.documentElement.scrollHeight || document.body.scrollHeight || 60;
-                  if (window.MathHeightBridge) window.MathHeightBridge.postHeight(h + 16);
-                });
-              });
-            }
-            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', renderFormula); else renderFormula();
-          </script>
-        </body>
-        </html>
-    """.trimIndent()
-}
-
-@SuppressLint("SetJavaScriptEnabled")
-@Composable
-private fun SmilesWebView(smiles: String, modifier: Modifier = Modifier) {
-    val html = remember(smiles) { buildSmilesHtml(smiles) }
-    AndroidView(
-        factory = { ctx ->
-            WebView(ctx).apply {
-                webViewClient = WebViewClient()
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true
-                settings.loadWithOverviewMode = true
-                settings.useWideViewPort = true
-                setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                loadDataWithBaseURL("https://cdn.bootcdn.net/", html, "text/html", "utf-8", null)
-            }
-        },
-        update = { it.loadDataWithBaseURL("https://cdn.bootcdn.net/", html, "text/html", "utf-8", null) },
-        modifier = modifier
-    )
-}
-
-private fun buildSmilesHtml(smiles: String): String {
-    val cleaned = smiles.trim()
-    val encoded = JSONObject.quote(cleaned)
-    return """
-        <!doctype html>
-        <html>
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <script src="https://cdn.bootcdn.net/ajax/libs/smiles-drawer/2.0.13/smiles-drawer.min.js"></script>
-          <style>
-            html,body{margin:0;padding:0;background:transparent;font-family:sans-serif;color:#1b1f24;}
-            #root{min-height:190px;display:flex;align-items:center;justify-content:center;overflow:auto;padding:8px;box-sizing:border-box;}
-            .reaction{display:flex;align-items:center;gap:12px;min-width:max-content;}
-            .side{display:flex;align-items:center;gap:6px;}
-            .mol{width:170px;height:150px;background:#fff;border:1px solid #edf0f3;border-radius:8px;}
-            .single{width:260px;height:200px;background:#fff;border:1px solid #edf0f3;border-radius:8px;}
-            .arrow{min-width:72px;text-align:center;color:#5f6b7a;font-size:12px;}
-            .arrowLine{font-size:24px;line-height:24px;color:#1f2937;}
-            .error{font-family:monospace;color:#b42318;white-space:pre-wrap;padding:12px;}
-          </style>
-        </head>
-        <body>
-          <div id="root"></div>
-          <script>
-            var input = $encoded;
-            function stripOptions(value) {
-              return value.replace(/\s+__[\s\S]*__\s*${'$'}/, '').trim();
-            }
-            function drawOne(smiles, svgId, small) {
-              var drawer = new SmilesDrawer.SvgDrawer({ width: small ? 170 : 260, height: small ? 150 : 200, bondThickness: 0.7, padding: 12 });
-              SmilesDrawer.parse(smiles, function(tree) {
-                drawer.draw(tree, svgId, 'light', false);
-              }, function(err) {
-                document.getElementById(svgId).outerHTML = '<div class="error">' + String(err) + '</div>';
-              });
-            }
-            function moleculeSide(items, prefix) {
-              return '<div class="side">' + items.filter(Boolean).map(function(_, i) {
-                return '<svg class="mol" id="' + prefix + i + '"></svg>';
-              }).join('<span>+</span>') + '</div>';
-            }
-            function render() {
-              var root = document.getElementById('root');
-              if (!window.SmilesDrawer) { root.textContent = 'SmilesDrawer loading failed'; root.className='error'; return; }
-              var value = stripOptions(input);
-              if (value.indexOf('>') >= 0) {
-                var parts = value.split('>');
-                var left = (parts[0] || '').split('.');
-                var middle = parts[1] || '';
-                var right = (parts[2] || '').split('.');
-                root.innerHTML = '<div class="reaction">' + moleculeSide(left, 'l') + '<div class="arrow"><div>' + middle + '</div><div class="arrowLine">→</div></div>' + moleculeSide(right, 'r') + '</div>';
-                left.filter(Boolean).forEach(function(s, i){ drawOne(s.trim(), 'l' + i, true); });
-                right.filter(Boolean).forEach(function(s, i){ drawOne(s.trim(), 'r' + i, true); });
-              } else {
-                root.innerHTML = '<svg class="single" id="single"></svg>';
-                drawOne(value, 'single', false);
-              }
-            }
-            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', render); else render();
-          </script>
-        </body>
-        </html>
-    """.trimIndent()
 }
 
 private fun prettyJsonOrNull(raw: String): String? {
@@ -816,4 +906,104 @@ private fun shareText(context: Context, title: String, text: String) {
         putExtra(Intent.EXTRA_TEXT, text)
     }
     context.startActivity(Intent.createChooser(intent, "导出"))
+}
+
+// ══════════════════════════════════════════════════════
+// WebView 渲染组件(化学结构 SmilesDrawer)
+// 用 AndroidView 嵌入 WebView,带安全兜底与自动回收
+// 数学公式不再用 WebView/KaTeX,改用 Compose 原生文本渲染(避免内容丢失)
+// ══════════════════════════════════════════════════════
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun SmilesWebView(smiles: String, modifier: Modifier = Modifier) {
+    val html = remember(smiles) { buildSmilesHtml(smiles) }
+    AndroidView(
+        factory = { ctx ->
+            val webView = createSafeWebView(ctx) ?: return@AndroidView makeFallbackView(ctx, smiles)
+            activeWebViewCount.incrementAndGet()
+            webView.apply {
+                webViewClient = WebViewClient()
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                settings.loadWithOverviewMode = true
+                settings.useWideViewPort = true
+                setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                loadDataWithBaseURL("file:///android_asset/", html, "text/html", "utf-8", null)
+            }
+        },
+        onRelease = { view ->
+            if (view is WebView) {
+                try { view.destroy() } catch (_: Throwable) {}
+                activeWebViewCount.decrementAndGet()
+            }
+        },
+        modifier = modifier
+    )
+}
+
+private fun buildSmilesHtml(smiles: String): String {
+    val cleaned = smiles.trim()
+    val encoded = JSONObject.quote(cleaned)
+    return """
+        <!doctype html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <script src="file:///android_asset/smiles-drawer.min.js"></script>
+          <style>
+            html,body{margin:0;padding:0;background:transparent;font-family:sans-serif;color:#1b1f24;}
+            #root{min-height:190px;display:flex;align-items:center;justify-content:center;overflow:auto;padding:8px;box-sizing:border-box;}
+            .reaction{display:flex;align-items:center;gap:12px;min-width:max-content;}
+            .side{display:flex;align-items:center;gap:6px;}
+            .mol{width:170px;height:150px;background:#fff;border:1px solid #edf0f3;border-radius:8px;}
+            .single{width:260px;height:200px;background:#fff;border:1px solid #edf0f3;border-radius:8px;}
+            .arrow{min-width:72px;text-align:center;color:#5f6b7a;font-size:12px;}
+            .arrowLine{font-size:24px;line-height:24px;color:#1f2937;}
+            .error{font-family:monospace;color:#b42318;white-space:pre-wrap;padding:12px;}
+          </style>
+        </head>
+        <body>
+          <div id="root"></div>
+          <script>
+            var input = $encoded;
+            function stripOptions(value) {
+              return value.replace(/\s+__[\s\S]*__\s*\${'$'}/, '').trim();
+            }
+            function drawOne(smiles, svgId, small) {
+              var drawer = new SmilesDrawer.SvgDrawer({ width: small ? 170 : 260, height: small ? 150 : 200, bondThickness: 0.7, padding: 12 });
+              SmilesDrawer.parse(smiles, function(tree) {
+                drawer.draw(tree, svgId, 'light', false);
+              }, function(err) {
+                document.getElementById(svgId).outerHTML = '<div class="error">' + String(err) + '</div>';
+              });
+            }
+            function moleculeSide(items, prefix) {
+              return '<div class="side">' + items.filter(Boolean).map(function(_, i) {
+                return '<svg class="mol" id="' + prefix + i + '"></svg>';
+              }).join('<span>+</span>') + '</div>';
+            }
+            function render() {
+              var root = document.getElementById('root');
+              if (!window.SmilesDrawer) { root.textContent = 'SmilesDrawer loading failed'; root.className='error'; return; }
+              var value = stripOptions(input);
+              if (value.indexOf('>') >= 0) {
+                var parts = value.split('>');
+                var left = (parts[0] || '').split('.');
+                var middle = parts[1] || '';
+                var right = (parts[2] || '').split('.');
+                root.innerHTML = '<div class="reaction">' + moleculeSide(left, 'l') + '<div class="arrow"><div>' + middle + '</div><div class="arrowLine">→</div></div>' + moleculeSide(right, 'r') + '</div>';
+                left.filter(Boolean).forEach(function(s, i){ drawOne(s.trim(), 'l' + i, true); });
+                right.filter(Boolean).forEach(function(s, i){ drawOne(s.trim(), 'r' + i, true); });
+              } else {
+                root.innerHTML = '<svg class="single" id="single"></svg>';
+                drawOne(value, 'single', false);
+              }
+            }
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', render); else render();
+          </script>
+        </body>
+        </html>
+    """.trimIndent()
 }

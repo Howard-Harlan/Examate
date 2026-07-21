@@ -124,6 +124,9 @@ class MainActivity : ComponentActivity() {
                     onCampusServiceClick = {
                         startActivity(Intent(this@MainActivity, CampusServiceActivity::class.java))
                     },
+                    onWaterCardClick = {
+                        startActivity(Intent(this@MainActivity, WaterCardActivity::class.java))
+                    },
                     onUserSettingsClick = {
                         startActivity(Intent(this@MainActivity, UserSettingsActivity::class.java))
                     },

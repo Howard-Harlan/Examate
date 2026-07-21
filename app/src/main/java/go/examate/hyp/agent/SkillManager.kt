@@ -122,18 +122,18 @@ object SkillManager {
 
     /**
      * 将已启用的 Skills 内容构建为系统提示词片段
-     * Agent 会按照这些指令工作
+     * 以自然的方式融入对话,而非刻板的指令
      */
     fun buildSkillsPrompt(context: Context): String {
         val skills = loadEnabled(context)
         if (skills.isEmpty()) return ""
 
         val sb = StringBuilder()
-        sb.append("\n\n## 已加载技能(Skills)\n")
-        sb.append("以下技能描述了你在特定场景下应如何工作,请严格遵循:\n\n")
+        sb.append("\n\n## 技能(Skills)\n")
+        sb.append("你已装备以下技能,它们赋予你在特定场景下的专业能力。根据对话需要自然运用:\n\n")
         skills.forEach { skill ->
-            sb.append("### 技能: ${skill.name}\n")
-            sb.append("**描述:** ${skill.description}\n\n")
+            sb.append("### ${skill.name}\n")
+            sb.append("${skill.description}\n\n")
             sb.append(skill.content)
             sb.append("\n\n---\n")
         }
@@ -144,47 +144,29 @@ object SkillManager {
      * 创建内置 Skills(首次运行时调用)
      * 规范:SKILL.md 必须以 YAML frontmatter 开头(顶格 --- 包裹),
      * 包含 name 和 description 字段,后接 Markdown 指令正文。
+     *
+     * 内置 Skills 存放在 assets/skills/ 目录下,启动时拷贝到 filesDir/skills/。
+     * 只在目标文件不存在时拷贝,避免覆盖用户修改。
      */
     fun ensureBuiltinSkills(context: Context) {
         val dir = skillsDir(context)
-        if (dir.listFiles()?.isNotEmpty() == true) return
-
-        // 内置 Skill: 校园服务助手
-        val campusSkill = """
----
-name: campus-assistant
-description: 校园服务查询助手,指导如何查询成绩、课表、考试等信息
----
-# 校园服务查询助手
-
-当用户询问校园相关信息时,请遵循以下流程:
-
-## 查询流程
-1. **确认查询意图**:成绩、课表、考试、一卡通余额、第二课堂等
-2. **确认时间范围**:如果用户未指定学年/学期,询问"请问要查询哪个学期?如 2024-2025 第一学期"
-3. **调用工具**:使用对应的工具函数获取数据
-4. **格式化输出**:用 Markdown 表格展示结果
-
-## 成绩查询
-- 调用 `get_grades` 工具,参数 xn(学年如"2024-2025"), xq(学期"1"或"2")
-- 输出表格列:课程 | 学分 | 成绩 | 绩点 | 学年 | 学期
-- 可选:计算加权平均分和总绩点
-
-## 课表查询
-- 调用 `get_schedule` 工具
-- 按星期分组展示,列:节次 | 课程 | 教师 | 教室 | 周次
-
-## 考试安排
-- 调用 `get_exam_schedule` 工具
-- 列:课程 | 日期 | 地点 | 座位号
-- 提醒用户考试时间
-
-## 注意事项
-- 数据来自校园服务,确保用户已登录
-- 如果工具返回"未登录",提示用户先在校园服务页面登录
-- 涉及隐私数据时,提醒用户注意保密
-        """.trimIndent()
-        File(dir, "campus-assistant.md").writeText(campusSkill)
+        val assetManager = context.assets
+        try {
+            val skillFiles = assetManager.list("skills") ?: return
+            for (fileName in skillFiles) {
+                val targetFile = File(dir, fileName)
+                // 只在目标文件不存在时拷贝(不覆盖用户修改)
+                if (!targetFile.exists()) {
+                    assetManager.open("skills/$fileName").use { input ->
+                        targetFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // assets 读取失败,忽略
+        }
     }
 
     /** 导出 Skill 为文本(用于分享) */
@@ -195,96 +177,6 @@ description: 校园服务查询助手,指导如何查询成绩、课表、考试
         sb.append("description: ${skill.description}\n")
         sb.append("---\n\n")
         sb.append(skill.content)
-        return sb.toString()
-    }
-}
-
-/**
- * 记忆管理器:管理 AI 的长期记忆
- *
- * 记忆是一些关键信息片段,会注入到系统提示词,
- * 让 AI 记住用户的偏好、重要事项等。
- */
-object MemoryManager {
-
-    private const val PREFS_NAME = "agent_memory"
-    private const val KEY_MEMORIES = "memories_json"
-
-    /** 记忆条目 */
-    data class Memory(
-        val id: String,
-        val content: String,
-        val category: String = "通用",  // 通用/偏好/重要事项/人物
-        val createdAt: Long = System.currentTimeMillis()
-    )
-
-    /** 加载所有记忆 */
-    fun loadAll(context: Context): List<Memory> {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val json = prefs.getString(KEY_MEMORIES, "[]") ?: "[]"
-        val arr = JSONArray(json)
-        val list = mutableListOf<Memory>()
-        for (i in 0 until arr.length()) {
-            val obj = arr.getJSONObject(i)
-            list.add(Memory(
-                id = obj.getString("id"),
-                content = obj.getString("content"),
-                category = obj.optString("category", "通用"),
-                createdAt = obj.optLong("createdAt", System.currentTimeMillis())
-            ))
-        }
-        return list
-    }
-
-    /** 添加记忆 */
-    fun add(context: Context, content: String, category: String = "通用"): Memory {
-        val memories = loadAll(context).toMutableList()
-        val memory = Memory(
-            id = System.currentTimeMillis().toString(),
-            content = content,
-            category = category
-        )
-        memories.add(memory)
-        save(context, memories)
-        return memory
-    }
-
-    /** 删除记忆 */
-    fun delete(context: Context, id: String) {
-        val memories = loadAll(context).filter { it.id != id }
-        save(context, memories)
-    }
-
-    /** 清空记忆 */
-    fun clear(context: Context) {
-        save(context, emptyList())
-    }
-
-    private fun save(context: Context, memories: List<Memory>) {
-        val arr = JSONArray()
-        memories.forEach { m ->
-            arr.put(JSONObject().apply {
-                put("id", m.id)
-                put("content", m.content)
-                put("category", m.category)
-                put("createdAt", m.createdAt)
-            })
-        }
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit().putString(KEY_MEMORIES, arr.toString()).apply()
-    }
-
-    /** 构建记忆提示词片段 */
-    fun buildMemoryPrompt(context: Context): String {
-        val memories = loadAll(context)
-        if (memories.isEmpty()) return ""
-
-        val sb = StringBuilder()
-        sb.append("\n\n## 长期记忆\n")
-        sb.append("以下是关于用户的重要信息,请在对话中参考:\n\n")
-        memories.forEach { m ->
-            sb.append("- [${m.category}] ${m.content}\n")
-        }
         return sb.toString()
     }
 }

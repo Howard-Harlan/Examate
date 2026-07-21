@@ -124,7 +124,9 @@ data class BankCard(
     val cardNumberShort: String,
     /** 完整卡号(从 radio input value 提取) */
     val cardNumberFull: String,
-    val bankTip: String
+    val bankTip: String,
+    /** 银行 logo 文件名(充值页解析,如 BOC);缴费/展示页可为空 */
+    val logoFileName: String = ""
 )
 
 /** 房间电费信息 */
@@ -140,7 +142,8 @@ data class BillRecord(
     val time: String,
     val amount: String,
     val description: String,
-    val type: String
+    val type: String,
+    val balanceAfter: String = ""
 )
 
 /** 充值/缴费结果 */
@@ -185,4 +188,59 @@ data class ScoreSummary(
 data class ModuleScore(
     val moduleName: String,
     val score: String
+)
+
+// ════════════════════════════════════════════════
+//  淮师心声(Hsxs) — 失物招领 & 满意度调查
+//  API: https://hsxs.chnu.edu.cn/api/
+// ════════════════════════════════════════════════
+
+/** 失物招领物品 */
+data class HsxsLostItem(
+    val id: String = "",
+    val title: String = "",
+    val type: String = "",          // "lost"=寻物, "found"=招领
+    val category: String = "",      // 物品分类
+    val description: String = "",   // 详细描述
+    val location: String = "",      // 丢失/拾取地点
+    val contactName: String = "",   // 联系人
+    val contactPhone: String = "",  // 联系方式
+    val imageUrl: String = "",      // 物品图片
+    val status: String = "",        // 状态
+    val publishTime: String = "",   // 发布时间
+    val publisherName: String = ""  // 发布人
+)
+
+/** 失物招领物品列表响应 */
+data class HsxsLostListResult(
+    val total: Int = 0,
+    val rows: List<HsxsLostItem> = emptyList()
+)
+
+/** 满意度调查问卷 */
+data class HsxsQuestion(
+    val id: String = "",
+    val title: String = "",
+    val description: String = "",
+    val startTime: String = "",
+    val endTime: String = "",
+    val status: String = "",        // "open"=进行中
+    val answerCount: Int = 0,       // 已答人数
+    val questions: List<HsxsQuestionItem> = emptyList()
+)
+
+/** 问卷题目 */
+data class HsxsQuestionItem(
+    val id: String = "",
+    val title: String = "",         // 题目文字
+    val type: String = "",          // "radio"=单选, "checkbox"=多选, "textarea"=简答
+    val required: Boolean = false,  // 是否必填
+    val options: List<String> = emptyList(),  // 选项列表
+    val answer: String = ""         // 用户已选答案(查看时)
+)
+
+/** 问卷列表响应 */
+data class HsxsQuestionListResult(
+    val total: Int = 0,
+    val rows: List<HsxsQuestion> = emptyList()
 )

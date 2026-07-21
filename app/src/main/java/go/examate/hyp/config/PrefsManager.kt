@@ -68,6 +68,11 @@ class PrefsManager private constructor(context: Context) {
         get() = prefsConfig.getBoolean(KEY_AGENTS_MODE, false)
         set(value) = prefsConfig.edit().putBoolean(KEY_AGENTS_MODE, value).apply()
 
+    /** 记忆功能开关:默认关闭,等待后续优化后再启用 */
+    var isMemoryEnabled: Boolean
+        get() = prefsConfig.getBoolean(KEY_MEMORY_ENABLED, false)
+        set(value) = prefsConfig.edit().putBoolean(KEY_MEMORY_ENABLED, value).apply()
+
     /** 已绑定的学校名称(空表示未绑定) */
     var school: String
         get() = prefsConfig.getString(KEY_SCHOOL, "") ?: ""
@@ -92,6 +97,65 @@ class PrefsManager private constructor(context: Context) {
     var rememberCampusLogin: Boolean
         get() = prefsConfig.getBoolean(KEY_REMEMBER_CAMPUS_LOGIN, false)
         set(value) = prefsConfig.edit().putBoolean(KEY_REMEMBER_CAMPUS_LOGIN, value).apply()
+
+    // ═══ 水卡（乐校通）登录凭据 ═══
+
+    /** 乐校通水卡:登录账号(手机号) */
+    var yxtAccount: String
+        get() = prefsConfig.getString(KEY_YXT_ACCOUNT, "") ?: ""
+        set(value) = prefsConfig.edit().putString(KEY_YXT_ACCOUNT, value).apply()
+
+    /** 乐校通水卡:登录密码(明文,与校园服务保持一致) */
+    var yxtPassword: String
+        get() = prefsConfig.getString(KEY_YXT_PASSWORD, "") ?: ""
+        set(value) = prefsConfig.edit().putString(KEY_YXT_PASSWORD, value).apply()
+
+    /** 乐校通水卡:已选学校名(如"淮北师范大学") */
+    var yxtSchoolName: String
+        get() = prefsConfig.getString(KEY_YXT_SCHOOL_NAME, "") ?: ""
+        set(value) = prefsConfig.edit().putString(KEY_YXT_SCHOOL_NAME, value).apply()
+
+    /** 乐校通水卡:已选学校 sysVersion(3=V3平台, 4=V4平台) */
+    var yxtSchoolSysVersion: Int
+        get() = prefsConfig.getInt(KEY_YXT_SCHOOL_SYS_VERSION, 0)
+        set(value) = prefsConfig.edit().putInt(KEY_YXT_SCHOOL_SYS_VERSION, value).apply()
+
+    /** 乐校通水卡:已选学校 schoolAlias(搜索结果中的别名) */
+    var yxtSchoolAlias: String
+        get() = prefsConfig.getString(KEY_YXT_SCHOOL_ALIAS, "") ?: ""
+        set(value) = prefsConfig.edit().putString(KEY_YXT_SCHOOL_ALIAS, value).apply()
+
+    /** 清空乐校通水卡凭据(退出登录时调用) */
+    fun clearYxtCredentials() {
+        prefsConfig.edit()
+            .remove(KEY_YXT_ACCOUNT)
+            .remove(KEY_YXT_PASSWORD)
+            .remove(KEY_YXT_SCHOOL_NAME)
+            .remove(KEY_YXT_SCHOOL_SYS_VERSION)
+            .remove(KEY_YXT_SCHOOL_ALIAS)
+            .apply()
+    }
+
+    /**
+     * 本地头像文件路径(用户从相册选择的头像,永久保存)。
+     * 空表示未设置本地头像。
+     */
+    var localAvatarPath: String
+        get() = prefsConfig.getString(KEY_LOCAL_AVATAR_PATH, "") ?: ""
+        set(value) = prefsConfig.edit().putString(KEY_LOCAL_AVATAR_PATH, value).apply()
+
+    /**
+     * Agent 头像文件路径(在 Agent 设置页选择,用于 Agents 聊天气泡)。
+     * 空表示未设置 Agent 头像。
+     */
+    var agentAvatarPath: String
+        get() = prefsConfig.getString(KEY_AGENT_AVATAR_PATH, "") ?: ""
+        set(value) = prefsConfig.edit().putString(KEY_AGENT_AVATAR_PATH, value).apply()
+
+    /** Agents 聊天头像开关:默认关闭,开启后 assistant 气泡左侧显示 Agent 头像 */
+    var isAgentChatAvatarEnabled: Boolean
+        get() = prefsConfig.getBoolean(KEY_AGENT_CHAT_AVATAR_ENABLED, false)
+        set(value) = prefsConfig.edit().putBoolean(KEY_AGENT_CHAT_AVATAR_ENABLED, value).apply()
 
     /**
      * 用户信息栏(logo 栏)展示的字段集合
@@ -157,17 +221,26 @@ class PrefsManager private constructor(context: Context) {
         const val KEY_MULTI_AI_VERIFY_SELECTED = "multi_ai_verify_selected"
         const val KEY_NICKNAME = "nickname"
         const val KEY_AGENTS_MODE = "agents_mode"
+        const val KEY_MEMORY_ENABLED = "memory_enabled"
         const val KEY_SCHOOL = "school"
         const val KEY_CAMPUS_USERNAME = "campus_username"
         const val KEY_CAMPUS_PASSWORD = "campus_password"
         const val KEY_REMEMBER_CAMPUS_LOGIN = "remember_campus_login"
+        const val KEY_YXT_ACCOUNT = "yxt_account"
+        const val KEY_YXT_PASSWORD = "yxt_password"
+        const val KEY_YXT_SCHOOL_NAME = "yxt_school_name"
+        const val KEY_YXT_SCHOOL_SYS_VERSION = "yxt_school_sys_version"
+        const val KEY_YXT_SCHOOL_ALIAS = "yxt_school_alias"
+        const val KEY_LOCAL_AVATAR_PATH = "local_avatar_path"
+        const val KEY_AGENT_AVATAR_PATH = "agent_avatar_path"
+        const val KEY_AGENT_CHAT_AVATAR_ENABLED = "agent_chat_avatar_enabled"
         const val KEY_USER_DISPLAY_FIELDS = "user_display_fields"
         const val KEY_FLOATING_MENU_ITEMS = "floating_menu_items"
         private const val KEY_PROVIDERS = "providers"
         private const val KEY_COMPLETED = "completed"
 
         /** 悬浮菜单默认启用的全部功能项(退出项固定保留,不在此集合中) */
-        val DEFAULT_FLOATING_MENU_ITEMS: Set<String> = setOf("select", "ask", "auto", "browse")
+        val DEFAULT_FLOATING_MENU_ITEMS: Set<String> = setOf("select", "ask", "auto", "browse", "chat")
 
         /** 用户信息栏默认展示字段 */
         val DEFAULT_USER_DISPLAY_FIELDS: Set<String> = setOf("nickname", "school")

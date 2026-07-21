@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -40,10 +40,16 @@ import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.theme.Divider as DividerColor
+import go.examate.hyp.ui.theme.Error
+import go.examate.hyp.ui.theme.ErrorBg
 import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.Success
+import go.examate.hyp.ui.theme.SuccessBg
+import go.examate.hyp.ui.theme.SurfaceVariant
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
+import go.examate.hyp.ui.theme.Warning
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
@@ -67,10 +73,10 @@ fun JwxtScreen(onBack: () -> Unit) {
         onBack = onBack,
         bottomBar = {
             Spacer(Modifier.height(10.dp))
-            TabBar(
-                tabs = JwxtTab.values().toList(),
-                selected = tab,
-                onSelect = { tab = it }
+            GlassTabBar(
+                tabs = JwxtTab.values().map { it.label },
+                selectedIndex = tab.ordinal,
+                onSelect = { tab = JwxtTab.values()[it] }
             )
             Spacer(Modifier.height(16.dp))
         }
@@ -83,42 +89,6 @@ fun JwxtScreen(onBack: () -> Unit) {
                 JwxtTab.EVALUATION -> EvaluationSection(state.evaluation, vm)
                 JwxtTab.COURSE -> SelectedCourseSection(state.selectedCourse, vm)
                 JwxtTab.XELECTION -> XkSection(state.xk, vm)
-            }
-        }
-    }
-}
-
-// ════════════════════════════════════════
-//  Tab 栏
-// ════════════════════════════════════════
-
-@Composable
-private fun TabBar(tabs: List<JwxtTab>, selected: JwxtTab, onSelect: (JwxtTab) -> Unit) {
-    FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(6.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            tabs.forEach { t ->
-                val isActive = t == selected
-                Box(
-                    Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(if (isActive) Primary else Color.Transparent)
-                        .clickable { onSelect(t) }
-                        .padding(vertical = 8.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        t.label,
-                        color = if (isActive) Color.White else TextHint,
-                        fontSize = 12.sp,
-                        fontWeight = if (isActive) FontWeight.Medium else FontWeight.Normal
-                    )
-                }
             }
         }
     }
@@ -166,7 +136,7 @@ private fun ScheduleSection(state: ScheduleState, vm: JwxtViewModel) {
                 Modifier
                     .size(36.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFFF3F4F6))
+                    .background(SurfaceVariant)
                     .clickable { vm.changeDate(currentDate.minusDays(1)) },
                 contentAlignment = Alignment.Center
             ) {
@@ -192,7 +162,7 @@ private fun ScheduleSection(state: ScheduleState, vm: JwxtViewModel) {
                 Modifier
                     .size(36.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFFF3F4F6))
+                    .background(SurfaceVariant)
                     .clickable { vm.changeDate(currentDate.plusDays(1)) },
                 contentAlignment = Alignment.Center
             ) {
@@ -308,7 +278,7 @@ private fun GradeSection(state: GradeState, vm: JwxtViewModel) {
     FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
         Column {
             QueryParamRow("学年", xn) { showYearPicker = true }
-            Divider(color = DividerColor, thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 16.dp))
+            HorizontalDivider(color = DividerColor, thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 16.dp))
             QueryParamRow("学期", SEMESTER_OPTIONS.first { it.first == xq }.second) { showSemesterPicker = true }
         }
     }
@@ -349,13 +319,13 @@ private fun GradeSection(state: GradeState, vm: JwxtViewModel) {
                     Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(14.dp))
-                        .background(Color(0xFFE8F5E9))
+                        .background(SuccessBg)
                         .padding(14.dp)
                 ) {
                     Column {
                         Text("加权绩点", color = TextHint, fontSize = 11.sp)
                         Spacer(Modifier.height(4.dp))
-                        Text(weightedGpa, color = Color(0xFF2E7D32), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Text(weightedGpa, color = Success, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -384,9 +354,9 @@ private fun GradeCard(g: Grade) {
     val scoreVal = g.score.toDoubleOrNull()
     val scoreColor = when {
         scoreVal == null -> TextPrimary
-        scoreVal >= 85 -> Color(0xFF2E7D32)
-        scoreVal >= 60 -> Color(0xFFEF6C00)
-        else -> Color(0xFFE53935)
+        scoreVal >= 85 -> Success
+        scoreVal >= 60 -> Warning
+        else -> Error
     }
     FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp)) {
@@ -499,12 +469,12 @@ private fun EvaluationCard(e: EvaluationItem, isPending: Boolean) {
                 Box(
                     Modifier
                         .clip(RoundedCornerShape(4.dp))
-                        .background(if (isPending) Color(0xFFFFF3E0) else Color(0xFFE8F5E9))
+                        .background(if (isPending) Color(0xFFFFF3E0) else SuccessBg)
                         .padding(horizontal = 8.dp, vertical = 3.dp)
                 ) {
                     Text(
                         if (isPending) "待评价" else e.submitStatus.ifEmpty { "已评价" },
-                        color = if (isPending) Color(0xFFEF6C00) else Color(0xFF2E7D32),
+                        color = if (isPending) Warning else Success,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Medium
                     )
@@ -545,7 +515,7 @@ private fun SelectedCourseSection(state: SelectedCourseState, vm: JwxtViewModel)
     FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
         Column {
             QueryParamRow("学年", xn) { showYearPicker = true }
-            Divider(color = DividerColor, thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 16.dp))
+            HorizontalDivider(color = DividerColor, thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 16.dp))
             QueryParamRow("学期", SEMESTER_OPTIONS.first { it.first == xq }.second) { showSemesterPicker = true }
         }
     }
@@ -585,12 +555,12 @@ private fun SelectedCourseSection(state: SelectedCourseState, vm: JwxtViewModel)
                                 Box(
                                     Modifier
                                         .clip(RoundedCornerShape(4.dp))
-                                        .background(if (c.selected) Color(0xFFE8F5E9) else Color(0xFFFFF0F0))
+                                        .background(if (c.selected) SuccessBg else ErrorBg)
                                         .padding(horizontal = 8.dp, vertical = 3.dp)
                                 ) {
                                     Text(
                                         if (c.selected) "已选" else "未选",
-                                        color = if (c.selected) Color(0xFF2E7D32) else Color(0xFFE53935),
+                                        color = if (c.selected) Success else Error,
                                         fontSize = 10.sp,
                                         fontWeight = FontWeight.Medium
                                     )
@@ -681,7 +651,7 @@ private fun XkSection(state: XkState, vm: JwxtViewModel) {
                 Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFFE8F5E9))
+                    .background(SuccessBg)
                     .padding(14.dp)
             ) {
                 Column {
@@ -689,7 +659,7 @@ private fun XkSection(state: XkState, vm: JwxtViewModel) {
                     Spacer(Modifier.height(4.dp))
                     Text(
                         c.obtainedCredits.ifEmpty { "-" },
-                        color = Color(0xFF2E7D32), fontSize = 16.sp, fontWeight = FontWeight.Bold
+                        color = Success, fontSize = 16.sp, fontWeight = FontWeight.Bold
                     )
                 }
             }
@@ -705,7 +675,7 @@ private fun XkSection(state: XkState, vm: JwxtViewModel) {
                     Spacer(Modifier.height(4.dp))
                     Text(
                         c.historyCredits.ifEmpty { "-" },
-                        color = Color(0xFFEF6C00), fontSize = 16.sp, fontWeight = FontWeight.Bold
+                        color = Warning, fontSize = 16.sp, fontWeight = FontWeight.Bold
                     )
                 }
             }

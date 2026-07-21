@@ -29,8 +29,7 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Examate"
-        tools:targetApi="31">
+        android:theme="@style/Theme.Examate">
         <service
             android:name=".service.UnifiedFloatingService"
             android:foregroundServiceType="mediaProjection" />
@@ -63,8 +62,7 @@
         <activity
             android:name=".OnboardingActivity"
             android:exported="true"
-            android:screenOrientation="portrait"
-            android:theme="@style/Theme.Examate">
+            android:screenOrientation="portrait">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
@@ -95,6 +93,11 @@
         <activity
             android:name=".CampusServiceActivity"
             android:label="校园服务"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".WaterCardActivity"
+            android:label="乐校通水卡"
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize" />
         <activity

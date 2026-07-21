@@ -40,6 +40,7 @@ import go.examate.hyp.ui.components.PlainDialog
 import go.examate.hyp.ui.components.PlainDialogButtons
 import go.examate.hyp.ui.components.PlainDialogTitle
 import go.examate.hyp.ui.theme.BgPrimary
+import go.examate.hyp.ui.theme.Danger
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
@@ -114,7 +115,7 @@ fun ShensiScreen(
 
         // ═══ 启动胶囊:点击选择启动模式 ═══
         LiquidGlassButton(
-            text = "启动",
+            text = "启动搜题",
             onClick = { showLaunchDialog = true },
             style = ButtonStyle.White,
             height = 52.dp
@@ -124,7 +125,7 @@ fun ShensiScreen(
 
         // ═══ Agents 入口 ═══
         LiquidGlassButton(
-            text = "Agents",
+            text = "All in Agent",
             onClick = onChatClick,
             style = ButtonStyle.White,
             height = 52.dp
@@ -200,7 +201,7 @@ private fun PermissionCard(
             Spacer(Modifier.weight(1f))
             Text(
                 text = if (unauthCount == 0) "全部已授权" else "$unauthCount 项未授权",
-                color = if (unauthCount == 0) Color(0xFF34C759) else Color(0xFFFF3B30),
+                color = if (unauthCount == 0) Color(0xFF34C759) else Danger,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium
             )
@@ -231,7 +232,7 @@ private fun PermissionCard(
 @Composable
 private fun PermissionDetailRow(item: PermissionItem) {
     val green = Color(0xFF34C759)
-    val red = Color(0xFFFF3B30)
+    val red = Danger
     Column(Modifier.padding(horizontal = 24.dp, vertical = 6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(

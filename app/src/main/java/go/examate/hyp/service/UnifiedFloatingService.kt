@@ -27,6 +27,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.RemoteException
+import android.provider.Settings
 import android.security.keystore.UserNotAuthenticatedException
 import android.util.DisplayMetrics
 import android.util.Log
@@ -476,15 +477,27 @@ class UnifiedFloatingService : Service() {
             showWebView()
             showPopupMenu()
         }
+        // 聊天选项事件绑定:启动悬浮聊天窗(使用最近模式/房间号)
+        popupMenuView.findViewById<View>(R.id.chat_btn).setOnClickListener {
+            showPopupMenu()
+            startFloatingChat()
+        }
         // 退出选项
         popupMenuView.findViewById<View>(R.id.close_btn).setOnClickListener {
             stopService(Intent(applicationContext, UnifiedFloatingService::class.java))
             onDestroy()
         }
-        // 藏匿选项
-        popupMenuView.findViewById<View>(R.id.hide_btn).setOnClickListener {
-            launcherSecureCountListener()
+    }
+
+    /**
+     * 启动悬浮聊天窗(局域网 UDP 广播模式)
+     */
+    private fun startFloatingChat() {
+        if (!Settings.canDrawOverlays(this)) {
+            Toast.makeText(this, "请先授予悬浮窗权限", Toast.LENGTH_SHORT).show()
+            return
         }
+        startService(Intent(this, LanChatService::class.java))
     }
 
     /**
@@ -505,11 +518,11 @@ class UnifiedFloatingService : Service() {
         // browse:浏览
         popupMenuView.findViewById<View>(R.id.web_btn).visibility =
             if (enabled.contains("browse")) View.VISIBLE else View.GONE
+        // chat:聊天
+        popupMenuView.findViewById<View>(R.id.chat_btn).visibility =
+            if (enabled.contains("chat")) View.VISIBLE else View.GONE
         // close:退出,固定保留
         popupMenuView.findViewById<View>(R.id.close_btn).visibility = View.VISIBLE
-        // hide:藏匿,仅无障碍模式
-        popupMenuView.findViewById<View>(R.id.hide_btn).visibility =
-            if (mode == FloatingMode.ACCESSIBILITY) View.VISIBLE else View.GONE
     }
 
     /**
@@ -604,6 +617,13 @@ class UnifiedFloatingService : Service() {
             val thinkTextView = askContainerView.findViewById<TextView>(R.id.thinkOutput)
             val errorTextView = askContainerView.findViewById<TextView>(R.id.errorOutput)
             val textView = askContainerView.findViewById<TextView>(R.id.contentOutput)
+            // 单击AI回复内容→关闭问问窗口
+            textView.setOnClickListener {
+                if (isAskViewShow) {
+                    isAskViewShow = false
+                    windowManager.removeView(askContainerView)
+                }
+            }
             thinkTextView.text = ""
             errorTextView.text = ""
             textView.text = ""
@@ -682,20 +702,25 @@ class UnifiedFloatingService : Service() {
                                 handler.post { setSubmitBtnStatus(true) }
                             }
                         }
-                        // 截图模式:只用非流式 sendPostRequest + extractContent
+                        // 截图模式:只用非流式 sendPostRequestResult + extractContent
                         else -> {
-                            val resText = HttpUtils.sendPostRequest(
-                                currentProvider.requestUrl, currentProvider.modelId, userInput,
-                                currentProvider.apiKey, MyConfig.SYSTEM_PROMPT,
-                                currentProvider.enableThinking, currentProvider.endpointType
-                            )
-                            if (resText == null) {
-                                handler.post {
-                                    errorTextView.visibility = View.VISIBLE
-                                    errorTextView.text = "请求失败,请检查网络或 API 配置"
-                                    setSubmitBtnStatus(true)
+                            val result = kotlinx.coroutines.runBlocking {
+                                HttpUtils.sendPostRequestResult(
+                                    currentProvider.requestUrl, currentProvider.modelId, userInput,
+                                    currentProvider.apiKey, MyConfig.SYSTEM_PROMPT,
+                                    currentProvider.enableThinking, currentProvider.endpointType
+                                )
+                            }
+                            val resText = when (result) {
+                                is go.examate.hyp.util.ApiResult.Success -> result.data
+                                else -> {
+                                    handler.post {
+                                        errorTextView.visibility = View.VISIBLE
+                                        errorTextView.text = "请求失败: ${result.errorMessage()}"
+                                        setSubmitBtnStatus(true)
+                                    }
+                                    return@Runnable
                                 }
-                                return@Runnable
                             }
                             val content = HttpUtils.extractContent(resText, currentProvider.endpointType)
                             handler.post {
@@ -1590,9 +1615,6 @@ class UnifiedFloatingService : Service() {
     private fun exitHideMode() {
         shutdownSecureCountListener()
         inExamMode = false
-        // 显示按钮
-        val hideBtn = popupMenuView.findViewById<TextView>(R.id.hide_btn)
-        hideBtn.visibility = View.VISIBLE
         // 恢复悬浮球
         floatToggleBtnParams.flags = floatToggleBtnParams.flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
         handler.post {

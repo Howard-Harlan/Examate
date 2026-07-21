@@ -54,11 +54,12 @@ class AutoAnswerEngine private constructor(
     private val handler = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var state: State = State.IDLE
+    private var lastError: String? = null
     private var isRunning = false
     private var currentQuestionIndex = 0
     private var retryRound = 0
 
-    private val skippedQuestions = mutableMapOf<Int, Int>()
+    private val skippedQuestions = mutableMapOf<String, Int>()
 
     var onStatusUpdate: ((String) -> Unit)? = null
     var onComplete: (() -> Unit)? = null
@@ -140,7 +141,7 @@ class AutoAnswerEngine private constructor(
                     return@post
                 }
 
-                val textHash = screenText.hashCode()
+                val textHash = screenText.trim().take(200)
                 if (skippedQuestions.containsKey(textHash) && retryRound == 0) {
                     Log.d(TAG, "题目重复,跳过")
                     state = State.NEXT
@@ -157,7 +158,7 @@ class AutoAnswerEngine private constructor(
     }
 
     private var currentQuestionText: String = ""
-    private var currentQuestionHash: Int = 0
+    private var currentQuestionHash: String = ""
     private var currentAnswer: String = ""
 
     // ═══ 调用 AI(支持多 AI 圆桌会议) ═══
@@ -175,7 +176,9 @@ class AutoAnswerEngine private constructor(
 
                 if (answer.isEmpty()) {
                     handler.post {
-                        updateStatus("AI 未返回有效答案,跳过")
+                        val err = lastError
+                        updateStatus(if (err != null) "AI 请求失败: $err,跳过" else "AI 未返回有效答案,跳过")
+                        lastError = null
                         markSkipped(currentQuestionText)
                         state = State.NEXT
                         handler.postDelayed({ processNextStep() }, DELAY_AFTER_NEXT)
@@ -202,21 +205,24 @@ class AutoAnswerEngine private constructor(
     }
 
     /** 单 AI 请求 */
-    private fun askSingleAI(provider: ModelProvider): String {
-        return try {
-            val response = HttpUtils.sendPostRequest(
-                provider.requestUrl,
-                provider.modelId,
-                currentQuestionText,
-                provider.apiKey,
-                MyConfig.SYSTEM_PROMPT,
-                provider.enableThinking,
-                provider.endpointType ?: "chat"
-            ) ?: return ""
-            parseAnswerFromResponse(response, provider.endpointType ?: "chat")
-        } catch (e: Exception) {
-            Log.e(TAG, "单 AI 请求失败: ${provider.displayName}", e)
-            ""
+    private suspend fun askSingleAI(provider: ModelProvider): String {
+        val result = HttpUtils.sendPostRequestResult(
+            provider.requestUrl,
+            provider.modelId,
+            currentQuestionText,
+            provider.apiKey,
+            MyConfig.SYSTEM_PROMPT,
+            provider.enableThinking,
+            provider.endpointType ?: "chat"
+        )
+        return when (result) {
+            is go.examate.hyp.util.ApiResult.Success ->
+                parseAnswerFromResponse(result.data, provider.endpointType ?: "chat")
+            else -> {
+                Log.e(TAG, "单 AI 请求失败: ${provider.displayName} - ${result.errorMessage()}")
+                lastError = result.errorMessage()
+                ""
+            }
         }
     }
 
@@ -227,7 +233,7 @@ class AutoAnswerEngine private constructor(
             verifyProviders.map { provider ->
                 async {
                     try {
-                        val response = HttpUtils.sendPostRequest(
+                        val result = HttpUtils.sendPostRequestResult(
                             provider.requestUrl,
                             provider.modelId,
                             currentQuestionText,
@@ -236,11 +242,15 @@ class AutoAnswerEngine private constructor(
                             provider.enableThinking,
                             provider.endpointType ?: "chat"
                         )
-                        if (response != null) {
-                            val ans = parseAnswerFromResponse(response, provider.endpointType ?: "chat")
-                            if (ans.isNotEmpty()) provider.displayName to ans else null
-                        } else {
-                            null
+                        when (result) {
+                            is go.examate.hyp.util.ApiResult.Success -> {
+                                val ans = parseAnswerFromResponse(result.data, provider.endpointType ?: "chat")
+                                if (ans.isNotEmpty()) provider.displayName to ans else null
+                            }
+                            else -> {
+                                Log.e(TAG, "多AI: ${provider.displayName} 请求失败 - ${result.errorMessage()}")
+                                null
+                            }
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "多AI: ${provider.displayName} 请求失败", e)
@@ -264,21 +274,17 @@ class AutoAnswerEngine private constructor(
         return if (isChoiceQuestion) {
             // 选择题:按首字母投票
             val votes = mutableMapOf<Char, Int>()
-            val providerByLetter = mutableMapOf<Char, String>()
             results.forEach { (_, ans) ->
                 val letter = ans.trim().firstOrNull()?.uppercaseChar() ?: return@forEach
                 if (letter in 'A'..'Z') {
                     votes[letter] = (votes[letter] ?: 0) + 1
-                    if (!providerByLetter.containsKey(letter)) {
-                        providerByLetter[letter] = ans
-                    }
                 }
             }
             val winner = votes.maxByOrNull { it.value }
             Log.d(TAG, "选择题投票: $votes → 当选: $winner")
-            // 返回得票最多的字母对应的原始答案
+            // 返回得票最多的字母(纯字母,便于 clickOptionByAnswer 解析)
             if (winner != null) {
-                providerByLetter[winner.key] ?: winner.key.toString()
+                winner.key.toString()
             } else {
                 firstAnswer
             }
@@ -291,11 +297,10 @@ class AutoAnswerEngine private constructor(
     }
 
     /** 判断答案是否为选择题格式(A / A.xxx / A、xxx) */
-    private fun isChoiceAnswer(answer: String): Boolean {
-        val trimmed = answer.trim()
-        val firstChar = trimmed.firstOrNull()?.uppercaseChar() ?: return false
-        return firstChar in 'A'..'Z' &&
-            (trimmed.length == 1 || trimmed[1] == '.' || trimmed[1] == '、' || trimmed[1] == ' ')
+    private fun isChoiceAnswer(ans: String): Boolean {
+        val trimmed = ans.trim()
+        if (trimmed.length > 5) return false
+        return trimmed.matches(Regex("^[A-Z](\\.|、|\\s|$)"))
     }
 
     /**
@@ -424,9 +429,12 @@ class AutoAnswerEngine private constructor(
     }
 
     private fun markSkipped(questionText: String) {
-        if (questionText.isEmpty()) return
-        val hash = questionText.hashCode()
-        skippedQuestions[hash] = (skippedQuestions[hash] ?: 0) + 1
+        val key = if (questionText.isEmpty()) {
+            "__empty_${currentQuestionIndex}__"
+        } else {
+            questionText.trim().take(200)
+        }
+        skippedQuestions[key] = (skippedQuestions[key] ?: 0) + 1
     }
 
     private fun finish() {

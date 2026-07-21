@@ -32,3 +32,13 @@ val AccentPeach = Color(0xFFF2B69C)     // 柔和桃
 // 渐变用色
 val HeroGradientStart = Color(0xFFE8F0FE)  // 浅蓝白
 val HeroGradientEnd = Color(0xFFF5F0FF)    // 浅紫白
+
+// 语义色
+val Success = Color(0xFF2E7D32)
+val Error = Color(0xFFE53935)
+val Warning = Color(0xFFEF6C00)
+val Danger = Color(0xFFFF3B30)
+val SuccessBg = Color(0xFFE8F5E9)
+val ErrorBg = Color(0xFFFFF0F0)
+val WarningBg = Color(0xFFFFF3E0)
+val SurfaceVariant = Color(0xFFE0E0E0)

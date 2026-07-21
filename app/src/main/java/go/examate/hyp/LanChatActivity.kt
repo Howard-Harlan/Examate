@@ -1,72 +1,77 @@
 package go.examate.hyp
 
 import android.content.Intent
+import android.graphics.Bitmap
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material3.Icon
+import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import go.examate.hyp.service.LanChatService
 import go.examate.hyp.service.LanChatTransport
+import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassBackground
+import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.screens.LanChatMessage
+import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.BgPrimary
 import go.examate.hyp.ui.theme.ExamateTheme
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
+import go.examate.hyp.util.AvatarHelper
+import go.examate.hyp.util.LanChatCache
 import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
 /**
- * 局域网聊天全屏页面(参考 [ChatActivity] 的结构)。
+ * 局域网聊天全屏页面(UDP 广播,同 WiFi 自动发现)。
  *
- * 与悬浮窗 [LanChatService] 共用 [LanChatTransport],但输入框在普通 Activity 中
- * 默认可获取焦点,无需任何 flags 切换。
+ * 与悬浮窗 [LanChatService] 共用 [LanChatTransport]。
+ * 消息缓存 5 分钟(与悬浮窗共用 [LanChatCache])。
  */
 class LanChatActivity : ComponentActivity(), LanChatTransport.Callback {
 
@@ -75,17 +80,21 @@ class LanChatActivity : ComponentActivity(), LanChatTransport.Callback {
     // Compose 状态(主线程访问)
     private val messages = mutableStateListOf<LanChatMessage>()
     private val onlineCount = mutableStateOf(1)
+    private val onlineNames = mutableStateListOf<String>()
     private val inputText = mutableStateOf("")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // 加载缓存消息(5分钟内)
+        messages.addAll(LanChatCache.load(this))
         setContent {
             ExamateTheme {
                 LiquidGlassBackground {
                     LanChatScreen(
                         messages = messages,
                         onlineCount = onlineCount.value,
+                        onlineNames = onlineNames,
                         inputText = inputText.value,
                         myName = transport?.myName ?: "",
                         onBack = { finish() },
@@ -114,11 +123,18 @@ class LanChatActivity : ComponentActivity(), LanChatTransport.Callback {
     // ═══ LanChatTransport.Callback(子线程触发,切主线程) ═══
 
     override fun onMessageReceived(msg: LanChatMessage) {
-        runOnUiThread { messages.add(msg) }
+        runOnUiThread {
+            messages.add(msg)
+            LanChatCache.append(this, msg)
+        }
     }
 
     override fun onOnlineCountChanged(count: Int) {
-        runOnUiThread { onlineCount.value = count }
+        runOnUiThread {
+            onlineCount.value = count
+            onlineNames.clear()
+            onlineNames.addAll(transport?.getOnlineDeviceNames() ?: emptyList())
+        }
     }
 
     override fun onError(message: String) {
@@ -127,7 +143,9 @@ class LanChatActivity : ComponentActivity(), LanChatTransport.Callback {
 
     private fun sendText(text: String) {
         transport?.sendMessage(text)
-        messages.add(LanChatMessage(text, true, transport?.myName ?: "", System.currentTimeMillis()))
+        val msg = LanChatMessage(text, true, transport?.myName ?: "", System.currentTimeMillis())
+        messages.add(msg)
+        LanChatCache.append(this, msg)
     }
 
     /** 切换到悬浮窗模式:需悬浮窗权限 */
@@ -136,7 +154,7 @@ class LanChatActivity : ComponentActivity(), LanChatTransport.Callback {
             // 先释放 UDP 端口,避免 Service 启动时绑定失败
             transport?.stop()
             transport = null
-            startService(Intent(this, LanChatService::class.java))
+            startService(android.content.Intent(this, LanChatService::class.java))
             finish()
         } else {
             Toast.makeText(this, "请先授予悬浮窗权限", Toast.LENGTH_SHORT).show()
@@ -155,6 +173,7 @@ class LanChatActivity : ComponentActivity(), LanChatTransport.Callback {
 private fun LanChatScreen(
     messages: List<LanChatMessage>,
     onlineCount: Int,
+    onlineNames: List<String>,
     inputText: String,
     myName: String,
     onBack: () -> Unit,
@@ -164,6 +183,9 @@ private fun LanChatScreen(
 ) {
     val listState = rememberLazyListState()
     val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
+    val context = LocalContext.current
+    var showOnlineDialog by remember { mutableStateOf(false) }
+    val avatarBitmap by remember { mutableStateOf<Bitmap?>(AvatarHelper.loadAvatar(context)) }
 
     // 新消息到达时滚动到底部
     LaunchedEffect(messages.size) {
@@ -177,41 +199,27 @@ private fun LanChatScreen(
             .imePadding()
             .statusBarsPadding()
     ) {
-        // ═══ 顶栏:返回 + 标题 + 在线人数 + 悬浮窗模式 ═══
+        // ═══ 顶栏:液态玻璃悬浮组件 ═══
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                Modifier.size(40.dp).clickable { onBack() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "返回",
-                    tint = TextPrimary,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
+            LiquidGlassIconButton(
+                icon = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "返回",
+                onClick = onBack,
+                modifier = Modifier.size(40.dp)
+            )
             Text(
                 text = "局域网聊天",
                 color = TextPrimary,
                 fontSize = 17.sp,
                 fontWeight = FontWeight.Medium,
-                modifier = Modifier.weight(1f).padding(start = 4.dp)
+                modifier = Modifier.weight(1f).padding(start = 8.dp)
             )
-            Text(
-                text = "$onlineCount 人在线",
-                color = TextSecondary,
-                fontSize = 13.sp
-            )
-            Spacer(Modifier.width(4.dp))
-            Box(
-                Modifier.size(40.dp).clickable { onFloatingMode() },
-                contentAlignment = Alignment.Center
-            ) {
-                Text("悬浮", color = TextPrimary, fontSize = 12.sp)
-            }
+            LiquidGlassLabel("$onlineCount 人在线", onClick = { showOnlineDialog = true })
+            Spacer(Modifier.width(6.dp))
+            LiquidGlassLabel("悬浮", onClick = onFloatingMode)
         }
 
         // ═══ 消息列表 ═══
@@ -219,108 +227,156 @@ private fun LanChatScreen(
             Modifier.weight(1f).fillMaxWidth().padding(horizontal = 14.dp),
             state = listState,
             verticalArrangement = Arrangement.spacedBy(10.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 12.dp)
+            contentPadding = PaddingValues(vertical = 12.dp)
         ) {
             if (messages.isEmpty()) {
                 item(key = "empty") { EmptyHint() }
             }
             items(messages.size, key = { i -> "${messages[i].time}_$i" }) { i ->
-                LanChatBubble(messages[i], timeFmt)
+                LanChatBubble(messages[i], timeFmt, avatarBitmap)
             }
         }
 
-        // ═══ 输入栏 ═══
-        Row(
-            Modifier
+        // ═══ 输入栏:液态玻璃 ═══
+        FrostedGlassCard(
+            modifier = Modifier
                 .fillMaxWidth()
-                .background(Color.White.copy(0.88f))
-                .navigationBarsPadding()
-                .padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(horizontal = 10.dp, vertical = 6.dp)
         ) {
-            OutlinedTextField(
-                value = inputText,
-                onValueChange = onInputChange,
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("输入消息", color = TextHint, fontSize = 14.sp) },
-                shape = RoundedCornerShape(22.dp),
-                maxLines = 4,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { onSend() })
-            )
-            // 有内容时显示发送按钮
-            AnimatedVisibility(
-                visible = inputText.isNotBlank(),
-                enter = fadeIn(),
-                exit = fadeOut()
-            ) {
-                Row {
-                    Spacer(Modifier.width(8.dp))
-                    Box(
-                        Modifier
-                            .clip(RoundedCornerShape(22.dp))
-                            .background(Color(0xFF5B8DEF))
-                            .clickable { onSend() }
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.Send,
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = inputText,
+                    onValueChange = onInputChange,
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("说点什么...", color = TextHint, fontSize = 14.sp) },
+                    shape = RoundedCornerShape(20.dp),
+                    singleLine = false,
+                    maxLines = 4
+                )
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(AccentBlue),
+                    contentAlignment = Alignment.Center
+                ) {
+                    androidx.compose.material3.IconButton(onClick = onSend) {
+                        androidx.compose.material3.Icon(
+                            Icons.Filled.Send,
                             contentDescription = "发送",
                             tint = Color.White,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
             }
         }
     }
+
+    // 在线人员弹窗
+    if (showOnlineDialog) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showOnlineDialog = false },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { showOnlineDialog = false }) {
+                    Text("关闭")
+                }
+            },
+            title = { Text("在线人员 ($onlineCount)") },
+            text = {
+                Column {
+                    Text("我: $myName", color = TextPrimary, fontSize = 14.sp)
+                    onlineNames.forEach { name ->
+                        Text(name, color = TextSecondary, fontSize = 13.sp)
+                    }
+                }
+            }
+        )
+    }
 }
 
 @Composable
-private fun LanChatBubble(msg: LanChatMessage, timeFmt: SimpleDateFormat) {
-    val isMine = msg.isMine
-    val alignment = if (isMine) Alignment.End else Alignment.Start
-    val bgColor = if (isMine) Color(0xFF5B8DEF) else Color.White
-    val textColor = if (isMine) Color.White else TextPrimary
+private fun LiquidGlassLabel(text: String, onClick: () -> Unit) {
+    FrostedGlassCard(modifier = Modifier.padding(0.dp)) {
+        Text(
+            text = text,
+            color = TextPrimary,
+            fontSize = 12.sp,
+            modifier = Modifier
+                .clip(RoundedCornerShape(12.dp))
+                .clickable { onClick() }
+                .padding(horizontal = 10.dp, vertical = 5.dp)
+        )
+    }
+}
 
-    Column(
+@Composable
+private fun LanChatBubble(
+    msg: LanChatMessage,
+    timeFmt: SimpleDateFormat,
+    avatarBitmap: Bitmap?
+) {
+    Row(
         Modifier.fillMaxWidth(),
-        horizontalAlignment = alignment
+        horizontalArrangement = if (msg.isMine) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.Top
     ) {
-        if (!isMine) {
+        if (!msg.isMine) {
+            AvatarIcon(avatarBitmap)
+            Spacer(Modifier.width(8.dp))
+        }
+        Column(
+            horizontalAlignment = if (msg.isMine) Alignment.End else Alignment.Start,
+            modifier = Modifier.weight(1f, fill = false)
+        ) {
             Text(
                 text = msg.senderName,
                 color = TextSecondary,
                 fontSize = 11.sp,
-                modifier = Modifier.padding(start = 4.dp, bottom = 2.dp)
+                modifier = Modifier.padding(bottom = 2.dp)
             )
-        }
-        Box(
-            Modifier
-                .fillMaxWidth(0.8f)
-                .clip(
-                    RoundedCornerShape(
-                        topStart = 16.dp, topEnd = 16.dp,
-                        bottomStart = if (isMine) 16.dp else 4.dp,
-                        bottomEnd = if (isMine) 4.dp else 16.dp
-                    )
+            FrostedGlassCard(modifier = Modifier.padding(0.dp)) {
+                Text(
+                    text = msg.text,
+                    color = TextPrimary,
+                    fontSize = 14.sp,
+                    modifier = Modifier
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
                 )
-                .background(bgColor)
-                .padding(horizontal = 14.dp, vertical = 10.dp)
-        ) {
-            Text(text = msg.text, color = textColor, fontSize = 14.sp, lineHeight = 20.sp)
-        }
-        Text(
-            text = timeFmt.format(Date(msg.time)),
-            color = TextSecondary.copy(alpha = 0.7f),
-            fontSize = 10.sp,
-            modifier = Modifier.padding(
-                start = if (isMine) 0.dp else 4.dp,
-                end = if (isMine) 4.dp else 0.dp,
-                top = 2.dp
+            }
+            Text(
+                text = timeFmt.format(java.util.Date(msg.time)),
+                color = TextHint,
+                fontSize = 10.sp,
+                modifier = Modifier.padding(top = 2.dp)
             )
-        )
+        }
+        if (msg.isMine) {
+            Spacer(Modifier.width(8.dp))
+            AvatarIcon(avatarBitmap)
+        }
+    }
+}
+
+@Composable
+private fun AvatarIcon(bitmap: Bitmap?) {
+    Box(
+        Modifier
+            .size(32.dp)
+            .clip(CircleShape)
+            .background(AccentBlue.copy(0.15f)),
+        contentAlignment = Alignment.Center
+    ) {
+        if (bitmap != null) {
+            androidx.compose.foundation.Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "头像",
+                modifier = Modifier.size(32.dp).clip(CircleShape)
+            )
+        } else {
+            Text("我", color = AccentBlue, fontSize = 12.sp)
+        }
     }
 }
 

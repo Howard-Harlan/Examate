@@ -19,6 +19,10 @@ import go.examate.hyp.campus.model.StudentInfo
 import go.examate.hyp.campus.model.XkCredits
 import go.examate.hyp.campus.model.XkStatus
 import go.examate.hyp.config.PrefsManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 /**
  * 校园服务底层架构:统一管理 [ChnuClient] 的创建、登录与生命周期。
@@ -49,8 +53,10 @@ class CampusRepository private constructor() {
     /** 缓存:key = "username:type:params" → CacheEntry */
     private val cache = java.util.concurrent.ConcurrentHashMap<String, CacheEntry>()
 
-    /** 默认缓存有效期:5 分钟 */
-    private val cacheTtlMs = 5 * 60 * 1000L
+    /** 低频变动数据缓存有效期:24 小时(课表/成绩/学生信息/教学评价) */
+    private val longCacheTtlMs = 24 * 60 * 60 * 1000L
+    /** 常规数据缓存有效期:5 分钟 */
+    private val shortCacheTtlMs = 5 * 60 * 1000L
 
     /** 从缓存读取(过期或不存在返回 null) */
     @Suppress("UNCHECKED_CAST")
@@ -64,8 +70,8 @@ class CampusRepository private constructor() {
     }
 
     /** 写入缓存 */
-    private fun cachePut(key: String, data: Any) {
-        cache[key] = CacheEntry(data, System.currentTimeMillis() + cacheTtlMs)
+    private fun cachePut(key: String, data: Any, ttlMs: Long = shortCacheTtlMs) {
+        cache[key] = CacheEntry(data, System.currentTimeMillis() + ttlMs)
     }
 
     /** 清空所有缓存(退出登录/手动刷新时调用) */
@@ -125,11 +131,29 @@ class CampusRepository private constructor() {
             }
         }
 
+    /**
+     * 登录成功后预取关键数据(后台执行,不阻塞 UI)。
+     * 课表、学生信息等低频数据预加载到缓存,用户进入页面时直接命中缓存。
+     */
+    fun prefetchJwxtData(prefs: PrefsManager) {
+        GlobalScope.launch(Dispatchers.IO) {
+            try {
+                val (xn, xq) = ChnuConfig.currentXnXq()
+                kotlinx.coroutines.coroutineScope {
+                    launch { getSchedule(prefs, xn, xq) }
+                    launch { getStudentInfo(prefs) }
+                }
+            } catch (e: Exception) {
+                // 预取失败静默忽略,不影响用户体验
+            }
+        }
+    }
+
     suspend fun getStudentInfo(prefs: PrefsManager, forceRefresh: Boolean = false): StudentInfo {
         val key = cacheKey("studentInfo")
         if (!forceRefresh) cacheGet<StudentInfo>(key)?.let { return it }
         val data = withJwxt(prefs) { it.getStudentInfo() }
-        cachePut(key, data)
+        cachePut(key, data, longCacheTtlMs)
         return data
     }
 
@@ -137,7 +161,7 @@ class CampusRepository private constructor() {
         val key = cacheKey("grades", xn ?: "", xq ?: "")
         if (!forceRefresh) cacheGet<List<Grade>>(key)?.let { return it }
         val data = withJwxt(prefs) { it.getGrades(xn, xq) }
-        cachePut(key, data)
+        cachePut(key, data, longCacheTtlMs)
         return data
     }
 
@@ -145,7 +169,7 @@ class CampusRepository private constructor() {
         val key = cacheKey("schedule", xn ?: "", xq ?: "")
         if (!forceRefresh) cacheGet<List<ScheduleItem>>(key)?.let { return it }
         val data = withJwxt(prefs) { it.getSchedule(xn, xq) }
-        cachePut(key, data)
+        cachePut(key, data, longCacheTtlMs)
         return data
     }
 
@@ -153,7 +177,7 @@ class CampusRepository private constructor() {
         val key = cacheKey("examSchedule", xn ?: "", xq ?: "")
         if (!forceRefresh) cacheGet<List<ExamItem>>(key)?.let { return it }
         val data = withJwxt(prefs) { it.getExamSchedule(xn, xq) }
-        cachePut(key, data)
+        cachePut(key, data, longCacheTtlMs)
         return data
     }
 
@@ -161,7 +185,7 @@ class CampusRepository private constructor() {
         val key = cacheKey("selectedCourses", xn ?: "", xq ?: "")
         if (!forceRefresh) cacheGet<List<SelectedCourse>>(key)?.let { return it }
         val data = withJwxt(prefs) { it.getSelectedCourses(xn, xq) }
-        cachePut(key, data)
+        cachePut(key, data, longCacheTtlMs)
         return data
     }
 
@@ -169,7 +193,7 @@ class CampusRepository private constructor() {
         val key = cacheKey("teachingEval")
         if (!forceRefresh) cacheGet<List<EvaluationItem>>(key)?.let { return it }
         val data = withJwxt(prefs) { it.getTeachingEvaluation() }
-        cachePut(key, data)
+        cachePut(key, data, longCacheTtlMs)
         return data
     }
 
@@ -232,8 +256,18 @@ class CampusRepository private constructor() {
     ): List<BillRecord> =
         withEcard(prefs) { it.getBillRecords(startDate, endDate, recordType) }
 
-    suspend fun topUp(prefs: PrefsManager, amount: Double, queryPassword: String): PayResult =
-        withEcard(prefs) { it.topUp(amount, queryPassword) }
+    /** 充值。bankCardNum 为充值页解析到的签约卡完整卡号(UI 选卡后传入)。 */
+    suspend fun topUp(
+        prefs: PrefsManager,
+        amount: Double,
+        queryPassword: String,
+        bankCardNum: String = ""
+    ): PayResult =
+        withEcard(prefs) { it.topUp(amount, queryPassword, bankCardNum) }
+
+    /** 获取充值可用的签约银行卡列表(供 UI 选卡步骤使用)。 */
+    suspend fun getTopupBankCards(prefs: PrefsManager): List<BankCard> =
+        withEcard(prefs) { it.getTopupBankCards() }
 
     suspend fun getPayAreas(prefs: PrefsManager, itemNum: String = "3"): List<PayArea> =
         withEcard(prefs) { it.getPayAreas(itemNum) }
@@ -289,6 +323,67 @@ class CampusRepository private constructor() {
         val c = scLogin(prefs)
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             block(c.sc)
+        }
+    }
+
+    // ════════════════════════════════════════════════
+    //  淮师心声(Hsxs) — 失物招领 & 满意度调查
+    // ════════════════════════════════════════════════
+
+    suspend fun hsxsLogin(prefs: PrefsManager): ChnuClient =
+        ensureLoggedIn(prefs).also {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                if (!it.hsxs.loggedIn) it.hsxs.login()
+            }
+        }
+    suspend fun getLostList(prefs: PrefsManager, page: Int = 1, type: String = ""): JSONObject {
+        return withHsxs(prefs) { it.getLostList(page, 20, type) }
+    }
+
+    suspend fun getLostDetail(prefs: PrefsManager, id: String): JSONObject {
+        return withHsxs(prefs) { it.getLostDetail(id) }
+    }
+
+    suspend fun publishLost(prefs: PrefsManager, body: Map<String, String>): JSONObject {
+        return withHsxs(prefs) { it.publishLost(body) }
+    }
+
+    suspend fun uploadImage(prefs: PrefsManager, fileName: String, fileBytes: ByteArray): String {
+        return withHsxs(prefs) { it.uploadImage(fileName, fileBytes) }
+    }
+
+    suspend fun getOrganiseList(prefs: PrefsManager): JSONObject {
+        return withHsxs(prefs) { it.getOrganiseList() }
+    }
+
+    suspend fun getUserInfo(prefs: PrefsManager): JSONObject {
+        return withHsxs(prefs) { it.getUserInfo() }
+    }
+
+    suspend fun getQuestionList(prefs: PrefsManager, page: Int = 1): JSONObject {
+        return withHsxs(prefs) { it.getQuestionList(page) }
+    }
+
+    suspend fun getQuestionDetail(prefs: PrefsManager, id: String): JSONObject {
+        return withHsxs(prefs) { it.getQuestionDetail(id) }
+    }
+
+    suspend fun getSurveyQuestions(prefs: PrefsManager, id: String): JSONObject {
+        return withHsxs(prefs) { it.getSurveyQuestions(id) }
+    }
+
+    suspend fun submitAnswer(prefs: PrefsManager, questionId: String, answers: JSONObject): JSONObject {
+        return withHsxs(prefs) { it.submitAnswer(questionId, answers) }
+    }
+
+    suspend fun getMyAnswer(prefs: PrefsManager, questionId: String): JSONObject {
+        return withHsxs(prefs) { it.getMyAnswer(questionId) }
+    }
+
+    private suspend fun <T> withHsxs(prefs: PrefsManager, block: (ChnuClient.HsxsClient) -> T): T {
+        val c = hsxsLogin(prefs)
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            block(c.hsxs)
         }
     }
 
