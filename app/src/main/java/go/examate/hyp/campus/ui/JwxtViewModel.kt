@@ -2,15 +2,21 @@ package go.examate.hyp.campus.ui
 
 import android.app.Application
 import android.widget.Toast
+import go.examate.hyp.util.ToastUtil
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import go.examate.hyp.campus.CampusException
 import go.examate.hyp.campus.CampusRepository
 import go.examate.hyp.campus.ChnuConfig
 import go.examate.hyp.campus.model.AvailableCourse
+import go.examate.hyp.campus.model.BuildingInfo
+import go.examate.hyp.campus.model.EmptyClassroom
 import go.examate.hyp.campus.model.EvaluationItem
+import go.examate.hyp.campus.model.EvaluationQuestion
 import go.examate.hyp.campus.model.Grade
+import go.examate.hyp.campus.model.GradeDetail
 import go.examate.hyp.campus.model.ScheduleItem
+import go.examate.hyp.campus.model.SelectOption
 import go.examate.hyp.campus.model.SelectedCourse
 import go.examate.hyp.campus.model.XkCredits
 import go.examate.hyp.campus.model.XkStatus
@@ -26,7 +32,7 @@ import java.time.LocalDate
  * JwxtScreen 的 ViewModel
  *
  * 将课表/成绩/教学评价/选课结果/选课五个 Tab 的状态从 Composable 中抽出,
- * 统一用 StateFlow 管理,Composable 通过 collectAsState() 收集。
+ * 统一用 StateFlow 管理,Composable 通过 collectAsStateWithLifecycle() 收集。
  *
  * 优势:
  * 1. 状态与 UI 解耦,便于测试
@@ -94,7 +100,8 @@ class JwxtViewModel(app: Application) : AndroidViewModel(app) {
         _uiState.update { it.copy(grade = it.grade.copy(loading = true, error = "", queried = true)) }
         viewModelScope.launch {
             try {
-                val data = repo.getGrades(prefs, g.xn, g.xq)
+                // forceRefresh=true 确保切换学期时不会读到旧缓存
+                val data = repo.getGrades(prefs, g.xn, g.xq, forceRefresh = true)
                 _uiState.update { it.copy(grade = it.grade.copy(items = data, loading = false)) }
             } catch (e: CampusException) {
                 _uiState.update { it.copy(grade = it.grade.copy(loading = false, error = e.message ?: "查询失败")) }
@@ -102,6 +109,25 @@ class JwxtViewModel(app: Application) : AndroidViewModel(app) {
                 _uiState.update { it.copy(grade = it.grade.copy(loading = false, error = "网络异常: ${e.message}")) }
             }
         }
+    }
+
+    /** 查询成绩明细(平时分/期末分/总分) — 需要 jxb_id 不是 kch */
+    fun loadGradeDetail(grade: Grade) {
+        if (grade.jxbId.isBlank()) return
+        val g = _uiState.value.grade
+        _uiState.update { it.copy(grade = it.grade.copy(detailLoading = true, detailError = "", detailGrade = grade)) }
+        viewModelScope.launch {
+            try {
+                val detail = repo.getGradeDetail(prefs, grade.jxbId, g.xn, g.xq)
+                _uiState.update { it.copy(grade = it.grade.copy(detail = detail, detailLoading = false)) }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(grade = it.grade.copy(detailLoading = false, detailError = e.message ?: "查询失败")) }
+            }
+        }
+    }
+
+    fun clearGradeDetail() {
+        _uiState.update { it.copy(grade = it.grade.copy(detail = null, detailError = "")) }
     }
 
     // ════════════════════════════════════════
@@ -125,6 +151,71 @@ class JwxtViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** 加载某门课程的评价题目 */
+    fun loadEvaluationQuestions(wjbm: String) {
+        _uiState.update { it.copy(evaluation = it.evaluation.copy(questionLoading = true, questionError = "")) }
+        viewModelScope.launch {
+            try {
+                val questions = repo.getEvaluationQuestions(prefs, wjbm)
+                _uiState.update { it.copy(evaluation = it.evaluation.copy(
+                    questions = questions, questionLoading = false,
+                    selectedEvalWjbm = wjbm, evalScores = questions.associate { it.id to it.selectedScore }
+                )) }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(evaluation = it.evaluation.copy(questionLoading = false, questionError = e.message ?: "加载失败")) }
+            }
+        }
+    }
+
+    /** 更新评价分数 */
+    fun setEvalScore(questionId: String, score: Double) {
+        val scores = _uiState.value.evaluation.evalScores.toMutableMap()
+        scores[questionId] = score
+        _uiState.update { it.copy(evaluation = it.evaluation.copy(evalScores = scores)) }
+    }
+
+    /** 提交教学评价 */
+    fun submitEvaluation() {
+        val e = _uiState.value.evaluation
+        if (e.submitting) return
+        val wjbm = e.selectedEvalWjbm
+        if (wjbm.isEmpty()) return
+        val scores = e.evalScores
+        val xn = _uiState.value.grade.xn
+        val xq = _uiState.value.grade.xq
+        _uiState.update { it.copy(evaluation = it.evaluation.copy(submitting = true, submitError = "")) }
+        viewModelScope.launch {
+            try {
+                val msg = repo.submitEvaluation(prefs, wjbm, xn, xq, scores)
+                _uiState.update { it.copy(evaluation = it.evaluation.copy(
+                    submitting = false, submitResult = msg,
+                    questions = emptyList(), selectedEvalWjbm = "", evalScores = emptyMap()
+                )) }
+                toast(msg)
+                // 刷新评价列表
+                loadEvaluations(forceRefresh = true)
+            } catch (e: Exception) {
+                _uiState.update { it.copy(evaluation = it.evaluation.copy(submitting = false, submitError = e.message ?: "提交失败")) }
+            }
+        }
+    }
+
+    fun clearEvalQuestions() {
+        _uiState.update { it.copy(evaluation = it.evaluation.copy(
+            questions = emptyList(), selectedEvalWjbm = "", evalScores = emptyMap(),
+            submitResult = "", submitError = "", questionError = ""
+        )) }
+    }
+
+    /** 显示已评价课程的详情弹窗 */
+    fun showEvalDetail(item: EvaluationItem) {
+        _uiState.update { it.copy(evaluation = it.evaluation.copy(detailItem = item)) }
+    }
+
+    fun clearEvalDetail() {
+        _uiState.update { it.copy(evaluation = it.evaluation.copy(detailItem = null)) }
+    }
+
     // ════════════════════════════════════════
     //  选课结果
     // ════════════════════════════════════════
@@ -145,7 +236,8 @@ class JwxtViewModel(app: Application) : AndroidViewModel(app) {
         _uiState.update { it.copy(selectedCourse = it.selectedCourse.copy(loading = true, error = "", queried = true)) }
         viewModelScope.launch {
             try {
-                val data = repo.getSelectedCourses(prefs, s.xn, s.xq)
+                // 使用课表确认页接口(任何时间可用,不受选课时间段限制)
+                val data = repo.getScheduleConfirmation(prefs, s.xn, s.xq)
                 _uiState.update { it.copy(selectedCourse = it.selectedCourse.copy(items = data, loading = false)) }
             } catch (e: CampusException) {
                 _uiState.update { it.copy(selectedCourse = it.selectedCourse.copy(loading = false, error = e.message ?: "查询失败")) }
@@ -239,6 +331,73 @@ class JwxtViewModel(app: Application) : AndroidViewModel(app) {
         loadXkInfo()
     }
 
+    // ════════════════════════════════════════
+    //  空闲教室
+    // ════════════════════════════════════════
+
+    fun loadBuildings() {
+        val cr = _uiState.value.classroom
+        if (cr.pageDataLoaded || cr.buildingsLoading) return
+        _uiState.update { it.copy(classroom = it.classroom.copy(buildingsLoading = true)) }
+        viewModelScope.launch {
+            try {
+                val pd = repo.getClassroomPageData(prefs)
+                _uiState.update { it.copy(classroom = it.classroom.copy(
+                    campusOptions = pd.campusOptions, buildingOptions = pd.buildingOptions,
+                    roomTypeOptions = pd.roomTypeOptions,
+                    buildingsLoading = false, pageDataLoaded = true
+                )) }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(classroom = it.classroom.copy(buildingsLoading = false)) }
+            }
+        }
+    }
+
+    fun setClassroomCampus(campusId: String) {
+        _uiState.update { it.copy(classroom = it.classroom.copy(selectedCampusId = campusId)) }
+    }
+
+    fun setClassroomRoomType(roomTypeId: String) {
+        _uiState.update { it.copy(classroom = it.classroom.copy(selectedRoomType = roomTypeId)) }
+    }
+
+    fun setClassroomBuilding(buildingId: String) {
+        _uiState.update { it.copy(classroom = it.classroom.copy(selectedBuildingId = buildingId)) }
+    }
+
+    fun setClassroomStartWeek(w: String) {
+        _uiState.update { it.copy(classroom = it.classroom.copy(startWeek = w)) }
+    }
+
+    fun setClassroomEndWeek(w: String) {
+        _uiState.update { it.copy(classroom = it.classroom.copy(endWeek = w)) }
+    }
+
+    fun setClassroomWeekDays(days: String) {
+        _uiState.update { it.copy(classroom = it.classroom.copy(weekDays = days)) }
+    }
+
+    fun setClassroomSectionRange(range: String) {
+        _uiState.update { it.copy(classroom = it.classroom.copy(sectionRange = range)) }
+    }
+
+    fun queryEmptyClassrooms() {
+        val cr = _uiState.value.classroom
+        if (cr.loading) return
+        _uiState.update { it.copy(classroom = it.classroom.copy(loading = true, error = "")) }
+        viewModelScope.launch {
+            try {
+                val data = repo.getEmptyClassrooms(prefs, cr.selectedCampusId, cr.selectedRoomType, cr.selectedBuildingId,
+                    cr.startWeek, cr.endWeek, cr.weekDays, cr.sectionRange)
+                _uiState.update { it.copy(classroom = it.classroom.copy(items = data, loading = false, loaded = true)) }
+            } catch (e: CampusException) {
+                _uiState.update { it.copy(classroom = it.classroom.copy(loading = false, error = e.message ?: "查询失败")) }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(classroom = it.classroom.copy(loading = false, error = "网络异常: ${e.message}")) }
+            }
+        }
+    }
+
     private suspend fun refreshXkData(xn: String, xq: String) {
         val credits = repo.getXkCredits(prefs, xn, xq)
         val available = repo.getAvailableCourses(prefs, xn, xq)
@@ -249,7 +408,7 @@ class JwxtViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun toast(msg: String) {
-        Toast.makeText(getApplication(), msg, Toast.LENGTH_SHORT).show()
+        ToastUtil.show(getApplication(), msg)
     }
 }
 
@@ -262,7 +421,8 @@ data class JwxtUiState(
     val grade: GradeState = GradeState(),
     val evaluation: EvaluationState = EvaluationState(),
     val selectedCourse: SelectedCourseState = SelectedCourseState(),
-    val xk: XkState = XkState()
+    val xk: XkState = XkState(),
+    val classroom: ClassroomState = ClassroomState()
 )
 
 data class ScheduleState(
@@ -279,14 +439,33 @@ data class GradeState(
     val loading: Boolean = false,
     val error: String = "",
     val items: List<Grade> = emptyList(),
-    val queried: Boolean = false
+    val queried: Boolean = false,
+    /** 成绩明细弹窗 */
+    val detail: GradeDetail? = null,
+    val detailLoading: Boolean = false,
+    val detailError: String = "",
+    /** 弹窗对应的课程(用于显示课程名/学分) */
+    val detailGrade: Grade? = null
 )
 
 data class EvaluationState(
     val loading: Boolean = false,
     val error: String = "",
     val items: List<EvaluationItem> = emptyList(),
-    val loaded: Boolean = false
+    val loaded: Boolean = false,
+    /** 评价题目(待评价) */
+    val questions: List<EvaluationQuestion> = emptyList(),
+    val questionLoading: Boolean = false,
+    val questionError: String = "",
+    /** 已评价详情弹窗 */
+    val detailItem: EvaluationItem? = null,
+    /** 评价分数 Map<指标ID, 分数> */
+    val evalScores: Map<String, Double> = emptyMap(),
+    val selectedEvalWjbm: String = "",
+    /** 提交中 */
+    val submitting: Boolean = false,
+    val submitError: String = "",
+    val submitResult: String = ""
 )
 
 data class SelectedCourseState(
@@ -307,4 +486,26 @@ data class XkState(
     val available: List<AvailableCourse> = emptyList(),
     val chosen: List<AvailableCourse> = emptyList(),
     val operatingKey: String = ""
+)
+
+data class ClassroomState(
+    val items: List<EmptyClassroom> = emptyList(),
+    val loading: Boolean = false,
+    val loaded: Boolean = false,
+    val error: String = "",
+    val buildingsLoading: Boolean = false,
+    val pageDataLoaded: Boolean = false,
+    /** 动态解析的选项列表 */
+    val campusOptions: List<SelectOption> = emptyList(),
+    val buildingOptions: List<SelectOption> = emptyList(),
+    val roomTypeOptions: List<SelectOption> = emptyList(),
+    /** 当前选中值 */
+    val selectedCampusId: String = "1",
+    val selectedBuildingId: String = "",
+    val selectedRoomType: String = "",
+    /** 周次/星期/节次筛选 (从网页 kxcdlb.js 对齐) */
+    val startWeek: String = "",
+    val endWeek: String = "",
+    val weekDays: String = "", // 如 "1,3,5" 表示周一三五
+    val sectionRange: String = "" // 如 "1-4节"
 )

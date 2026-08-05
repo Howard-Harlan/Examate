@@ -11,22 +11,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -34,24 +29,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import go.examate.hyp.config.MyConfig
 import go.examate.hyp.config.PrefsManager
-import go.examate.hyp.entity.ModelProvider
-import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.FrostedGlassCard
-import go.examate.hyp.ui.components.LiquidGlassButton
-import go.examate.hyp.ui.components.LiquidGlassToggle
 import go.examate.hyp.ui.theme.BgPrimary
-import go.examate.hyp.ui.theme.Danger
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.Divider as DividerColor
 import go.examate.hyp.ui.theme.TextHint
@@ -60,23 +48,12 @@ import go.examate.hyp.ui.theme.TextSecondary
 
 @Composable
 fun SettingsScreen(
-    shizukuGranted: Boolean,
-    forbidCapture: Boolean,
-    edgeAttach: Boolean,
-    transparentFloat: Boolean,
-    multiAiVerify: Boolean,
-    providerCount: Int,
     onUserSettingsClick: () -> Unit,
-    onShizukuClick: () -> Unit,
     onApiConfigClick: () -> Unit,
     onAgentSettingsClick: () -> Unit,
     onAboutClick: () -> Unit,
     onSearchSettingsClick: () -> Unit,
-    onBatteryOptClick: () -> Unit,
-    onForbidCaptureChanged: (Boolean) -> Unit,
-    onEdgeAttachChanged: (Boolean) -> Unit,
-    onTransparentFloatChanged: (Boolean) -> Unit,
-    onMultiAiVerifyChanged: (Boolean) -> Unit,
+    onSystemSettingsClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -113,9 +90,6 @@ fun SettingsScreen(
         UserProfileBar(profileKey = profileKey, onClick = onUserSettingsClick)
         Spacer(Modifier.height(24.dp))
 
-        // ═══ AI 设置 ═══
-        SectionLabel("AI 设置")
-        Spacer(Modifier.height(12.dp))
         // Agent 设置:Skills + 记忆 + API 厂商设置
         FrostedGlassCard(
             modifier = Modifier.fillMaxWidth().clickable { onAgentSettingsClick() }
@@ -155,52 +129,25 @@ fun SettingsScreen(
                 Text("›", color = TextHint, fontSize = 20.sp)
             }
         }
-        Spacer(Modifier.height(24.dp))
-
-        // ═══ 系统功能设置 ═══
-        SectionLabel("系统功能设置")
         Spacer(Modifier.height(12.dp))
-
-        // Shizuku 状态卡片
-        FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(18.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+        FrostedGlassCard(
+            modifier = Modifier.fillMaxWidth().clickable { onSystemSettingsClick() }
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("系统设置", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(2.dp))
                     Text(
-                        "Shizuku 状态",
-                        color = TextPrimary,
-                        fontSize = 14.sp
-                    )
-                    Spacer(Modifier.weight(1f))
-                    Text(
-                        text = if (shizukuGranted) "已授权" else "未授权",
-                        color = if (shizukuGranted) Color(0xFF34C759) else Danger,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
+                        "藏匿模式、首页设置、电池优化、清除缓存",
+                        color = TextHint, fontSize = 11.sp, lineHeight = 15.sp
                     )
                 }
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "藏匿模式依赖 Shizuku,授权后可检测屏幕 FLAG_SECURE 窗口,实现防截屏保护。",
-                    color = TextHint,
-                    fontSize = 11.sp,
-                    lineHeight = 16.sp
-                )
+                Text("›", color = TextHint, fontSize = 20.sp)
             }
         }
-        Spacer(Modifier.height(12.dp))
-        LiquidGlassButton(
-            text = if (shizukuGranted) "启动藏匿模式" else "授权并启动藏匿模式",
-            onClick = onShizukuClick,
-            style = ButtonStyle.Outline,
-            height = 44.dp
-        )
-        Spacer(Modifier.height(12.dp))
-        LiquidGlassButton(
-            text = "电池优化设置",
-            onClick = onBatteryOptClick,
-            style = ButtonStyle.Outline,
-            height = 44.dp
-        )
         Spacer(Modifier.height(12.dp))
 
         // ═══ 关于 ═══
@@ -215,7 +162,7 @@ fun SettingsScreen(
                     Text("关于", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        "版本 ${go.examate.hyp.BuildConfig.VERSION_NAME} · 检查更新 · 开源技术",
+                        "版本 ${go.examate.hyp.BuildConfig.VERSION_NAME} · 检查更新",
                         color = TextHint, fontSize = 11.sp, lineHeight = 15.sp
                     )
                 }
@@ -315,235 +262,3 @@ private fun UserProfileBar(profileKey: String, onClick: () -> Unit) {
 
 /** 用户信息栏单行展示数据 */
 private data class DisplayEntry(val text: String, val isHint: Boolean)
-
-@Composable
-private fun SectionLabel(text: String) {
-    Text(
-        text = text,
-        color = TextPrimary,
-        fontSize = 15.sp,
-        fontWeight = FontWeight.Medium,
-        letterSpacing = 0.3.sp,
-        modifier = Modifier.padding(start = 4.dp)
-    )
-}
-
-@Composable
-private fun ToggleRow(
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-    enabled: Boolean = true
-) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 18.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                title,
-                color = if (enabled) TextPrimary else TextHint,
-                fontSize = 14.sp
-            )
-            Text(
-                subtitle,
-                color = TextHint,
-                fontSize = 11.sp,
-                modifier = Modifier.padding(top = 1.dp)
-            )
-        }
-        Spacer(Modifier.width(12.dp))
-        LiquidGlassToggle(
-            selected = checked,
-            onSelect = if (enabled) onCheckedChange else ({})
-        )
-    }
-}
-
-/**
- * 多 AI 验证弹窗:上方开关,下方可滚动 provider 列表,点击勾选。
- */
-@Composable
-private fun MultiAiVerifyDialog(
-    providers: List<ModelProvider>,
-    enabled: Boolean,
-    selectedIndices: Set<Int>,
-    onEnabledChange: (Boolean) -> Unit,
-    onSelectedChange: (Set<Int>) -> Unit,
-    onDismiss: () -> Unit
-) {
-    // 本地状态:选中的索引(空集合表示"全选")
-    var selected by remember { mutableStateOf(selectedIndices) }
-    var switchOn by remember { mutableStateOf(enabled) }
-
-    Dialog(onDismissRequest = onDismiss) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(20.dp))
-                .background(Color.White)
-                .padding(vertical = 8.dp)
-        ) {
-            // 标题
-            Text(
-                "多 AI 验证",
-                color = TextHint,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
-            )
-
-            // 上方开关
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        if (switchOn) "已开启" else "已关闭",
-                        color = TextPrimary,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Text(
-                        "同时请求多个 AI,选择题投票,问答题取首个",
-                        color = TextHint,
-                        fontSize = 11.sp,
-                        modifier = Modifier.padding(top = 1.dp)
-                    )
-                }
-                LiquidGlassToggle(
-                    selected = switchOn,
-                    onSelect = {
-                        switchOn = it
-                        onEnabledChange(it)
-                    }
-                )
-            }
-
-            // 分隔线
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(0.5.dp)
-                    .background(TextHint.copy(alpha = 0.2f))
-            )
-
-            // 列表标题
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "选择参与的 AI",
-                    color = TextPrimary,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.weight(1f)
-                )
-                val activeCount = if (selected.isEmpty()) providers.size else selected.size
-                Text(
-                    "$activeCount / ${providers.size}",
-                    color = TextHint,
-                    fontSize = 12.sp
-                )
-            }
-
-            // 可滚动 provider 列表
-            LazyColumn(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 320.dp)
-            ) {
-                itemsIndexed(providers) { index, provider ->
-                    val isSelected = selected.isEmpty() || selected.contains(index)
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                // 空集合=全选,点击单个时从空集合转为显式选择
-                                val current = if (selected.isEmpty()) {
-                                    providers.indices.toMutableSet()
-                                } else {
-                                    selected.toMutableSet()
-                                }
-                                if (current.contains(index)) current.remove(index)
-                                else current.add(index)
-                                // 如果变成全选,清空为空集合(表示全选)
-                                selected = if (current.size == providers.size) emptySet() else current
-                                onSelectedChange(selected)
-                            }
-                            .padding(horizontal = 20.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // 勾选圆点
-                        Box(
-                            Modifier
-                                .size(20.dp)
-                                .clip(CircleShape)
-                                .background(if (isSelected) Primary else Color(0xFFE5E7EB)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (isSelected) {
-                                Text("✓", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                            }
-                        }
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                provider.displayName.ifEmpty { "未命名" },
-                                color = if (isSelected) TextPrimary else TextHint,
-                                fontSize = 14.sp
-                            )
-                            Text(
-                                "${provider.modelId.ifEmpty { "未知模型" }} · ${
-                                    when (provider.endpointType) {
-                                        "responses" -> "Responses"
-                                        else -> "OpenAI"
-                                    }
-                                }",
-                                color = TextHint,
-                                fontSize = 11.sp,
-                                modifier = Modifier.padding(top = 1.dp)
-                            )
-                        }
-                    }
-                }
-            }
-
-            // 底部按钮
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(0.5.dp)
-                    .background(TextHint.copy(alpha = 0.2f))
-            )
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                LiquidGlassButton(
-                    text = "关闭", onClick = onDismiss,
-                    style = ButtonStyle.Outline, height = 42.dp,
-                    modifier = Modifier.weight(1f)
-                )
-                LiquidGlassButton(
-                    text = "确定", onClick = {
-                        onSelectedChange(selected)
-                        onDismiss()
-                    },
-                    style = ButtonStyle.White, height = 42.dp,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        }
-    }
-}

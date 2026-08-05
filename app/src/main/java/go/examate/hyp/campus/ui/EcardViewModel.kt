@@ -545,7 +545,7 @@ data class BalanceState(
 )
 
 data class BillState(
-    val startDate: String = LocalDate.now().minusDays(30).toString(),
+    val startDate: String = LocalDate.now().minusDays(7).toString(),
     val endDate: String = LocalDate.now().toString(),
     val recordType: String = "",
     val showTypePicker: Boolean = false,

@@ -43,6 +43,8 @@ class HttpUtils {
         data class Token(val text: String) : SseEvent()           // 正常输出
         data class ThinkToken(val text: String) : SseEvent()      // 思考过程
         data class Error(val message: String) : SseEvent()        // 错误
+        /** 流式中跨分片累积完成的原生工具调用(在 Done 之前发出一次) */
+        data class ToolCalls(val calls: List<go.examate.hyp.agent.NativeToolCall>) : SseEvent()
         object Done : SseEvent()                                  // 流式结束
     }
 
@@ -71,6 +73,25 @@ class HttpUtils {
         }
 
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+
+        /**
+         * 通用 HTTP 请求(供自定义声明式工具使用)。同步执行,返回响应体文本;失败返回 null。
+         * GET/DELETE 不带 body;其余方法以 JSON body 发送。
+         */
+        fun customRequest(method: String, url: String, headers: Map<String, String>, body: String?): String? {
+            return try {
+                val builder = Request.Builder().url(url)
+                headers.forEach { (k, v) -> builder.header(k, v) }
+                when (method.uppercase()) {
+                    "GET", "DELETE", "HEAD" -> builder.method(method.uppercase(), null)
+                    else -> builder.method(method.uppercase(), (body ?: "").toRequestBody(JSON_MEDIA_TYPE))
+                }
+                httpClient.newCall(builder.build()).execute().use { resp -> resp.body?.string() }
+            } catch (e: Exception) {
+                Log.e(TAG, "customRequest failed: ${e.message}")
+                null
+            }
+        }
 
         // ════════════════════════════════════════════════════
         //  请求体构建(chat / responses / anthropic 三套格式)
@@ -603,22 +624,48 @@ class HttpUtils {
         fun sendImageRequest(url: String, modelName: String, imageBytes: ByteArray?, apiKey: String?, systemPrompt: String, endpointType: String): String? {
             if (imageBytes == null || imageBytes.isEmpty()) return null
             return try {
-                sendImageRequestSync(url, modelName, imageBytes, apiKey, systemPrompt, endpointType)
+                // 单图 OCR(悬浮搜题):固定提示词
+                sendImagesSync(url, modelName, listOf(imageBytes), apiKey, systemPrompt, "请识别图片中的题目并给出答案", endpointType)
             } catch (e: Exception) {
                 Log.e(TAG, "sendImageRequest failed", e)
                 null
             }
         }
 
-        /** 同步版本,抛异常 */
+        /** 多图 + 用户文本 的 vision 请求(聊天多模态);images 至少一张 */
         @JvmStatic
-        fun sendImageRequestSync(url: String, modelName: String, imageBytes: ByteArray, apiKey: String?, systemPrompt: String, endpointType: String): String {
-            val base64Image = Base64.encodeToString(imageBytes, Base64.NO_WRAP)
-            val dataUri = "data:image/png;base64,$base64Image"
+        suspend fun sendImagesRequestResult(
+            url: String, modelName: String, images: List<ByteArray>,
+            apiKey: String?, systemPrompt: String, userText: String, endpointType: String
+        ): ApiResult<String> = withContext(Dispatchers.IO) {
+            if (images.isEmpty()) return@withContext ApiResult.OtherError("图片数据为空")
+            try {
+                ApiResult.Success(sendImagesSync(url, modelName, images, apiKey, systemPrompt, userText, endpointType))
+            } catch (e: Exception) {
+                ApiResult.fromException(e)
+            }
+        }
+
+        /** 嗅探图片 MIME(jpeg/png/webp),供 data URI 与 anthropic media_type 使用 */
+        private fun sniffImageMime(b: ByteArray): String = when {
+            b.size >= 2 && (b[0].toInt() and 0xFF) == 0xFF && (b[1].toInt() and 0xFF) == 0xD8 -> "image/jpeg"
+            b.size >= 4 && (b[0].toInt() and 0xFF) == 0x89 && b[1].toInt() == 0x50 -> "image/png"
+            b.size >= 12 && (b[8].toInt() and 0xFF) == 0x57 && (b[9].toInt() and 0xFF) == 0x45 -> "image/webp"
+            else -> "image/png"
+        }
+
+        /** 同步:多图 vision 请求,userText 为空时回退到 OCR 提示词 */
+        private fun sendImagesSync(
+            url: String, modelName: String, images: List<ByteArray>,
+            apiKey: String?, systemPrompt: String, userText: String, endpointType: String
+        ): String {
+            val prompt = userText.ifBlank { "请识别图片中的题目并给出答案" }
+            val dataUris = images.map { "data:${sniffImageMime(it)};base64,${Base64.encodeToString(it, Base64.NO_WRAP)}" }
+            val b64WithMime = images.map { Base64.encodeToString(it, Base64.NO_WRAP) to sniffImageMime(it) }
             val body = when (endpointType) {
-                "responses" -> buildImageRequestBodyResponses(modelName, dataUri, systemPrompt)
-                "anthropic" -> buildImageRequestBodyAnthropic(modelName, base64Image, systemPrompt)
-                else -> buildImageRequestBodyChat(modelName, dataUri, systemPrompt)
+                "responses" -> buildImagesBodyResponses(modelName, dataUris, systemPrompt, prompt)
+                "anthropic" -> buildImagesBodyAnthropic(modelName, b64WithMime, systemPrompt, prompt)
+                else -> buildImagesBodyChat(modelName, dataUris, systemPrompt, prompt)
             }
             val request = Request.Builder()
                 .url(url)
@@ -636,73 +683,47 @@ class HttpUtils {
             }
         }
 
-        /** suspend 版本:返回 ApiResult */
-        @JvmStatic
-        suspend fun sendImageRequestResult(
-            url: String, modelName: String, imageBytes: ByteArray?,
-            apiKey: String?, systemPrompt: String, endpointType: String
-        ): ApiResult<String> = withContext(Dispatchers.IO) {
-            if (imageBytes == null || imageBytes.isEmpty()) {
-                return@withContext ApiResult.OtherError("图片数据为空")
-            }
-            try {
-                ApiResult.Success(sendImageRequestSync(url, modelName, imageBytes, apiKey, systemPrompt, endpointType))
-            } catch (e: Exception) {
-                ApiResult.fromException(e)
-            }
-        }
-
-        /** 构建 vision 请求体(chat/completions 格式:image_url) */
-        private fun buildImageRequestBodyChat(modelName: String, dataUri: String, systemPrompt: String): String {
-            val json = JSONObject()
-            json.put("model", modelName)
-            json.put("stream", false)
+        /** chat/completions 格式:userContent = text + 多个 image_url */
+        private fun buildImagesBodyChat(modelName: String, dataUris: List<String>, systemPrompt: String, userText: String): String {
+            val json = JSONObject().put("model", modelName).put("stream", false)
             val messages = JSONArray()
             messages.put(JSONObject().put("role", "system").put("content", systemPrompt))
             val userContent = JSONArray()
-            userContent.put(JSONObject().put("type", "text").put("text", "请识别图片中的题目并给出答案"))
-            userContent.put(JSONObject()
-                    .put("type", "image_url")
-                    .put("image_url", JSONObject().put("url", dataUri)))
+            userContent.put(JSONObject().put("type", "text").put("text", userText))
+            dataUris.forEach { uri ->
+                userContent.put(JSONObject().put("type", "image_url").put("image_url", JSONObject().put("url", uri)))
+            }
             messages.put(JSONObject().put("role", "user").put("content", userContent))
-            json.put("messages", messages)
-            return json.toString()
+            return json.put("messages", messages).toString()
         }
 
-        /** 构建 vision 请求体(/v1/responses 格式:input 数组带 image_url) */
-        private fun buildImageRequestBodyResponses(modelName: String, dataUri: String, systemPrompt: String): String {
-            val json = JSONObject()
-            json.put("model", modelName)
+        /** /v1/responses 格式:input_text + 多个 input_image */
+        private fun buildImagesBodyResponses(modelName: String, dataUris: List<String>, systemPrompt: String, userText: String): String {
+            val json = JSONObject().put("model", modelName)
             val input = JSONArray()
             input.put(JSONObject().put("role", "system").put("content", systemPrompt))
             val userContent = JSONArray()
-            userContent.put(JSONObject().put("type", "input_text").put("text", "请识别图片中的题目并给出答案"))
-            userContent.put(JSONObject()
-                    .put("type", "input_image")
-                    .put("image_url", dataUri))
+            userContent.put(JSONObject().put("type", "input_text").put("text", userText))
+            dataUris.forEach { uri ->
+                userContent.put(JSONObject().put("type", "input_image").put("image_url", uri))
+            }
             input.put(JSONObject().put("role", "user").put("content", userContent))
-            json.put("input", input)
-            return json.toString()
+            return json.put("input", input).toString()
         }
 
-        /** 构建 vision 请求体(Anthropic /v1/messages 格式:image content block) */
-        private fun buildImageRequestBodyAnthropic(modelName: String, base64Data: String, systemPrompt: String): String {
-            val json = JSONObject()
-            json.put("model", modelName)
-            json.put("max_tokens", 4096)
-            json.put("system", systemPrompt)
+        /** Anthropic /v1/messages 格式:text + 多个 image block(base64 + media_type) */
+        private fun buildImagesBodyAnthropic(modelName: String, images: List<Pair<String, String>>, systemPrompt: String, userText: String): String {
+            val json = JSONObject().put("model", modelName).put("max_tokens", 4096).put("system", systemPrompt)
             val messages = JSONArray()
             val userContent = JSONArray()
-            userContent.put(JSONObject().put("type", "text").put("text", "请识别图片中的题目并给出答案"))
-            userContent.put(JSONObject()
+            userContent.put(JSONObject().put("type", "text").put("text", userText))
+            images.forEach { (b64, mime) ->
+                userContent.put(JSONObject()
                     .put("type", "image")
-                    .put("source", JSONObject()
-                            .put("type", "base64")
-                            .put("media_type", "image/png")
-                            .put("data", base64Data)))
+                    .put("source", JSONObject().put("type", "base64").put("media_type", mime).put("data", b64)))
+            }
             messages.put(JSONObject().put("role", "user").put("content", userContent))
-            json.put("messages", messages)
-            return json.toString()
+            return json.put("messages", messages).toString()
         }
 
         // ════════════════════════════════════════════════════
@@ -928,6 +949,186 @@ class HttpUtils {
             }
         }
 
+        /**
+         * 带 tools 的流式请求:实时 emit 文本 Token,并跨分片累积 tool_calls。
+         * 若本轮无工具调用则文本按 API 真速逐字流出;若有工具调用,在 Done 前 emit 一次 ToolCalls。
+         */
+        @JvmStatic
+        fun sendChatWithToolsStreamFlow(
+            url: String, modelName: String,
+            messages: List<go.examate.hyp.agent.FuncMessage>,
+            apiKey: String?, systemPrompt: String,
+            thinking: Boolean?, endpointType: String,
+            tools: String?
+        ): Flow<SseEvent> {
+            val bodyStr = when (endpointType) {
+                "anthropic" -> JSONObject(buildAnthropicToolsBody(modelName, messages, systemPrompt, thinking, tools))
+                    .put("stream", true).toString()
+                "responses" -> JSONObject(buildResponsesHistoryBody(modelName, messages.map {
+                    when (it) {
+                        is go.examate.hyp.agent.FuncMessage.Text -> it.role to it.content
+                        is go.examate.hyp.agent.FuncMessage.AssistantToolCall -> "assistant" to it.content
+                        is go.examate.hyp.agent.FuncMessage.ToolResult -> "user" to it.content
+                    }
+                }, systemPrompt, thinking)).put("stream", true).toString()
+                else -> JSONObject(buildChatToolsBody(modelName, messages, systemPrompt, thinking, tools))
+                    .put("stream", true).toString()
+            }
+            val request = Request.Builder()
+                .url(url)
+                .post(bodyStr.toRequestBody(JSON_MEDIA_TYPE))
+                .applyAuth(endpointType, apiKey)
+                .build()
+            return executeToolsSseStream(request, endpointType)
+        }
+
+        /**
+         * 带工具的 SSE 读取循环:文本 Token 实时 emit,tool_calls 按 index 跨分片累积,
+         * 流结束前若有工具调用则 emit 一次 ToolCalls。
+         */
+        private fun executeToolsSseStream(request: Request, endpointType: String): Flow<SseEvent> = flow {
+            val accId = HashMap<Int, String>()
+            val accName = HashMap<Int, String>()
+            val accArgs = HashMap<Int, StringBuilder>()
+            var errored = false
+            try {
+                streamClient.newCall(request).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        resp.body?.byteStream()?.bufferedReader()?.use { reader ->
+                            var line = reader.readLine()
+                            while (line != null) {
+                                if (line.length > 6 && line.startsWith("data:")) {
+                                    val data = line.substring(6).trim()
+                                    if (data == "[DONE]") break
+                                    val ev = parseToolsSseLine(data, endpointType, accId, accName, accArgs)
+                                    if (ev != null) {
+                                        if (ev is SseEvent.Error) errored = true
+                                        emit(ev)
+                                    }
+                                }
+                                line = reader.readLine()
+                            }
+                        }
+                    } else {
+                        val errBody = resp.body?.string()
+                        errored = true
+                        emit(SseEvent.Error("HTTP error ${resp.code}: $errBody"))
+                    }
+                }
+            } catch (e: UnknownHostException) {
+                errored = true; emit(SseEvent.Error("无法解析服务器域名，请检查网络设置")); Log.e(TAG, "tools SSE UnknownHost", e)
+            } catch (e: InterruptedIOException) {
+                errored = true; emit(SseEvent.Error("请求被中断，这条消息已停止")); Log.e(TAG, "tools SSE InterruptedIO", e)
+            } catch (e: SocketException) {
+                errored = true; emit(SseEvent.Error("访问连接失败，请检查网络设置")); Log.e(TAG, "tools SSE SocketException", e)
+            } catch (e: IOException) {
+                // 流中途断连(ProtocolException/StreamReset/SSL 等均为 IOException):必须置 errored,
+                // 否则 finally 会用截断一半的 accArgs 拼出 ToolCalls,导致工具带空参静默执行
+                errored = true; emit(SseEvent.Error("网络连接中断，请重试")); Log.e(TAG, "tools SSE IOException", e)
+            } catch (e: JSONException) {
+                errored = true; Log.e(TAG, "tools SSE JSONException", e)
+            } finally {
+                if (!errored && accName.isNotEmpty()) {
+                    val calls = accName.keys.sorted().mapNotNull { idx ->
+                        val name = accName[idx]
+                        if (name.isNullOrEmpty()) null
+                        else go.examate.hyp.agent.NativeToolCall(
+                            accId[idx] ?: "call_$idx",
+                            name,
+                            accArgs[idx]?.toString()?.ifEmpty { "{}" } ?: "{}"
+                        )
+                    }
+                    if (calls.isNotEmpty()) emit(SseEvent.ToolCalls(calls))
+                }
+                emit(SseEvent.Done)
+            }
+        }.flowOn(Dispatchers.IO)
+
+        /**
+         * 解析带工具的 SSE 单行:返回需立即 emit 的事件(Token/ThinkToken/Error),
+         * 并就地累积 tool_calls 分片到 acc* 映射(无需立即 emit 时返回 null)。
+         */
+        private fun parseToolsSseLine(
+            data: String, endpointType: String,
+            accId: HashMap<Int, String>, accName: HashMap<Int, String>, accArgs: HashMap<Int, StringBuilder>
+        ): SseEvent? {
+            return try {
+                val json = JSONObject(data)
+                if (endpointType == "anthropic") {
+                    when (json.optString("type")) {
+                        "content_block_start" -> {
+                            val idx = json.optInt("index", 0)
+                            val block = json.optJSONObject("content_block")
+                            if (block != null && block.optString("type") == "tool_use") {
+                                accId[idx] = block.optString("id", "call_$idx")
+                                accName[idx] = block.optString("name", "")
+                                accArgs.getOrPut(idx) { StringBuilder() }
+                            }
+                            null
+                        }
+                        "content_block_delta" -> {
+                            val idx = json.optInt("index", 0)
+                            val delta = json.optJSONObject("delta") ?: return null
+                            when (delta.optString("type")) {
+                                "text_delta" -> SseEvent.Token(delta.optString("text"))
+                                "thinking_delta" -> SseEvent.ThinkToken(delta.optString("thinking"))
+                                "input_json_delta" -> {
+                                    accArgs.getOrPut(idx) { StringBuilder() }.append(delta.optString("partial_json"))
+                                    null
+                                }
+                                else -> null
+                            }
+                        }
+                        "error" -> {
+                            val error = json.optJSONObject("error")
+                            SseEvent.Error(error?.optString("message") ?: json.toString())
+                        }
+                        else -> null
+                    }
+                } else {
+                    when {
+                        json.has("choices") -> {
+                            val choices = json.getJSONArray("choices")
+                            if (choices.length() == 0) return null
+                            val first = choices.optJSONObject(0) ?: return null
+                            val delta = first.optJSONObject("delta") ?: return null
+                            val tcArr = delta.optJSONArray("tool_calls")
+                            if (tcArr != null) {
+                                for (i in 0 until tcArr.length()) {
+                                    val tc = tcArr.getJSONObject(i)
+                                    val idx = tc.optInt("index", i)
+                                    if (tc.has("id") && tc.optString("id").isNotEmpty()) accId[idx] = tc.optString("id")
+                                    val func = tc.optJSONObject("function")
+                                    if (func != null) {
+                                        if (func.has("name") && func.optString("name").isNotEmpty())
+                                            accName[idx] = func.optString("name")
+                                        if (func.has("arguments"))
+                                            accArgs.getOrPut(idx) { StringBuilder() }.append(func.optString("arguments"))
+                                    }
+                                }
+                            }
+                            when {
+                                delta.has("content") && !delta.isNull("content") &&
+                                    delta.getString("content").isNotEmpty() ->
+                                    SseEvent.Token(delta.getString("content"))
+                                delta.has("reasoning_content") && !delta.isNull("reasoning_content") &&
+                                    delta.getString("reasoning_content").isNotEmpty() ->
+                                    SseEvent.ThinkToken(delta.getString("reasoning_content"))
+                                else -> null
+                            }
+                        }
+                        json.has("error") -> {
+                            val errorObj = json.optJSONObject("error")
+                            SseEvent.Error(errorObj?.optString("message") ?: json.toString())
+                        }
+                        else -> null
+                    }
+                }
+            } catch (e: JSONException) {
+                null
+            }
+        }
+
         // ════════════════════════════════════════════════════
         //  旧签名兼容(内部委托 Flow,在 runBlocking 中 collect)
         // ════════════════════════════════════════════════════
@@ -951,6 +1152,7 @@ class HttpUtils {
                         is SseEvent.Token -> ApplyTokenOnUI(event.text, handler, outputRef.get(), scrollRef.get())
                         is SseEvent.ThinkToken -> ApplyTokenOnUI(event.text, handler, thinkRef.get(), scrollRef.get())
                         is SseEvent.Error -> ApplyTokenOnUI(event.message, handler, errorRef.get(), scrollRef.get())
+                        is SseEvent.ToolCalls -> { /* 悬浮搜题无工具调用 */ }
                         is SseEvent.Done -> {
                             handler.post {
                                 outputRef.get()?.let {

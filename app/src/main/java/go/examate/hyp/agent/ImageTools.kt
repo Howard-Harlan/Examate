@@ -18,11 +18,15 @@ object ImageTools {
         override val name = "generate_image"
         override val description = "根据文字描述生成图片"
         override val category = ToolRegistry.Category.SAFE
-        override val parametersHint = "prompt(图片描述,必填), model(模型ID,可选,默认dall-e-3)"
+        override val parametersHint = "prompt(图片描述,必填), model(模型ID,可选,默认用已配置的生图模型)"
+        override val params = listOf(
+            ToolRegistry.ParamDef("prompt", "string", "图片描述", true),
+            ToolRegistry.ParamDef("model", "string", "模型ID,可选,默认 dall-e-3", false)
+        )
 
         override suspend fun execute(context: Context, args: JSONObject): ToolRegistry.Result {
             val prompt = args.optString("prompt", "").ifEmpty { return ToolRegistry.Result(false, "生图失败: 缺少 prompt 参数") }
-            val model = args.optString("model", "dall-e-3")
+            val model = args.optString("model", "")
             val imageData = generateImage(context, prompt, model)
             return if (imageData != null) ToolRegistry.Result(true, "图片已生成", imageData, true)
             else ToolRegistry.Result(false, "生图失败,请检查 API 配置或网络")
@@ -31,13 +35,16 @@ object ImageTools {
 
     /** 调用生图 API(OpenAI /v1/images/generations 格式) */
     private fun generateImage(context: Context, prompt: String, model: String): String? {
-        val providers = MyConfig.loadProviders(context)
-        val provider = providers.firstOrNull { it.apiKey.isNotEmpty() } ?: return null
+        // 优先路由到标记「生图」能力的模型;未标记时退回首个有 Key 的厂商(向后兼容)
+        val provider = MyConfig.providersFor(context, ModelProvider.CAP_IMAGE_GEN).firstOrNull()
+            ?: MyConfig.loadProviders(context).firstOrNull { it.apiKey.isNotEmpty() }
+            ?: return null
         val baseUrl = ModelProvider.extractBaseUrl(provider.requestUrl)
         val url = "$baseUrl/v1/images/generations"
+        val useModel = model.ifEmpty { provider.modelId.ifEmpty { "dall-e-3" } }
 
         val json = JSONObject()
-        json.put("model", model)
+        json.put("model", useModel)
         json.put("prompt", prompt)
         json.put("n", 1)
         json.put("size", "1024x1024")

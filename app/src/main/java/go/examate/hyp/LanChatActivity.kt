@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import go.examate.hyp.util.ToastUtil
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -27,12 +29,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -48,17 +53,26 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.effects.vibrancy
+import com.kyant.backdrop.highlight.Highlight
+import com.kyant.shapes.RoundedRectangle
 import go.examate.hyp.service.LanChatService
 import go.examate.hyp.service.LanChatTransport
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassBackground
 import go.examate.hyp.ui.components.LiquidGlassIconButton
+import go.examate.hyp.ui.components.LocalGlassBackdrop
 import go.examate.hyp.ui.screens.LanChatMessage
 import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.BgPrimary
 import go.examate.hyp.ui.theme.ExamateTheme
+import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.Success
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
@@ -132,13 +146,14 @@ class LanChatActivity : ComponentActivity(), LanChatTransport.Callback {
     override fun onOnlineCountChanged(count: Int) {
         runOnUiThread {
             onlineCount.value = count
+            // 仅保留其他设备(自己的昵称在弹窗中以"我"单独展示,避免重复)
             onlineNames.clear()
-            onlineNames.addAll(transport?.getOnlineDeviceNames() ?: emptyList())
+            onlineNames.addAll(transport?.getOnlineDeviceNames()?.drop(1) ?: emptyList())
         }
     }
 
     override fun onError(message: String) {
-        runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_SHORT).show() }
+        ToastUtil.show(this, message)
     }
 
     private fun sendText(text: String) {
@@ -157,13 +172,13 @@ class LanChatActivity : ComponentActivity(), LanChatTransport.Callback {
             startService(android.content.Intent(this, LanChatService::class.java))
             finish()
         } else {
-            Toast.makeText(this, "请先授予悬浮窗权限", Toast.LENGTH_SHORT).show()
+            ToastUtil.show(this, "请先授予悬浮窗权限")
             try {
                 val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
                 intent.data = android.net.Uri.parse("package:$packageName")
                 startActivity(intent)
             } catch (e: Exception) {
-                Toast.makeText(this, "无法跳转悬浮窗设置", Toast.LENGTH_SHORT).show()
+                ToastUtil.show(this, "无法跳转悬浮窗设置")
             }
         }
     }
@@ -237,62 +252,121 @@ private fun LanChatScreen(
             }
         }
 
-        // ═══ 输入栏:液态玻璃 ═══
-        FrostedGlassCard(
-            modifier = Modifier
+        // ═══ 输入栏:液态玻璃(同步 AI 聊天样式) ═══
+        val barBackdrop = LocalGlassBackdrop.current
+        Row(
+            Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 10.dp, vertical = 6.dp)
+                .then(
+                    if (barBackdrop != null) Modifier.drawBackdrop(
+                        backdrop = barBackdrop,
+                        shape = { RoundedRectangle(28.dp) },
+                        effects = { vibrancy(); blur(20.dp.toPx()) },
+                        highlight = { Highlight.Ambient },
+                        onDrawSurface = { drawRect(Color.White.copy(0.38f)) }
+                    ) else Modifier.background(Color.White.copy(0.88f))
+                ),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = inputText,
-                    onValueChange = onInputChange,
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text("说点什么...", color = TextHint, fontSize = 14.sp) },
-                    shape = RoundedCornerShape(20.dp),
-                    singleLine = false,
-                    maxLines = 4
+            OutlinedTextField(
+                value = inputText,
+                onValueChange = onInputChange,
+                modifier = Modifier.weight(1f).then(
+                    if (barBackdrop != null) Modifier.drawBackdrop(
+                        backdrop = barBackdrop,
+                        shape = { RoundedRectangle(22.dp) },
+                        effects = { vibrancy(); blur(16.dp.toPx()) },
+                        highlight = { Highlight.Ambient },
+                        onDrawSurface = { drawRect(Color.White.copy(0.2f)) }
+                    ) else Modifier
+                ),
+                placeholder = { Text("说点什么...", color = TextHint, fontSize = 14.sp) },
+                shape = RoundedCornerShape(22.dp),
+                singleLine = false,
+                maxLines = 4,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    focusedBorderColor = AccentBlue.copy(0.45f),
+                    unfocusedBorderColor = Color.White.copy(0.35f)
                 )
-                Spacer(Modifier.width(8.dp))
-                Box(
-                    Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(AccentBlue),
-                    contentAlignment = Alignment.Center
-                ) {
-                    androidx.compose.material3.IconButton(onClick = onSend) {
-                        androidx.compose.material3.Icon(
-                            Icons.Filled.Send,
-                            contentDescription = "发送",
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
+            )
+            Spacer(Modifier.width(8.dp))
+            val canSend = inputText.isNotBlank()
+            Box(
+                Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(if (canSend) AccentBlue else AccentBlue.copy(0.35f))
+                    .clickable(enabled = canSend) { onSend() },
+                contentAlignment = Alignment.Center
+            ) {
+                androidx.compose.material3.Icon(
+                    Icons.Filled.Send,
+                    contentDescription = "发送",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
             }
         }
     }
 
-    // 在线人员弹窗
+    // 在线人员弹窗(用 PlainDialog 与主界面统一)
     if (showOnlineDialog) {
-        androidx.compose.material3.AlertDialog(
+        go.examate.hyp.ui.components.PlainDialog(
             onDismissRequest = { showOnlineDialog = false },
-            confirmButton = {
-                androidx.compose.material3.TextButton(onClick = { showOnlineDialog = false }) {
-                    Text("关闭")
+            modifier = Modifier.width(300.dp)
+        ) {
+            go.examate.hyp.ui.components.PlainDialogTitle("在线人员 ($onlineCount)")
+            // 列表区(限高 + 可滚动,避免人太多溢出)
+            Column(
+                modifier = Modifier
+                    .padding(horizontal = 20.dp)
+                    .heightIn(max = 320.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                // 我自己(置顶,绿色圆点)
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(Modifier.size(8.dp).background(Success, CircleShape))
+                    Spacer(Modifier.width(8.dp))
+                    Text("我", color = TextHint, fontSize = 11.sp)
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        myName.ifBlank { "未设置昵称" },
+                        color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium
+                    )
                 }
-            },
-            title = { Text("在线人员 ($onlineCount)") },
-            text = {
-                Column {
-                    Text("我: $myName", color = TextPrimary, fontSize = 14.sp)
+                // 其他在线设备
+                if (onlineNames.isEmpty()) {
+                    Text(
+                        "暂无其他在线设备",
+                        color = TextHint, fontSize = 12.sp,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                        textAlign = TextAlign.Center
+                    )
+                } else {
                     onlineNames.forEach { name ->
-                        Text(name, color = TextSecondary, fontSize = 13.sp)
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(Modifier.size(8.dp).background(Primary, CircleShape))
+                            Spacer(Modifier.width(8.dp))
+                            Text(name, color = TextSecondary, fontSize = 13.sp)
+                        }
                     }
                 }
             }
-        )
+            Spacer(Modifier.height(16.dp))
+            go.examate.hyp.ui.components.PlainDialogButtons(
+                buttons = listOf(Triple("关闭", true) { showOnlineDialog = false })
+            )
+        }
     }
 }
 

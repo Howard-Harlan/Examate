@@ -5,8 +5,16 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,11 +33,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -40,7 +47,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -52,8 +61,11 @@ import go.examate.hyp.campus.ui.CampusRoute
 import go.examate.hyp.campus.ui.CampusServiceViewModel
 import go.examate.hyp.campus.ui.EcardScreen
 import go.examate.hyp.campus.ui.HsxsScreen
+import go.examate.hyp.campus.ui.SzsScreen
+import go.examate.hyp.campus.ui.ClassContactScreen
 import go.examate.hyp.campus.ui.JwxtScreen
 import go.examate.hyp.campus.ui.LoginState
+import go.examate.hyp.campus.ui.QuickServiceScreen
 import go.examate.hyp.campus.ui.ScScreen
 import go.examate.hyp.config.PrefsManager
 import go.examate.hyp.ui.components.ButtonStyle
@@ -108,6 +120,9 @@ class CampusServiceActivity : ComponentActivity() {
             "jwxt" -> CampusRoute.Jwxt
             "sc" -> CampusRoute.Sc
             "hsxs" -> CampusRoute.Hsxs
+            "szs" -> CampusRoute.Szs
+            "quick" -> CampusRoute.QuickService
+            "contact" -> CampusRoute.ClassContact
             else -> CampusRoute.Home
         }
     }
@@ -160,6 +175,21 @@ private fun CampusServiceRoot(onBack: () -> Unit, initialRoute: CampusRoute = Ca
         }
         is CampusRoute.Hsxs -> {
             HsxsScreen(onBack = { viewModel.setRoute(CampusRoute.Home) })
+            return
+        }
+        is CampusRoute.Szs -> {
+            SzsScreen(onBack = { viewModel.setRoute(CampusRoute.Home) })
+            return
+        }
+        is CampusRoute.QuickService -> {
+            QuickServiceScreen(
+                onBack = { viewModel.setRoute(CampusRoute.Home) },
+                onClassContact = { viewModel.setRoute(CampusRoute.ClassContact) }
+            )
+            return
+        }
+        is CampusRoute.ClassContact -> {
+            ClassContactScreen(onBack = { viewModel.setRoute(CampusRoute.QuickService) })
             return
         }
         else -> { /* 主页继续往下渲染 */ }
@@ -270,29 +300,19 @@ private fun CampusServiceRoot(onBack: () -> Unit, initialRoute: CampusRoute = Ca
                                     color = TextHint, fontSize = 11.sp
                                 )
                                 Spacer(Modifier.height(10.dp))
-                                // 记住登录开关
+                                // 记住登录:复用代办对勾样式(整行可点,右侧对勾)
                                 Row(
                                     Modifier.fillMaxWidth()
                                         .clip(RoundedCornerShape(10.dp))
-                                        .background(SurfaceVariant)
-                                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                                        .clickable { viewModel.setRememberLogin(!rememberLogin) }
+                                        .padding(horizontal = 14.dp, vertical = 10.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(Modifier.weight(1f)) {
                                         Text("记住登录", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                                         Text("下次进入自动登录", color = TextHint, fontSize = 11.sp)
                                     }
-                                    Switch(
-                                        checked = rememberLogin,
-                                        onCheckedChange = {
-                                            viewModel.setRememberLogin(it)
-                                        },
-                                        colors = SwitchDefaults.colors(
-                                            checkedThumbColor = Color.White,
-                                            checkedTrackColor = Primary,
-                                            uncheckedTrackColor = TextHint.copy(alpha = 0.3f)
-                                        )
-                                    )
+                                    RememberCheckbox(checked = rememberLogin)
                                 }
                                 Spacer(Modifier.height(16.dp))
 
@@ -334,13 +354,13 @@ private fun CampusServiceRoot(onBack: () -> Unit, initialRoute: CampusRoute = Ca
                                     .padding(horizontal = 14.dp, vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("✓", color = Success, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                Text("✓", color = TextSecondary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                                 Spacer(Modifier.width(8.dp))
-                                Text("已登录 $school · $displayName", color = Success, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                                Text("已登录 $school · $displayName", color = TextSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
                                 Icon(
                                     imageVector = Icons.Filled.Close,
                                     contentDescription = "关闭",
-                                    tint = Success,
+                                    tint = TextSecondary,
                                     modifier = Modifier.size(16.dp).clickable { viewModel.dismissLoginBanner() }
                                 )
                             }
@@ -366,9 +386,21 @@ private fun CampusServiceRoot(onBack: () -> Unit, initialRoute: CampusRoute = Ca
                         )
                         Spacer(Modifier.height(12.dp))
                         FeatureEntryCard(
+                            title = "智慧思政",
+                            subtitle = "综合测评成绩明细",
+                            onClick = { viewModel.setRoute(CampusRoute.Szs) }
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        FeatureEntryCard(
                             title = "淮师心声",
                             subtitle = "失物招领 / 满意度调查",
                             onClick = { viewModel.setRoute(CampusRoute.Hsxs) }
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        FeatureEntryCard(
+                            title = "快捷服务",
+                            subtitle = "",
+                            onClick = { viewModel.setRoute(CampusRoute.QuickService) }
                         )
                         Spacer(Modifier.height(20.dp))
                         LiquidGlassButton(
@@ -410,8 +442,10 @@ private fun FeatureEntryCard(
         ) {
             Column(Modifier.weight(1f)) {
                 Text(title, color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                Spacer(Modifier.height(4.dp))
-                Text(subtitle, color = TextHint, fontSize = 12.sp)
+                if (subtitle.isNotEmpty()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(subtitle, color = TextHint, fontSize = 12.sp)
+                }
             }
             Text("›", color = TextHint, fontSize = 22.sp, fontWeight = FontWeight.Light)
         }
@@ -477,6 +511,63 @@ internal fun SchoolPickerDialog(
                     modifier = Modifier.weight(1f)
                 )
             }
+        }
+    }
+}
+
+/**
+ * 记住登录勾选框 — 复用代办对勾样式(方框 + 绿渐变填充 + 白色对勾旋转弹出)。
+ *
+ * 仅展示用,点击由外层 Row 处理(整行可点)。
+ */
+@Composable
+private fun RememberCheckbox(checked: Boolean) {
+    // 灰色主题对勾(与书源管理启用开关风格一致,适应主题)
+    val grayCheck = Color(0xFF6B7280)
+    val grayDark = Color(0xFF4B5563)
+    val borderGray = Color(0xFFD1D5DB)
+
+    // 灰渐变填充:选中 overshoot 弹入,取消缩回
+    val fillScale by animateFloatAsState(
+        if (checked) 1f else 0f,
+        spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessMediumLow), label = "remFill"
+    )
+    // 对勾:缩放 + 旋转弹出
+    val checkScale by animateFloatAsState(
+        if (checked) 1f else 0.3f,
+        spring(dampingRatio = 0.4f, stiffness = Spring.StiffnessMedium), label = "remCheckScale"
+    )
+    val checkRot by animateFloatAsState(if (checked) 0f else 20f, spring(dampingRatio = 0.5f), label = "remCheckRot")
+    val checkAlpha by animateFloatAsState(if (checked) 1f else 0f, tween(180), label = "remCheckAlpha")
+    // 边框:灰→深灰
+    val borderColor by animateColorAsState(if (checked) grayCheck else borderGray, tween(300), label = "remBorder")
+
+    Box(
+        Modifier.size(26.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        // 方框
+        Box(
+            Modifier.size(22.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(Color.White)
+                .border(2.dp, borderColor, RoundedCornerShape(6.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            // 灰色渐变填充(弹入)
+            Box(
+                Modifier.matchParentSize()
+                    .graphicsLayer { scaleX = fillScale; scaleY = fillScale }
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Brush.linearGradient(listOf(grayCheck, grayDark)))
+            )
+            // 对勾
+            Icon(
+                Icons.Filled.Check, contentDescription = null, tint = Color.White,
+                modifier = Modifier.size(15.dp).graphicsLayer {
+                    scaleX = checkScale; scaleY = checkScale; rotationZ = checkRot; alpha = checkAlpha
+                }
+            )
         }
     }
 }

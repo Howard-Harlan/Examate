@@ -18,7 +18,34 @@ data class Grade(
     val score: String,
     val gpa: String,
     val year: String,
-    val semester: String
+    val semester: String,
+    /** 课程代码(用于查询成绩明细) */
+    val courseCode: String = "",
+    /** 教学班ID(用于成绩明细查询) */
+    val jxbId: String = "",
+    /** 成绩性质(如"正常考试") */
+    val examType: String = "",
+    /** 考试性质 */
+    val examNature: String = "",
+    /** 开课学院 */
+    val college: String = ""
+)
+
+/** 成绩明细(某门课程的平时分/期末分/总分构成) */
+data class GradeDetail(
+    val courseName: String,
+    val credit: String,
+    val gpa: String,
+    /** 平时成绩 */
+    val regularScore: String = "",
+    /** 期末成绩 */
+    val finalExamScore: String = "",
+    /** 总成绩 */
+    val totalScore: String = "",
+    /** 成绩性质 */
+    val examType: String = "",
+    /** 其他子项(如实验成绩、论文成绩等,key=项目名,value=分数) */
+    val subItems: Map<String, String> = emptyMap()
 )
 
 /** 课表项 */
@@ -28,7 +55,11 @@ data class ScheduleItem(
     val courseName: String,
     val teacher: String,
     val classroom: String,
-    val weeks: String
+    val weeks: String,
+    /** 学分 */
+    val credit: String = "",
+    /** 课程类别(理论/实验等) */
+    val courseCategory: String = ""
 )
 
 /** 考试安排 */
@@ -39,7 +70,7 @@ data class ExamItem(
     val seatNo: String
 )
 
-/** 已选课程 */
+/** 已选课程(选课结果,来自课表确认页) */
 data class SelectedCourse(
     val courseName: String,
     val teacher: String,
@@ -47,7 +78,13 @@ data class SelectedCourse(
     val classTime: String,
     val classroom: String,
     val courseType: String,
-    val selected: Boolean
+    val selected: Boolean,
+    /** 上课周次 */
+    val weeks: String = "",
+    /** 课程代码 */
+    val courseCode: String = "",
+    /** 考核方式 */
+    val examMethod: String = ""
 )
 
 /** 教学评价项 */
@@ -60,7 +97,66 @@ data class EvaluationItem(
     val classTime: String,
     val classroom: String,
     val college: String,
-    val courseType: String
+    val courseType: String,
+    /** 问卷编码(wjbm,用于获取评价题目和提交) */
+    val wjbm: String = "",
+    /** 教师编号 */
+    val teacherId: String = "",
+    /** 课程ID */
+    val courseId: String = "",
+    /** 教学班ID */
+    val jxbId: String = "",
+    /** 学年名称(如"2024-2025") */
+    val schoolYear: String = ""
+)
+
+/** 教学评价指标(评价页面的题目) */
+data class EvaluationQuestion(
+    val id: String,
+    /** 指标名称/题目文字 */
+    val name: String,
+    /** 分值上限 */
+    val maxScore: Double = 100.0,
+    /** 用户已选分数(-1=未评) */
+    val selectedScore: Double = -1.0,
+    /** 指标类型(单选/多选等) */
+    val type: String = ""
+)
+
+/** 空闲教室 */
+data class EmptyClassroom(
+    /** 教室名称 */
+    val classroomName: String,
+    /** 教学楼 */
+    val buildingName: String,
+    /** 座位数/容量 */
+    val capacity: String = "",
+    /** 教室类型(多媒体/普通等) */
+    val roomType: String = "",
+    /** 校区 */
+    val campus: String = "",
+    /** 空闲节次列表 */
+    val freePeriods: List<String> = emptyList()
+)
+
+/** 教学楼信息 */
+data class BuildingInfo(
+    val id: String,
+    val name: String,
+    val campus: String = ""
+)
+
+/** 从网页 select 解析的选项(通用) */
+data class SelectOption(
+    val id: String,
+    val name: String
+)
+
+/** 空闲教室页面数据(从 GET 页面动态解析所有 select 选项) */
+data class ClassroomPageData(
+    val campusOptions: List<SelectOption> = emptyList(),
+    val buildingOptions: List<SelectOption> = emptyList(),
+    val roomTypeOptions: List<SelectOption> = emptyList()
 )
 
 /** 选课状态 */
@@ -188,6 +284,39 @@ data class ScoreSummary(
 data class ModuleScore(
     val moduleName: String,
     val score: String
+)
+
+// ════════════════════════════════════════════════
+//  智慧思政(jgf) — 综合测评成绩
+// ════════════════════════════════════════════════
+
+/** 综合测评成绩明细项(对应 jgf ChangeScore/List 返回字段) */
+data class SzsScoreItem(
+    val testBatchName: String,      // 测评批次(如 2024-2025学年)
+    val studentName: String,        // 学生姓名
+    val studentNo: String,          // 学号
+    val className: String,          // 班级
+    val college: String,            // 学院
+    val major: String,              // 专业
+    val dyScore: String,            // 德育成绩
+    val zyScore: String,            // 专业成绩
+    val tyScore: String,            // 体育成绩
+    val nlfzEdu: String,            // 劳动教育
+    val tzEdu: String,              // 体质
+    val ygpbEdu: String,            // 应购书本
+    val dykjScore: String,          // 党员科技
+    val dyDeclareScore: String      // 党员申报
+)
+
+// ════════════════════════════════════════════════
+//  班级通讯录(oshall) — 学生电话列表
+// ════════════════════════════════════════════════
+
+/** 班级通讯录条目(对应 oshall studentPhoneListPage 返回字段) */
+data class ClassContact(
+    val studentName: String,    // 姓名(realname)
+    val phone: String,          // 手机号(phone)
+    val className: String       // 班级(departName)
 )
 
 // ════════════════════════════════════════════════

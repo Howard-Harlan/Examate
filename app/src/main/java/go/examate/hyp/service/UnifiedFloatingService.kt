@@ -56,6 +56,7 @@ import go.examate.hyp.entity.ModelProvider
 import go.examate.hyp.util.AdbCommandHelper
 import go.examate.hyp.util.AnswerFormatter
 import go.examate.hyp.util.HttpUtils
+import go.examate.hyp.util.ToastUtil
 
 import org.json.JSONArray
 import org.json.JSONException
@@ -155,8 +156,7 @@ class UnifiedFloatingService : Service() {
     // ═══ 截图模式(MediaProjection)字段 ═══
     private var statusBarHeight = 0
     private var mediaProjection: MediaProjection? = null
-    private var virtualDisplay: VirtualDisplay? = null
-    private var imageReader: ImageReader? = null
+    // 注:ImageReader/VirtualDisplay 改为按需创建、用完即弃,解决安卓高版本持续帧不刷新问题
     private lateinit var selectionOverlay: SelectionOverlayView
     private var selectionButtons: View? = null
 
@@ -189,6 +189,16 @@ class UnifiedFloatingService : Service() {
         PixelFormat.TRANSLUCENT)
     private lateinit var askContainerView: View
     private var isAskViewShow = false
+    // 求是悬浮窗参数(独立于 askView,不传主对话历史)
+    val qiushiViewParams = WindowManager.LayoutParams(
+        800,
+        1000,
+        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_SECURE,
+        PixelFormat.TRANSLUCENT)
+    private lateinit var qiushiContainerView: View
+    private var isQiushiViewShow = false
+    private var qiushiThread: Thread? = null
     // 网页浏览窗口参数
     val webViewParams = WindowManager.LayoutParams(
         WindowManager.LayoutParams.WRAP_CONTENT,
@@ -227,6 +237,7 @@ class UnifiedFloatingService : Service() {
             askViewParams.flags = askViewParams.flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
             webViewParams.flags = webViewParams.flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
             selectZoneViewParams.flags = selectZoneViewParams.flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
+            qiushiViewParams.flags = qiushiViewParams.flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
         } else {
             try {
                 launcherSecureCountListener()
@@ -238,6 +249,8 @@ class UnifiedFloatingService : Service() {
         initToggleBtnView()
         // 初始化AI问问
         initAskView()
+        // 初始化求是悬浮窗
+        initQiushiView()
         // 初始化网页浏览
         initWebView()
         // 注:选区窗口依赖 mode,故在 onStartCommand 中根据模式初始化(见 initSelectZoneView)
@@ -248,6 +261,12 @@ class UnifiedFloatingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val modeStr = intent?.getStringExtra(EXTRA_MODE)
+        // 求是模式:独立悬浮窗,不影响主模式,不传主对话历史
+        if (modeStr == "qiushi") {
+            val content = intent?.getStringExtra("qiushi_content") ?: ""
+            showQiushiView(content)
+            return START_NOT_STICKY
+        }
         if (modeStr == "screenshot") {
             mode = FloatingMode.SCREENSHOT
             currentMode = FloatingMode.SCREENSHOT
@@ -330,16 +349,16 @@ class UnifiedFloatingService : Service() {
             windowManager.removeView(btnView)
         }
         // 截图模式资源释放
-        virtualDisplay?.release()
         mediaProjection?.stop()
-        imageReader?.close()
-        virtualDisplay = null
         mediaProjection = null
-        imageReader = null
         // 中断问问线程
         val t = thread
         if (t != null && t.isAlive) t.interrupt()
         thread = null
+        // 中断求是线程
+        val qt = qiushiThread
+        if (qt != null && qt.isAlive) qt.interrupt()
+        qiushiThread = null
         isActive = false
         currentMode = FloatingMode.NONE
         // 悬浮窗关闭后,恢复在后台任务列表显示
@@ -494,7 +513,7 @@ class UnifiedFloatingService : Service() {
      */
     private fun startFloatingChat() {
         if (!Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, "请先授予悬浮窗权限", Toast.LENGTH_SHORT).show()
+            ToastUtil.show(this, "请先授予悬浮窗权限")
             return
         }
         startService(Intent(this, LanChatService::class.java))
@@ -533,7 +552,7 @@ class UnifiedFloatingService : Service() {
     private fun toggleAutoAnswerMode() {
         // 检查无障碍服务
         if (MyAccessibilityService.getMyAccessibilityServiceInstance() == null) {
-            Toast.makeText(this, "请先开启无障碍服务", Toast.LENGTH_SHORT).show()
+            ToastUtil.show(this, "请先开启无障碍服务")
             return
         }
 
@@ -542,7 +561,7 @@ class UnifiedFloatingService : Service() {
             modelProviders = MyConfig.loadProviders(this)
         }
         if (modelProviders.isEmpty()) {
-            Toast.makeText(this, "请先配置 API", Toast.LENGTH_SHORT).show()
+            ToastUtil.show(this, "请先配置 API")
             return
         }
 
@@ -550,7 +569,7 @@ class UnifiedFloatingService : Service() {
             // 已在运行,停止
             autoAnswerEngine?.stop()
             autoAnswerEngine = null
-            Toast.makeText(this, "自动答题已停止", Toast.LENGTH_SHORT).show()
+            ToastUtil.show(this, "自动答题已停止")
             return
         }
 
@@ -562,11 +581,7 @@ class UnifiedFloatingService : Service() {
             engine.onStatusUpdate = { status ->
                 handler.post {
                     // 静默运行:仅用 Toast 显示关键状态,不弹问问窗口
-                    Toast.makeText(
-                        this@UnifiedFloatingService,
-                        status,
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    ToastUtil.show(this@UnifiedFloatingService, status)
                 }
             }
             engine.onComplete = {
@@ -576,7 +591,7 @@ class UnifiedFloatingService : Service() {
             }
             engine.start()
         }
-        Toast.makeText(this, "自动答题已启动,请切到考试界面", Toast.LENGTH_LONG).show()
+        ToastUtil.showLong(this, "自动答题已启动,请切到考试界面")
     }
 
 
@@ -656,6 +671,11 @@ class UnifiedFloatingService : Service() {
                 }
                 return@setOnClickListener
             }
+            // 截图模式:输入作为对「上次截图」的补充追问(图 + 文一起发)
+            if (currentMode == FloatingMode.SCREENSHOT && lastCaptureBytes != null) {
+                askWithImage(lastCaptureBytes!!, userInput)
+                return@setOnClickListener
+            }
             // 禁用提交按钮
             setSubmitBtnStatus(false)
 
@@ -702,25 +722,22 @@ class UnifiedFloatingService : Service() {
                                 handler.post { setSubmitBtnStatus(true) }
                             }
                         }
-                        // 截图模式:只用非流式 sendPostRequestResult + extractContent
+                        // 截图模式:只用非流式 sendPostRequestSync + extractContent
+                        // 已在后台 Thread 中,直接调用同步函数,避免 runBlocking
                         else -> {
-                            val result = kotlinx.coroutines.runBlocking {
-                                HttpUtils.sendPostRequestResult(
+                            val resText = try {
+                                HttpUtils.sendPostRequestSync(
                                     currentProvider.requestUrl, currentProvider.modelId, userInput,
                                     currentProvider.apiKey, MyConfig.SYSTEM_PROMPT,
                                     currentProvider.enableThinking, currentProvider.endpointType
                                 )
-                            }
-                            val resText = when (result) {
-                                is go.examate.hyp.util.ApiResult.Success -> result.data
-                                else -> {
-                                    handler.post {
-                                        errorTextView.visibility = View.VISIBLE
-                                        errorTextView.text = "请求失败: ${result.errorMessage()}"
-                                        setSubmitBtnStatus(true)
-                                    }
-                                    return@Runnable
+                            } catch (e: Exception) {
+                                handler.post {
+                                    errorTextView.visibility = View.VISIBLE
+                                    errorTextView.text = "请求失败: ${e.message}"
+                                    setSubmitBtnStatus(true)
                                 }
+                                return@Runnable
                             }
                             val content = HttpUtils.extractContent(resText, currentProvider.endpointType)
                             handler.post {
@@ -853,6 +870,200 @@ class UnifiedFloatingService : Service() {
             }
         })
 
+    }
+
+    // ═══ 求是悬浮窗:独立于 askView,不传主对话历史 ═══
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun initQiushiView() {
+        qiushiViewParams.gravity = Gravity.CENTER_VERTICAL or Gravity.CENTER_HORIZONTAL
+        qiushiViewParams.x = 0
+        qiushiViewParams.y = 0
+        qiushiContainerView = LayoutInflater.from(this).inflate(R.layout.qiushi_widget, null)
+
+        val outputTextView = qiushiContainerView.findViewById<TextView>(R.id.qiushi_output)
+        val scrollView = qiushiContainerView.findViewById<ScrollView>(R.id.qiushi_scroll)
+        val editText = qiushiContainerView.findViewById<EditText>(R.id.qiushi_input)
+
+        // 关闭按钮
+        qiushiContainerView.findViewById<View>(R.id.qiushi_close_btn).setOnClickListener {
+            isQiushiViewShow = false
+            if (this::qiushiContainerView.isInitialized && qiushiContainerView.isAttachedToWindow) {
+                windowManager.removeView(qiushiContainerView)
+            }
+            val t = qiushiThread
+            if (t != null && t.isAlive) t.interrupt()
+            setQiushiSubmitBtnStatus(true)
+        }
+
+        // 发送按钮 → SSE 流式请求(不传主对话历史,仅单条用户消息)
+        qiushiContainerView.findViewById<View>(R.id.qiushi_submit_btn).setOnClickListener {
+            val userInput = editText.text.toString()
+            if (userInput.isEmpty()) return@setOnClickListener
+
+            outputTextView.text = ""
+            setQiushiSubmitBtnStatus(false)
+            // 窗口失焦
+            qiushiViewParams.flags = qiushiViewParams.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            qiushiViewParams.flags = qiushiViewParams.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL.inv()
+            windowManager.updateViewLayout(qiushiContainerView, qiushiViewParams)
+
+            val provider = MyConfig.providersFor(this, ModelProvider.CAP_CHAT).firstOrNull()
+            if (provider == null) {
+                outputTextView.text = "未配置可用的聊天模型，请先在设置中添加 API Key"
+                setQiushiSubmitBtnStatus(true)
+                return@setOnClickListener
+            }
+
+            qiushiThread = Thread(Runnable {
+                kotlinx.coroutines.runBlocking {
+                    HttpUtils.sendChatWithHistoryStreamFlow(
+                        provider.requestUrl, provider.modelId,
+                        listOf("user" to userInput), // 单条消息,不传主对话历史
+                        provider.apiKey, "你是助手",
+                        provider.enableThinking, provider.endpointType
+                    ).collect { event ->
+                        when (event) {
+                            is HttpUtils.SseEvent.Token -> {
+                                handler.post {
+                                    outputTextView.append(event.text)
+                                    scrollView.fullScroll(ScrollView.FOCUS_DOWN)
+                                }
+                            }
+                            is HttpUtils.SseEvent.ThinkToken -> { /* 思考过程暂不展示 */ }
+                            is HttpUtils.SseEvent.Error -> {
+                                handler.post {
+                                    outputTextView.text = "错误: ${event.message}"
+                                    setQiushiSubmitBtnStatus(true)
+                                }
+                            }
+                            is HttpUtils.SseEvent.Done -> {
+                                handler.post {
+                                    val formatted = AnswerFormatter.format(outputTextView.text.toString())
+                                    if (formatted != null) outputTextView.text = formatted
+                                    scrollView.fullScroll(ScrollView.FOCUS_DOWN)
+                                    setQiushiSubmitBtnStatus(true)
+                                }
+                            }
+                            is HttpUtils.SseEvent.ToolCalls -> { /* 求是无工具调用 */ }
+                        }
+                    }
+                }
+            })
+            qiushiThread?.start()
+        }
+
+        // 停止按钮
+        qiushiContainerView.findViewById<View>(R.id.qiushi_stop_btn).setOnClickListener {
+            val t = qiushiThread
+            if (t != null && t.isAlive) t.interrupt()
+            setQiushiSubmitBtnStatus(true)
+        }
+
+        // 输入框触摸时允许窗口获得焦点
+        editText.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_DOWN) {
+                qiushiViewParams.flags = qiushiViewParams.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+                qiushiViewParams.flags = qiushiViewParams.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                windowManager.updateViewLayout(qiushiContainerView, qiushiViewParams)
+            }
+            false
+        }
+
+        // 标题栏拖拽(移动窗口)
+        qiushiContainerView.findViewById<View>(R.id.qiushi_title_bar).setOnTouchListener(object : View.OnTouchListener {
+            private var initialX = 0
+            private var initialY = 0
+            private var initialTouchX = 0f
+            private var initialTouchY = 0f
+
+            override fun onTouch(v: View, event: MotionEvent): Boolean {
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        initialX = qiushiViewParams.x
+                        initialY = qiushiViewParams.y
+                        initialTouchX = event.rawX
+                        initialTouchY = event.rawY
+                        return true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        qiushiViewParams.x = initialX + (event.rawX - initialTouchX).toInt()
+                        qiushiViewParams.y = initialY + (event.rawY - initialTouchY).toInt()
+                        windowManager.updateViewLayout(qiushiContainerView, qiushiViewParams)
+                        return true
+                    }
+                }
+                return false
+            }
+        })
+
+        // 右下角拖拽调节大小手柄(最小 400x600 px)
+        val density = resources.displayMetrics.density
+        val minWidth = (400 * density).toInt()
+        val minHeight = (600 * density).toInt()
+        qiushiContainerView.findViewById<View>(R.id.qiushi_resize_handle).setOnTouchListener(object : View.OnTouchListener {
+            private var initialWidth = 0
+            private var initialHeight = 0
+            private var initialTouchX = 0f
+            private var initialTouchY = 0f
+
+            override fun onTouch(v: View, event: MotionEvent): Boolean {
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        initialWidth = qiushiViewParams.width
+                        initialHeight = qiushiViewParams.height
+                        initialTouchX = event.rawX
+                        initialTouchY = event.rawY
+                        return true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = (event.rawX - initialTouchX).toInt()
+                        val dy = (event.rawY - initialTouchY).toInt()
+                        qiushiViewParams.width = Math.max(minWidth, initialWidth + dx)
+                        qiushiViewParams.height = Math.max(minHeight, initialHeight + dy)
+                        windowManager.updateViewLayout(qiushiContainerView, qiushiViewParams)
+                        return true
+                    }
+                }
+                return false
+            }
+        })
+    }
+
+    /** 显示求是悬浮窗,填充参考内容到输入框 */
+    private fun showQiushiView(content: String) {
+        if (!isQiushiViewShow) {
+            isQiushiViewShow = true
+            if (content.isNotEmpty()) {
+                val editText = qiushiContainerView.findViewById<EditText>(R.id.qiushi_input)
+                editText.setText(content)
+                val outputTextView = qiushiContainerView.findViewById<TextView>(R.id.qiushi_output)
+                outputTextView.text = "求是结果将显示在这里..."
+            }
+            windowManager.addView(qiushiContainerView, qiushiViewParams)
+        } else {
+            // 已显示则更新参考内容
+            if (content.isNotEmpty()) {
+                val editText = qiushiContainerView.findViewById<EditText>(R.id.qiushi_input)
+                editText.setText(content)
+            }
+        }
+    }
+
+    /** 切换求是发送/停止按钮状态 */
+    private fun setQiushiSubmitBtnStatus(active: Boolean) {
+        if (!this::qiushiContainerView.isInitialized) return
+        val submit = qiushiContainerView.findViewById<Button>(R.id.qiushi_submit_btn)
+        val stop = qiushiContainerView.findViewById<Button>(R.id.qiushi_stop_btn)
+        submit.isEnabled = active
+        stop.isEnabled = !active
+        if (active) {
+            submit.visibility = View.VISIBLE
+            stop.visibility = View.GONE
+        } else {
+            submit.visibility = View.GONE
+            stop.visibility = View.VISIBLE
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -1247,57 +1458,61 @@ class UnifiedFloatingService : Service() {
     //<editor-fold desc="截图模式:MediaProjection / captureRegion / captureAndAsk">
 
     /**
-     * 设置 MediaProjection 并准备 ImageReader
+     * 设置 MediaProjection(仅保存实例,ImageReader/VirtualDisplay 按需创建)
      */
     @SuppressLint("WrongConstant")
     private fun setupMediaProjection(resultCode: Int, data: Intent) {
         try {
             val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             mediaProjection = mpm.getMediaProjection(resultCode, data)
-            // ImageReader 用于捕获屏幕帧
-            imageReader = ImageReader.newInstance(
-                screenWidth, screenHeight, PixelFormat.RGBA_8888, 2
-            )
-            val dm = DisplayMetrics()
-            windowManager.defaultDisplay.getMetrics(dm)
-            virtualDisplay = mediaProjection?.createVirtualDisplay(
-                "ScreenshotCapture",
-                screenWidth, screenHeight, dm.densityDpi,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                imageReader?.surface, null, handler
-            )
-            Log.d(TAG, "MediaProjection 已就绪")
+            Log.d(TAG, "MediaProjection 已就绪(按需截图模式)")
         } catch (e: Exception) {
             Log.e(TAG, "MediaProjection 初始化失败", e)
-            Toast.makeText(this, "截屏初始化失败", Toast.LENGTH_SHORT).show()
+            ToastUtil.show(this, "截屏初始化失败")
         }
     }
 
     /**
-     * 从 ImageReader 获取当前屏幕帧并裁剪到选区
+     * 按需创建 ImageReader+VirtualDisplay,截取一帧并裁剪到选区,用完立即释放。
+     * 解决安卓高版本持续 VirtualDisplay 帧不刷新的问题。
      */
+    @SuppressLint("WrongConstant")
     private fun captureRegion(rect: Rect): ByteArray? {
-        val reader = imageReader ?: return null
+        val projection = mediaProjection ?: return null
+        var reader: ImageReader? = null
+        var display: VirtualDisplay? = null
         var image: Image? = null
-        // 最多重试 10 次,避免无限递归导致栈溢出
-        var retries = 0
-        while (retries < 10) {
-            image = try {
-                reader.acquireLatestImage()
-            } catch (e: Exception) {
-                Log.e(TAG, "acquireLatestImage failed", e)
-                null
-            }
-            if (image != null) break
-            retries++
-            try { Thread.sleep(50) } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
+        try {
+            reader = ImageReader.newInstance(
+                screenWidth, screenHeight, PixelFormat.RGBA_8888, 2
+            )
+            val latch = java.util.concurrent.CountDownLatch(1)
+            reader.setOnImageAvailableListener({ r ->
+                if (image == null) {
+                    image = try { r.acquireLatestImage() } catch (e: Exception) {
+                        Log.e(TAG, "acquireLatestImage failed", e); null
+                    }
+                    if (image != null) latch.countDown()
+                }
+            }, handler)
+
+            val dm = DisplayMetrics()
+            windowManager.defaultDisplay.getMetrics(dm)
+            display = projection.createVirtualDisplay(
+                "ScreenshotCapture",
+                screenWidth, screenHeight, dm.densityDpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                reader.surface, null, handler
+            )
+
+            // 等待首帧到达(最多 3 秒)
+            if (!latch.await(3, java.util.concurrent.TimeUnit.SECONDS)) {
+                Log.e(TAG, "captureRegion 超时:未收到帧")
                 return null
             }
-        }
-        if (image == null) return null
-        return try {
-            val planes = image.planes
+
+            val img = image ?: return null
+            val planes = img.planes
             val buffer = planes[0].buffer
             val pixelStride = planes[0].pixelStride
             val rowStride = planes[0].rowStride
@@ -1326,34 +1541,84 @@ class UnifiedFloatingService : Service() {
             val bytes = baos.toByteArray()
             fullBitmap.recycle()
             if (cropped !== fullBitmap) cropped.recycle()
-            bytes
+            return bytes
         } catch (e: Exception) {
             Log.e(TAG, "captureRegion failed", e)
-            null
+            return null
         } finally {
-            image.close()
+            // 先摘除监听,阻止超时后监听器再取帧导致 Image 泄漏
+            reader?.setOnImageAvailableListener(null, null)
+            image?.close()
+            display?.release()
+            reader?.close()
         }
     }
 
     /**
      * 截屏选区并发送给 AI OCR
      */
+    /** 上次截图字节:供截图模式在问问窗输入框中对同一张图「补充追问」 */
+    private var lastCaptureBytes: ByteArray? = null
+
+    /** 用「图 + 可选文字」向 vision 模型提问并把答案渲染到问问窗(截图识别/补充追问共用) */
+    private fun askWithImage(imageBytes: ByteArray, userText: String) {
+        if (modelProviders.isEmpty()) { ToastUtil.show(this, "请先配置 API"); return }
+        val contentOutput = askContainerView.findViewById<TextView>(R.id.contentOutput)
+        val errorOutput = askContainerView.findViewById<TextView>(R.id.errorOutput)
+        contentOutput.text = "正在识别..."
+        errorOutput.visibility = View.GONE
+        errorOutput.text = ""
+        setSubmitBtnStatus(false)
+        val provider = modelProviders[modelIndex.coerceIn(0, modelProviders.size - 1)]
+        thread = Thread(Runnable {
+            val result = kotlinx.coroutines.runBlocking {
+                HttpUtils.sendImagesRequestResult(
+                    provider.requestUrl, provider.modelId, listOf(imageBytes),
+                    provider.apiKey, MyConfig.SYSTEM_PROMPT, userText, provider.endpointType
+                )
+            }
+            handler.post {
+                setSubmitBtnStatus(true)
+                if (result is go.examate.hyp.util.ApiResult.Success) {
+                    val content = HttpUtils.extractContent(result.data, provider.endpointType)
+                    if (content.isEmpty()) {
+                        errorOutput.visibility = View.VISIBLE
+                        errorOutput.text = "解析失败:\n${result.data}"
+                    } else {
+                        contentOutput.text = AnswerFormatter.format(content)
+                    }
+                } else {
+                    errorOutput.visibility = View.VISIBLE
+                    errorOutput.text = "请求失败,请检查网络或 API 配置(确认模型支持视觉)"
+                }
+            }
+        }).also { it.start() }
+    }
+
     private fun captureAndAsk() {
-        if (mediaProjection == null || imageReader == null) {
-            Toast.makeText(this, "截屏未就绪,请重新启动", Toast.LENGTH_SHORT).show()
+        if (mediaProjection == null) {
+            ToastUtil.show(this, "截屏未就绪,请重新启动")
             return
         }
         if (modelProviders.isEmpty()) {
-            Toast.makeText(this, "请先配置 API", Toast.LENGTH_SHORT).show()
+            ToastUtil.show(this, "请先配置 API")
             return
         }
 
         // 从 SelectionOverlayView 获取选区
         val rect = selectionOverlay.getSelectionRect()
         if (rect == null) {
-            Toast.makeText(this, "请先框选区域", Toast.LENGTH_SHORT).show()
+            ToastUtil.show(this, "请先框选区域")
             return
         }
+
+        // 重新截屏:先清空上一张截图(紧跟的文字追问在 submit_btn 复用当前图,不清)
+        lastCaptureBytes = null
+
+        // 读取问问窗输入框中的补充问题(可空;留空则由底层回退为默认识题提示词)
+        val userText = if (isAskViewShow)
+            askContainerView.findViewById<EditText>(R.id.contentInput).text?.toString()?.trim().orEmpty()
+        else ""
 
         // 隐藏选区遮罩,避免截到自身
         if (isSelectZoneViewShow) {
@@ -1366,6 +1631,11 @@ class UnifiedFloatingService : Service() {
         if (!isAskViewShow) showAskView()
         val contentOutput = askContainerView.findViewById<TextView>(R.id.contentOutput)
         val errorOutput = askContainerView.findViewById<TextView>(R.id.errorOutput)
+        val promptTextView = askContainerView.findViewById<TextView>(R.id.userPrompt)
+        if (userText.isNotBlank()) {
+            promptTextView.visibility = View.VISIBLE
+            promptTextView.text = userText
+        }
         contentOutput.text = "正在截图识别..."
         errorOutput.visibility = View.GONE
         errorOutput.text = ""
@@ -1382,28 +1652,9 @@ class UnifiedFloatingService : Service() {
                     }
                     return@Runnable
                 }
-
-                val provider = modelProviders[modelIndex]
-                val response = HttpUtils.sendImageRequest(
-                    provider.requestUrl, provider.modelId, imageBytes,
-                    provider.apiKey, MyConfig.SYSTEM_PROMPT, provider.endpointType
-                )
-                if (response == null) {
-                    handler.post {
-                        errorOutput.visibility = View.VISIBLE
-                        errorOutput.text = "请求失败,请检查网络或 API 配置(确认模型支持视觉)"
-                    }
-                    return@Runnable
-                }
-                val content = HttpUtils.extractContent(response, provider.endpointType)
-                handler.post {
-                    if (content.isEmpty()) {
-                        errorOutput.visibility = View.VISIBLE
-                        errorOutput.text = "解析失败:\n$response"
-                    } else {
-                        contentOutput.text = AnswerFormatter.format(content)
-                    }
-                }
+                // 记住截图,供后续在输入框补充追问;发起「图 + 补充文字」识别
+                lastCaptureBytes = imageBytes
+                handler.post { askWithImage(imageBytes, userText) }
             }).also { it.start() }
         }, 200) // 200ms 延迟确保窗口已隐藏
     }
@@ -1524,6 +1775,10 @@ class UnifiedFloatingService : Service() {
     private fun hideAllWindows() {
         if (isPopupMenuShow) showPopupMenu()
         if (isAskViewShow) showAskView()
+        if (isQiushiViewShow && this::qiushiContainerView.isInitialized && qiushiContainerView.isAttachedToWindow) {
+            isQiushiViewShow = false
+            windowManager.removeView(qiushiContainerView)
+        }
         if (isWebViewShow) showWebView()
         if (isSelectZoneViewShow) showSelectZoneView()
     }
@@ -1551,6 +1806,7 @@ class UnifiedFloatingService : Service() {
             askViewParams.flags = askViewParams.flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
             webViewParams.flags = webViewParams.flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
             selectZoneViewParams.flags = selectZoneViewParams.flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
+            qiushiViewParams.flags = qiushiViewParams.flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
             handler.post {
                 val btnView = floatToggleBtnView
                 if (btnView != null && btnView.isAttachedToWindow) {

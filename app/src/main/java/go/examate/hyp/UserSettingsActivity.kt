@@ -6,6 +6,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -49,11 +50,11 @@ import androidx.compose.ui.unit.sp
 import go.examate.hyp.config.PrefsManager
 import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.FrostedGlassCard
+import go.examate.hyp.ui.components.ProfileEditCard
 import go.examate.hyp.ui.components.LiquidGlassBackground
 import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.components.LiquidGlassToggle
-import go.examate.hyp.ui.theme.BgPrimary
 import go.examate.hyp.ui.theme.Divider as DividerColor
 import go.examate.hyp.ui.theme.ExamateTheme
 import go.examate.hyp.ui.theme.Primary
@@ -62,6 +63,7 @@ import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
 import go.examate.hyp.util.AvatarHelper
+import go.examate.hyp.util.ToastUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -72,17 +74,13 @@ class UserSettingsActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         setContent {
             ExamateTheme {
                 LiquidGlassBackground {
                     UserSettingsScreen(
                         prefs = prefs,
-                        deviceModel = android.os.Build.MODEL,
-                        onBack = { finish() },
-                        onNicknameSaved = { name ->
-                            prefs.nickname = name
-                            android.widget.Toast.makeText(this, "已保存", android.widget.Toast.LENGTH_SHORT).show()
-                        }
+                        onBack = { finish() }
                     )
                 }
             }
@@ -93,43 +91,16 @@ class UserSettingsActivity : ComponentActivity() {
 @Composable
 private fun UserSettingsScreen(
     prefs: PrefsManager,
-    deviceModel: String,
-    onBack: () -> Unit,
-    onNicknameSaved: (String) -> Unit
+    onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var nickInput by remember { mutableStateOf(prefs.nickname) }
     var school by remember { mutableStateOf(prefs.school) }
     var displayFields by remember { mutableStateOf(prefs.userDisplayFields) }
     var showSchoolPicker by remember { mutableStateOf(false) }
-    var avatarBitmap by remember { mutableStateOf<Bitmap?>(AvatarHelper.loadAvatar(context)) }
-
-    val displayName = nickInput.trim().ifEmpty { deviceModel }
-
-    // 图片选择器
-    val imagePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            scope.launch {
-                val success = withContext(Dispatchers.IO) {
-                    AvatarHelper.saveAvatar(context, uri)
-                }
-                if (success) {
-                    avatarBitmap = AvatarHelper.loadAvatar(context)
-                    android.widget.Toast.makeText(context, "头像已更新", android.widget.Toast.LENGTH_SHORT).show()
-                } else {
-                    android.widget.Toast.makeText(context, "头像保存失败", android.widget.Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-    }
 
     Column(
         Modifier
             .fillMaxSize()
-            .background(BgPrimary)
             .statusBarsPadding()
     ) {
         // ═══ 顶栏 ═══
@@ -161,68 +132,10 @@ private fun UserSettingsScreen(
                 .padding(bottom = 40.dp)
         ) {
 
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(4.dp))
 
-            // ═══ 昵称设置(含头像,集成一块) ═══
-            FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(18.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        // 头像(点击修改)
-                        Box(
-                            modifier = Modifier
-                                .size(52.dp)
-                                .clip(CircleShape)
-                                .background(SurfaceVariant)
-                                .clickable { imagePicker.launch("image/*") },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            val bmp = avatarBitmap
-                            if (bmp != null) {
-                                androidx.compose.foundation.Image(
-                                    bitmap = bmp.asImageBitmap(),
-                                    contentDescription = "头像",
-                                    modifier = Modifier.fillMaxSize().clip(CircleShape)
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Filled.Person,
-                                    contentDescription = "头像",
-                                    tint = TextHint,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
-                        }
-                        Spacer(Modifier.width(14.dp))
-                        Column(Modifier.weight(1f)) {
-                            OutlinedTextField(
-                                value = nickInput,
-                                onValueChange = { nickInput = it },
-                                modifier = Modifier.fillMaxWidth(),
-                                placeholder = { Text(displayName, color = TextHint, fontSize = 14.sp) },
-                                singleLine = true,
-                                shape = RoundedCornerShape(12.dp)
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(14.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        LiquidGlassButton(
-                            text = "保存",
-                            onClick = { onNicknameSaved(nickInput.trim()) },
-                            style = ButtonStyle.White,
-                            height = 42.dp,
-                            modifier = Modifier.weight(1f)
-                        )
-                        LiquidGlassButton(
-                            text = "清空",
-                            onClick = { nickInput = "" },
-                            style = ButtonStyle.Outline,
-                            height = 42.dp,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-            }
+            // ═══ 个人资料(头像 + 昵称 + 生日,复用组件) ═══
+            ProfileEditCard()
 
             Spacer(Modifier.height(24.dp))
 
@@ -264,11 +177,7 @@ private fun UserSettingsScreen(
                         prefs.campusUsername = ""
                         prefs.campusPassword = ""
                         school = ""
-                        android.widget.Toast.makeText(
-                            context,
-                            "已取消绑定",
-                            android.widget.Toast.LENGTH_SHORT
-                        ).show()
+                        ToastUtil.show(context, "已取消绑定")
                     },
                     style = ButtonStyle.Outline,
                     height = 40.dp

@@ -66,6 +66,8 @@ import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.SurfaceVariant
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
+import go.examate.hyp.ui.theme.HsxsError
+import go.examate.hyp.ui.theme.HsxsSuccess
 import go.examate.hyp.ui.theme.TextSecondary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -167,8 +169,8 @@ private fun ScrollAwarePublishButton(scrollState: ScrollState, onClick: () -> Un
 private fun LostItemCard(item: JSONObject, onClick: () -> Unit) {
     val content = item.optString("content", "").take(100)
     val typeNum = item.optInt("type", 1)
-    val typeLabel = if (typeNum == 2) "招领" else "寻物"
-    val typeColor = if (typeNum == 2) Color(0xFF1D9E75) else Color(0xFFE24B4A)
+    val typeLabel = if (typeNum == 2) "招领" else "失物"
+    val typeColor = if (typeNum == 2) HsxsSuccess else HsxsError
     val time = item.optString("createtime", "")
     val campus = item.optJSONObject("organise_info")?.optString("name", "") ?: ""
     val imagesArr = item.optJSONArray("images_arr")
@@ -248,8 +250,8 @@ private fun LostDetailView(id: String, repo: CampusRepository, prefs: PrefsManag
 
                 // ── 标签行 ──
                 val typeNum = it.optInt("type", 1)
-                val typeLabel = if (typeNum == 2) "招领" else "寻物"
-                val typeColor = if (typeNum == 2) Color(0xFF1D9E75) else Color(0xFFE24B4A)
+                val typeLabel = if (typeNum == 2) "招领" else "失物"
+                val typeColor = if (typeNum == 2) HsxsSuccess else HsxsError
                 val status = it.optString("status_text", "")
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -370,7 +372,7 @@ private fun PublishLostDialog(repo: CampusRepository, prefs: PrefsManager,
                 Text("类型", color = TextHint, fontSize = 12.sp)
                 Spacer(Modifier.height(4.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    listOf("1" to "寻物", "2" to "招领").forEach { (v, l) ->
+                    listOf("1" to "失物", "2" to "招领").forEach { (v, l) ->
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { type = v }) {
                             Box(Modifier.size(18.dp).clip(CircleShape).background(if (type == v) Primary else SurfaceVariant), contentAlignment = Alignment.Center) {
                                 if (type == v) Box(Modifier.size(8.dp).clip(CircleShape).background(Color.White))
@@ -404,7 +406,7 @@ private fun PublishLostDialog(repo: CampusRepository, prefs: PrefsManager,
                         }
                     }
                 }
-                if (result.isNotEmpty()) { Spacer(Modifier.height(8.dp)); Text(result, color = if (result.contains("成功")) Color(0xFF1D9E75) else Color(0xFFE24B4A), fontSize = 12.sp) }
+                if (result.isNotEmpty()) { Spacer(Modifier.height(8.dp)); Text(result, color = if (result.contains("成功")) HsxsSuccess else HsxsError, fontSize = 12.sp) }
                 Spacer(Modifier.height(8.dp))
             }
             Row(Modifier.fillMaxWidth().background(Color(0xFFF8F9FA)).padding(horizontal = 20.dp, vertical = 10.dp),
@@ -607,7 +609,7 @@ private fun SurveyDetailView(id: String, repo: CampusRepository, prefs: PrefsMan
             }
             Spacer(Modifier.height(16.dp))
             if (resultMsg.isNotEmpty()) {
-                Text(resultMsg, color = if (resultMsg.contains("成功")) Color(0xFF1D9E75) else Color(0xFFE24B4A), fontSize = 12.sp)
+                Text(resultMsg, color = if (resultMsg.contains("成功")) HsxsSuccess else HsxsError, fontSize = 12.sp)
                 Spacer(Modifier.height(8.dp))
             }
             LiquidGlassButton(text = if (submitting) "提交中..." else "提交问卷", onClick = {

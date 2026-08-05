@@ -12,13 +12,16 @@ data class ChatMsg(
     val isError: Boolean = false,
     val time: Long,
     val imageUriString: String? = null,
+    val imageUris: List<String> = emptyList(),
     val imageBase64: String? = null,
     val imageUrl: String? = null,
     val toolCalls: List<String> = emptyList(),
     val cards: List<ActionCard> = emptyList(),
     val filePath: String? = null,
     val toolSteps: List<ToolStep> = emptyList(),
-    val id: String = UUID.randomUUID().toString()
+    val id: String = UUID.randomUUID().toString(),
+    /** 父消息 id;null 表示根。构成对话树,用于分支/知识图谱 */
+    val parentId: String? = null
 )
 
 /** 工具调用步骤状态 */
@@ -53,7 +56,9 @@ data class ChatSession(
     val id: String,
     val title: String,
     val messages: List<ChatMsg>,
-    val updateTime: Long
+    val updateTime: Long,
+    /** 当前聚焦的叶子消息 id(分支对话);null 表示默认取最后一条 */
+    val activeLeafId: String? = null
 )
 
 object ChatHistoryManager {
@@ -75,6 +80,8 @@ object ChatHistoryManager {
                 val obj = arr.getJSONObject(i)
                 val msgArr = obj.optJSONArray("messages") ?: JSONArray()
                 val msgs = mutableListOf<ChatMsg>()
+                // 向后兼容:旧数据无 id/parentId 时,按存储顺序把每条挂到前一条,重建线性链
+                var prevId: String? = null
                 for (j in 0 until msgArr.length()) {
                     val m = msgArr.getJSONObject(j)
                     val toolCalls = m.optJSONArray("toolCalls")?.let { tools ->
@@ -100,6 +107,8 @@ object ChatHistoryManager {
                             )
                         }
                     }.orEmpty()
+                    val msgId = m.optString("id", "").ifEmpty { UUID.randomUUID().toString() }
+                    val parentId = m.optString("parentId", "").ifEmpty { prevId }
                     msgs.add(
                         ChatMsg(
                             role = m.optString("role"),
@@ -107,6 +116,7 @@ object ChatHistoryManager {
                             isError = m.optBoolean("isError", false),
                             time = m.optLong("time", System.currentTimeMillis()),
                             imageUriString = m.optString("imageUriString", "").ifEmpty { null },
+                            imageUris = m.optJSONArray("imageUris")?.let { a -> (0 until a.length()).map { a.optString(it) } }.orEmpty(),
                             imageBase64 = m.optString("imageBase64", "").ifEmpty { null },
                             imageUrl = m.optString("imageUrl", "").ifEmpty { null },
                             toolCalls = toolCalls,
@@ -123,16 +133,20 @@ object ChatHistoryManager {
                                         card = null  // card 不持久化(运行时产物)
                                     )
                                 }
-                            }.orEmpty()
+                            }.orEmpty(),
+                            id = msgId,
+                            parentId = parentId
                         )
                     )
+                    prevId = msgId
                 }
                 list.add(
                     ChatSession(
                         id = obj.optString("id", UUID.randomUUID().toString()),
                         title = obj.optString("title", "新对话"),
                         messages = msgs,
-                        updateTime = obj.optLong("updateTime", System.currentTimeMillis())
+                        updateTime = obj.optLong("updateTime", System.currentTimeMillis()),
+                        activeLeafId = obj.optString("activeLeafId", "").ifEmpty { null }
                     )
                 )
             }
@@ -172,11 +186,14 @@ object ChatHistoryManager {
             session.messages.forEach { msg ->
                 msgArr.put(
                     JSONObject().apply {
+                        put("id", msg.id)
+                        msg.parentId?.let { put("parentId", it) }
                         put("role", msg.role)
                         put("content", msg.content)
                         put("isError", msg.isError)
                         put("time", msg.time)
                         msg.imageUriString?.let { put("imageUriString", it) }
+                        if (msg.imageUris.isNotEmpty()) put("imageUris", JSONArray(msg.imageUris))
                         msg.imageBase64?.let { put("imageBase64", it) }
                         msg.imageUrl?.let { put("imageUrl", it) }
                         msg.filePath?.let { put("filePath", it) }
@@ -216,6 +233,7 @@ object ChatHistoryManager {
                     put("title", session.title)
                     put("messages", msgArr)
                     put("updateTime", session.updateTime)
+                    session.activeLeafId?.let { put("activeLeafId", it) }
                 }
             )
         }

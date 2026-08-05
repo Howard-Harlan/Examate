@@ -11,9 +11,7 @@ import go.examate.hyp.util.HttpUtils.SseEvent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
@@ -107,7 +105,7 @@ object AgentOrchestrator {
         // ★ 每次都发完整系统提示词(含工具列表+skills+memory),参考 rikkahub 依赖服务端 prompt caching。
         // 之前用精简提示词会导致 AI "忘记"有哪些工具可用(如查成绩不知道调 get_grades)。
         val systemPrompt = AgentTools.buildSystemPrompt(campusLoggedIn, agentsMode) +
-                SkillManager.buildSkillsPrompt(context) +
+                SkillManager.buildSkillsIndexPrompt(context) +
                 (if (prefs.isMemoryEnabled) MemoryManager.buildMemoryPrompt(context) else "") +
                 RENDERING_PROMPT
 
@@ -235,6 +233,17 @@ object AgentOrchestrator {
         // 注册工具到 ToolRegistry(幂等)
         ToolRegistry.registerDefaults(context)
 
+        // ★ 智能路由(仅校园登录态):先让 AI 极短规划,纯校园数据查询直出表格+卡片,
+        //   跳过 AI 合成那一轮(更快、直接);规划失败或非直出意图则回退到正常 agent 流程。
+        if (campusLoggedIn) {
+            emit(AgentEvent.Thinking("正在分析…"))
+            val plan = planRoute(context, provider, userMessage, history)
+            if (plan.mode == "direct" && plan.tools.isNotEmpty()) {
+                emitAll(executeDirect(context, plan.tools))
+                return@flow
+            }
+        }
+
         // ★ 原生 function calling 主路径(chat/anthropic 格式):工具通过 API tools 数组注入,
         //   AI 不会忘记工具格式/用错工具名,工具调用阶段非流式(快),最终文本假流式 emit。
         //   参考 rikkahub 的原生 function calling 实现。
@@ -251,7 +260,7 @@ object AgentOrchestrator {
         // 降级:prompt-based function calling(responses 等不支持原生 tools 的格式)
         // ★ 每次都发完整系统提示词(含工具列表+skills+memory),参考 rikkahub 依赖服务端 prompt caching
         val systemPrompt = AgentTools.buildSystemPrompt(campusLoggedIn, agentsMode) +
-                SkillManager.buildSkillsPrompt(context) +
+                SkillManager.buildSkillsIndexPrompt(context) +
                 (if (prefs.isMemoryEnabled) MemoryManager.buildMemoryPrompt(context) else "") +
                 RENDERING_PROMPT
 
@@ -290,6 +299,7 @@ object AgentOrchestrator {
                     }
                     is HttpUtils.SseEvent.ThinkToken -> { /* 思考过程暂不透出 */ }
                     is HttpUtils.SseEvent.Error -> { streamError = sse.message }
+                    is HttpUtils.SseEvent.ToolCalls -> { /* prompt-based 路径无原生工具调用 */ }
                     HttpUtils.SseEvent.Done -> { /* 流结束后统一处理 */ }
                 }
             }
@@ -349,7 +359,7 @@ object AgentOrchestrator {
                         val result = AgentTools.execute(context, call)
                         val output = if (result.success) result.output
                             else "执行失败: ${result.output}"
-                        val card = buildResultCard(call.name, call.arguments, result)
+                        val card = buildResultCard(context, call.name, call.arguments, result)
                         ToolExecResult(call, result, output, card)
                     }
                 }.map { it.await() }
@@ -398,6 +408,7 @@ object AgentOrchestrator {
                 }
                 is HttpUtils.SseEvent.ThinkToken -> {}
                 is HttpUtils.SseEvent.Error -> { streamError = sse.message }
+                is HttpUtils.SseEvent.ToolCalls -> {}
                 HttpUtils.SseEvent.Done -> {}
             }
         }
@@ -431,7 +442,7 @@ object AgentOrchestrator {
     ): Flow<AgentEvent> = flow {
         // 原生 FC:工具描述已通过 tools 数组注入,system prompt 只保留优先级指引和回复规范
         val systemPrompt = AgentTools.buildSystemPromptNative(campusLoggedIn) +
-                SkillManager.buildSkillsPrompt(context) +
+                SkillManager.buildSkillsIndexPrompt(context) +
                 (if (prefs.isMemoryEnabled) MemoryManager.buildMemoryPrompt(context) else "") +
                 RENDERING_PROMPT
 
@@ -445,56 +456,79 @@ object AgentOrchestrator {
         var imageBase64: String? = null
         var imageUrl: String? = null
         var filePath: String? = null
+        // 累积工具产出的真实卡片(余额/成绩/课表等),最终挂到回复消息上,避免卡片消失
+        val collectedCards = mutableListOf<go.examate.hyp.util.ActionCard>()
 
         for (iteration in 0 until MAX_ITERATIONS) {
-            // 非流式请求(带 tools):比流式快,SSE 开销小,工具调用结果结构化
-            val result = HttpUtils.sendChatWithToolsResult(
+            // ★ 流式请求(带 tools):文本按 API 真速逐字透出;若流中累积到 tool_calls 则本轮转为工具调用
+            val fullText = StringBuilder()
+            var toolCalls: List<NativeToolCall> = emptyList()
+            var streamError: String? = null
+            var toolSeen = false
+
+            HttpUtils.sendChatWithToolsStreamFlow(
                 provider.requestUrl, provider.modelId, messages,
                 provider.apiKey, systemPrompt, provider.enableThinking,
                 provider.endpointType, toolsJson
-            )
-            val response = when (result) {
-                is ApiResult.Success -> result.data
-                else -> {
-                    emit(AgentEvent.FinalReply(
-                        "请求失败: ${result.errorMessage()}", isError = true
-                    ))
-                    return@flow
+            ).collect { sse ->
+                when (sse) {
+                    is SseEvent.Token -> {
+                        fullText.append(sse.text)
+                        if (!toolSeen) emit(AgentEvent.FinalTextToken(sse.text))
+                    }
+                    is SseEvent.ThinkToken -> { /* 思考过程暂不透出 */ }
+                    is SseEvent.ToolCalls -> {
+                        toolCalls = sse.calls
+                        toolSeen = true
+                        // 本轮转为工具调用:清除已流出的前导文本
+                        emit(AgentEvent.ClearStream)
+                    }
+                    is SseEvent.Error -> { streamError = sse.message }
+                    SseEvent.Done -> {}
                 }
             }
 
-            val parsed = HttpUtils.extractNativeToolCalls(response, provider.endpointType)
+            if (streamError != null) {
+                // 若已流出正文且非工具轮,保留为最终回复;否则报错
+                if (!toolSeen && fullText.isNotBlank()) {
+                    val finalCards = (collectedCards + AgentTools.inferCampusCards(fullText.toString(), campusLoggedIn)).distinctBy { it.type }
+                    emit(AgentEvent.FinalTextEnd(finalCards, imageBase64, imageUrl, filePath))
+                } else {
+                    emit(AgentEvent.FinalReply("请求失败: $streamError", isError = true))
+                }
+                return@flow
+            }
 
-            if (parsed.toolCalls.isEmpty()) {
-                // 无工具调用:最终回复,假流式分片 emit(快速显示,无额外请求)
-                val text = parsed.text
+            if (toolCalls.isEmpty()) {
+                // 无工具调用:正文已真流式输出,收尾
+                val text = fullText.toString()
                 if (text.isEmpty()) {
                     emit(AgentEvent.FinalReply("AI 回复为空,请重试", isError = true))
                     return@flow
                 }
-                emitFinalTextStreaming(text)
                 val inferred = AgentTools.inferCampusCards(text, campusLoggedIn)
-                emit(AgentEvent.FinalTextEnd(inferred, imageBase64, imageUrl, filePath))
+                val finalCards = (collectedCards + inferred).distinctBy { it.type }
+                emit(AgentEvent.FinalTextEnd(finalCards, imageBase64, imageUrl, filePath))
                 return@flow
             }
 
             // 有工具调用:把 assistant 的 tool_calls 加入上下文
-            messages.add(FuncMessage.AssistantToolCall(parsed.text, parsed.toolCalls))
+            messages.add(FuncMessage.AssistantToolCall(fullText.toString(), toolCalls))
 
             // 透出 "开始执行" 事件
-            parsed.toolCalls.forEach { tc ->
+            toolCalls.forEach { tc ->
                 emit(AgentEvent.ToolStarted(tc.name, toolDisplayLabel(tc.name)))
             }
 
             // 并行执行工具
             val toolResults = coroutineScope {
-                parsed.toolCalls.map { tc ->
+                toolCalls.map { tc ->
                     async(Dispatchers.IO) {
                         val args = try { JSONObject(tc.arguments) } catch (_: Exception) { JSONObject() }
                         val call = AgentTools.ToolCall(tc.name, args)
                         val r = AgentTools.execute(context, call)
                         val output = if (r.success) r.output else "执行失败: ${r.output}"
-                        val card = buildResultCard(tc.name, args, r)
+                        val card = buildResultCard(context, tc.name, args, r)
                         Triple(tc, r, output to card)
                     }
                 }.map { it.await() }
@@ -504,6 +538,7 @@ object AgentOrchestrator {
             toolResults.forEach { (tc, r, pair) ->
                 val (output, card) = pair
                 emit(AgentEvent.ToolDone(tc.name, output, card, r.filePath))
+                if (card != null) collectedCards.add(card)
                 if (r.isImage && r.imageData != null) {
                     if (AgentTools.isBase64Image(r.imageData)) imageBase64 = r.imageData
                     else imageUrl = r.imageData
@@ -516,33 +551,141 @@ object AgentOrchestrator {
             }
         }
 
-        // 达到最大迭代:最后一次请求(tools=null 禁止再调工具)让 AI 总结
-        val lastResult = HttpUtils.sendChatWithToolsResult(
+        // 达到最大迭代:最后一次流式请求(tools=null 禁止再调工具)让 AI 总结
+        val fullText = StringBuilder()
+        var streamError: String? = null
+        HttpUtils.sendChatWithToolsStreamFlow(
             provider.requestUrl, provider.modelId, messages,
             provider.apiKey, systemPrompt, provider.enableThinking,
             provider.endpointType, null
-        )
-        val lastText = when (lastResult) {
-            is ApiResult.Success -> HttpUtils.extractNativeToolCalls(lastResult.data, provider.endpointType).text
-            else -> "已达到最大工具调用次数(${lastResult.errorMessage()})"
+        ).collect { sse ->
+            when (sse) {
+                is SseEvent.Token -> { fullText.append(sse.text); emit(AgentEvent.FinalTextToken(sse.text)) }
+                is SseEvent.Error -> { streamError = sse.message }
+                else -> {}
+            }
         }
-        emitFinalTextStreaming(lastText)
-        val inferred = AgentTools.inferCampusCards(lastText, campusLoggedIn)
-        emit(AgentEvent.FinalTextEnd(inferred, imageBase64, imageUrl, filePath))
+        if (streamError != null && fullText.isBlank()) {
+            emit(AgentEvent.FinalReply("已达到最大工具调用次数($streamError)", isError = true))
+            return@flow
+        }
+        val inferred = AgentTools.inferCampusCards(fullText.toString(), campusLoggedIn)
+        val finalCards = (collectedCards + inferred).distinctBy { it.type }
+        emit(AgentEvent.FinalTextEnd(finalCards, imageBase64, imageUrl, filePath))
     }
 
-    /** 假流式:把完整文本分片 emit FinalTextToken,模拟逐字输出效果(无额外网络请求) */
-    private suspend fun FlowCollector<AgentEvent>.emitFinalTextStreaming(text: String) {
-        if (text.isEmpty()) return
-        var i = 0
-        val chunkSize = 3
-        while (i < text.length) {
-            val end = (i + chunkSize).coerceAtMost(text.length)
-            emit(AgentEvent.FinalTextToken(text.substring(i, end)))
-            i = end
-            // 微小延迟让 UI 有"逐字"感,但不显著增加总时间
-            if (text.length > 60) delay(8)
+    // ═════════════════════════════
+    //  智能路由:AI 先规划,校园数据查询直出
+    // ═════════════════════════════
+
+    /** 可直出的校园数据工具(输出已是规范 Markdown,无需 AI 合成) */
+    private val CAMPUS_TOOL_NAMES = setOf(
+        "get_grades", "get_schedule", "get_today_schedule", "get_exam_schedule", "get_selected_courses",
+        "get_student_info", "get_balance", "get_water_balance", "get_ecard_bill", "get_score_summary",
+        "get_score_detail", "get_teaching_evaluation", "get_lost_found"
+    )
+
+    private data class PlannedTool(val name: String, val argsJson: String)
+    private data class RoutePlan(val mode: String, val tools: List<PlannedTool>)
+
+    private val ROUTE_PLANNER_PROMPT = """
+        你是意图路由器,只输出一个 JSON 对象:不要解释、不要 markdown、不要代码块。
+        判断用户「最新消息」的意图:
+        - direct:用户只是想查看某项校园数据 —— 哪怕只说了名称(如「课表」「成绩」「余额」「考试」「账单」),都属于 direct。列出要调用的工具。
+        - normal:需要多步推理、联网搜索、生成文件/图片、对已有数据做分析或比较、或只是普通聊天问答。
+        工具必须使用下列英文名之一:
+        课表/课程表=get_schedule; 今天的课/今日课=get_today_schedule; 成绩=get_grades; 考试=get_exam_schedule; 已选课程=get_selected_courses; 学生信息/个人信息=get_student_info; 一卡通余额=get_balance; 一卡通账单/消费=get_ecard_bill; 水卡/热水余额=get_water_balance; 第二课堂汇总=get_score_summary; 第二课堂明细=get_score_detail; 教学评价=get_teaching_evaluation; 失物招领=get_lost_found
+        成绩/课表/考试/已选课程可带 args: xn(学年) xq(学期),一般留空。
+        示例:
+        课表 → {"mode":"direct","tools":[{"name":"get_schedule","args":{}}]}
+        查下我的成绩 → {"mode":"direct","tools":[{"name":"get_grades","args":{}}]}
+        卡里还有多少钱 → {"mode":"direct","tools":[{"name":"get_balance","args":{}}]}
+        今天有什么课 → {"mode":"direct","tools":[{"name":"get_today_schedule","args":{}}]}
+        帮我分析这学期成绩 → {"mode":"normal"}
+        你好呀 → {"mode":"normal"}
+    """.trimIndent()
+
+    /** 轻量规划:一次非流式分类请求,返回路由决策(任何失败都回退 normal) */
+    private suspend fun planRoute(
+        context: Context, provider: ModelProvider,
+        userMessage: String, history: List<Pair<String, String>>
+    ): RoutePlan = withContext(Dispatchers.IO) {
+        try {
+            val msgs = mutableListOf<Pair<String, String>>()
+            history.takeLast(2).forEach { msgs.add(it) }
+            msgs.add("user" to userMessage)
+            val result = HttpUtils.sendChatWithHistoryResult(
+                provider.requestUrl, provider.modelId, msgs,
+                provider.apiKey, ROUTE_PLANNER_PROMPT, false, provider.endpointType
+            )
+            val text = when (result) {
+                is ApiResult.Success -> HttpUtils.extractContent(result.data, provider.endpointType)
+                else -> ""
+            }
+            parseRoutePlan(text)
+        } catch (_: Exception) {
+            RoutePlan("normal", emptyList())
         }
+    }
+
+    /** 从规划器回复中提取 JSON 并解析路由;仅保留已知校园工具,无有效工具则视为 normal */
+    private fun parseRoutePlan(text: String): RoutePlan {
+        val start = text.indexOf('{')
+        val end = text.lastIndexOf('}')
+        if (start < 0 || end <= start) return RoutePlan("normal", emptyList())
+        return try {
+            val json = JSONObject(text.substring(start, end + 1))
+            if (json.optString("mode", "normal") != "direct") return RoutePlan("normal", emptyList())
+            val tools = mutableListOf<PlannedTool>()
+            val arr = json.optJSONArray("tools")
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    // 兼容:元素为对象 {name,args},或直接是字符串工具名
+                    val o = arr.optJSONObject(i)
+                    val name = o?.optString("name", "") ?: arr.optString(i, "")
+                    if (name in CAMPUS_TOOL_NAMES) {
+                        val args = o?.optJSONObject("args")?.toString() ?: "{}"
+                        tools.add(PlannedTool(name, args))
+                    }
+                }
+            } else {
+                // 兼容:单个 "tools"/"tool" 字符串字段
+                val single = json.optString("tools", "").ifEmpty { json.optString("tool", "") }
+                if (single in CAMPUS_TOOL_NAMES) tools.add(PlannedTool(single, "{}"))
+            }
+            if (tools.isEmpty()) RoutePlan("normal", emptyList()) else RoutePlan("direct", tools)
+        } catch (_: Exception) {
+            RoutePlan("normal", emptyList())
+        }
+    }
+
+    /** 直出模式:本地执行校园工具,直接展示其 Markdown 输出(表格) + 汇总卡片,不走 AI 合成 */
+    private fun executeDirect(
+        context: Context, tools: List<PlannedTool>
+    ): Flow<AgentEvent> = flow {
+        val sb = StringBuilder()
+        val cards = mutableListOf<go.examate.hyp.util.ActionCard>()
+        var filePath: String? = null
+        var successCount = 0
+        for (pt in tools) {
+            emit(AgentEvent.ToolStarted(pt.name, toolDisplayLabel(pt.name)))
+            val args = try { JSONObject(pt.argsJson) } catch (_: Exception) { JSONObject() }
+            val call = AgentTools.ToolCall(pt.name, args)
+            val r = withContext(Dispatchers.IO) { AgentTools.execute(context, call) }
+            if (r.success) successCount++
+            // 去掉喂给 AI 的内部缓存标记,避免直出正文末尾出现悬空的 "(缓存)"
+            val output = if (r.success) r.output.removeSuffix("\n(缓存)") else "执行失败: ${r.output}"
+            val card = buildResultCard(context, pt.name, args, r)
+            // 直出模式:步骤只记简短状态,完整表格只放正文,避免同一份数据重复存储/展示
+            emit(AgentEvent.ToolDone(pt.name, if (r.success) "已获取数据" else output, card, r.filePath))
+            if (sb.isNotEmpty()) sb.append("\n\n")
+            sb.append(output)
+            if (card != null) cards.add(card)
+            if (r.filePath != null) filePath = r.filePath
+        }
+        // 全部失败(如会话过期)时标记为错误,避免被当成正常回复(错误样式 + 不触发记忆捕获)
+        val allFailed = tools.isNotEmpty() && successCount == 0
+        emit(AgentEvent.FinalReply(sb.toString(), cards = cards, isError = allFailed, filePath = filePath))
     }
 
     /** 工具名 → 中文标签(委托给 ToolRegistry) */
@@ -618,6 +761,7 @@ object AgentOrchestrator {
 
     /** 从工具结果中构建 ActionCard(余额/成绩等),支撑回复下方的可交互卡片 */
     private fun buildResultCard(
+        context: Context,
         toolName: String,
         args: JSONObject,
         result: AgentTools.ToolResult
@@ -625,15 +769,16 @@ object AgentOrchestrator {
         if (!result.success) return null
         return when (toolName) {
             "get_balance" -> {
-                val match = Regex("余额: ([\\d.]+) 元").find(result.output)
-                val amount = match?.groupValues?.get(1)
+                val amount = Regex("余额: ([\\d.]+) 元").find(result.output)?.groupValues?.get(1)
                 if (amount != null) {
+                    val account = Regex("账户名: (.+)").find(result.output)?.groupValues?.get(1)?.trim().orEmpty()
                     go.examate.hyp.util.ActionCard(
                         "ecard_balance", "一卡通余额", "¥$amount",
-                        mapOf("amount" to amount)
+                        mapOf("amount" to amount, "account" to account)
                     )
                 } else null
             }
+            "get_schedule", "get_today_schedule" -> buildScheduleCard(context, result.output)
             "get_grades" -> go.examate.hyp.util.ActionCard(
                 "campus_grades", "成绩查询", "已获取成绩数据"
             )
@@ -642,6 +787,63 @@ object AgentOrchestrator {
             )
             else -> null
         }
+    }
+
+    /**
+     * 构建今日课表卡片。
+     * 优先复用本地课程表模块数据(已按当前教学周精确过滤,与日视图一致,含今日代办);
+     * 仅当无本地课表时,才回退解析教务返回的表格(按星期匹配,不含周次)。
+     */
+    private fun buildScheduleCard(context: Context, fallbackOutput: String): go.examate.hyp.util.ActionCard? {
+        val today = java.time.LocalDate.now()
+        val dayChar = when (today.dayOfWeek.value) {
+            1 -> "一"; 2 -> "二"; 3 -> "三"; 4 -> "四"; 5 -> "五"; 6 -> "六"; else -> "日"
+        }
+        val weekday = "周$dayChar"
+
+        // ── 本地课程表(周次准确)──
+        if (go.examate.hyp.campus.model.ScheduleStorage.hasSchedule(context)) {
+            val courses = go.examate.hyp.campus.model.ScheduleStorage.coursesOn(context, today)
+            val todos = go.examate.hyp.campus.model.ScheduleStorage.todosOn(context, today)
+            val courseLines = courses.map { e ->
+                val sec = if (e.startSection == e.endSection) "第${e.startSection}节" else "第${e.startSection}-${e.endSection}节"
+                listOf(sec, e.courseName, e.classroom).filter { it.isNotEmpty() }.joinToString(" · ")
+            }
+            val todoLines = todos.map {
+                (if (it.done) "✓ " else "") + (if (it.time.isNotEmpty()) "${it.time} " else "") + it.title
+            }
+            val summary = when {
+                courseLines.isEmpty() && todoLines.isEmpty() -> "$weekday · 今日无课"
+                courseLines.isEmpty() -> "$weekday · 今日无课 · ${todoLines.size} 待办"
+                todoLines.isEmpty() -> "$weekday · ${courseLines.size} 节课"
+                else -> "$weekday · ${courseLines.size} 节课 · ${todoLines.size} 待办"
+            }
+            return go.examate.hyp.util.ActionCard(
+                "campus_schedule", "今日课表", summary,
+                mapOf("weekday" to weekday, "today" to courseLines.joinToString("\n"), "todos" to todoLines.joinToString("\n"))
+            )
+        }
+
+        // ── 回退:无本地课表时,解析教务返回的表格(按星期,不含周次)──
+        val dayNum = today.dayOfWeek.value.toString()
+        val list = mutableListOf<String>()
+        fallbackOutput.lineSequence().forEach { raw ->
+            val line = raw.trim()
+            if (!line.startsWith("|")) return@forEach
+            val cells = line.trim('|').split("|").map { it.trim() }
+            if (cells.size < 5) return@forEach
+            val day = cells[0]
+            if (day == "星期" || day.startsWith("---")) return@forEach
+            if (day.contains(dayChar) || day.contains(dayNum)) {
+                val parts = listOf(cells[1], cells[2], cells.getOrElse(4) { "" }).filter { it.isNotEmpty() }
+                if (parts.isNotEmpty()) list.add(parts.joinToString(" · "))
+            }
+        }
+        val summary = if (list.isEmpty()) "今日无课" else "$weekday · ${list.size} 节课"
+        return go.examate.hyp.util.ActionCard(
+            "campus_schedule", "今日课表", summary,
+            mapOf("weekday" to weekday, "today" to list.joinToString("\n"))
+        )
     }
 
     /**

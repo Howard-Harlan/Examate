@@ -11,5 +11,15 @@
         <item name="android:textColorPrimary">@color/text_primary</item>
         <item name="android:textColorSecondary">@color/text_secondary</item>
         <item name="android:textColorHint">@color/text_hint</item>
+        <!-- 全局页面转场:Telegram 式左右滑动(见 res/anim) -->
+        <item name="android:windowAnimationStyle">@style/ActivityTransition</item>
+    </style>
+
+    <!-- 页面进出转场动画(打开:右滑入/旧页左移;返回:反向) -->
+    <style name="ActivityTransition">
+        <item name="android:activityOpenEnterAnimation">@anim/activity_open_enter</item>
+        <item name="android:activityOpenExitAnimation">@anim/activity_open_exit</item>
+        <item name="android:activityCloseEnterAnimation">@anim/activity_close_enter</item>
+        <item name="android:activityCloseExitAnimation">@anim/activity_close_exit</item>
     </style>
 </resources>

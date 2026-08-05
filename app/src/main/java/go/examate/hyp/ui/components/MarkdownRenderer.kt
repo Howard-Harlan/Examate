@@ -10,8 +10,10 @@ import android.webkit.WebViewClient
 import android.widget.TextView
 import java.util.concurrent.atomic.AtomicInteger
 import android.widget.Toast
+import go.examate.hyp.util.ToastUtil
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,11 +30,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -40,15 +46,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -64,6 +76,7 @@ fun MarkdownText(
     modifier: Modifier = Modifier,
     textColor: Color = TextPrimary,
     fontSize: Int = 14,
+    fontFamily: androidx.compose.ui.text.font.FontFamily? = null,
     isStreaming: Boolean = false
 ) {
     // ★ 统一用 Compose 原生渲染(参考 rikkahub 的纯 AST 路径)。
@@ -89,23 +102,33 @@ fun MarkdownText(
         return
     }
 
+    // 自定义正文字体:通过 LocalTextStyle 注入,不影响代码(等宽)与数学(KaTeX 图片)
+    androidx.compose.runtime.CompositionLocalProvider(
+        androidx.compose.material3.LocalTextStyle provides
+            (if (fontFamily != null) androidx.compose.material3.LocalTextStyle.current.copy(fontFamily = fontFamily)
+             else androidx.compose.material3.LocalTextStyle.current)
+    ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         blocks.forEach { block ->
             when (block) {
-                is MdBlock.Heading -> HeadingBlock(block, textColor, fontSize)
+                is MdBlock.Heading -> HeadingBlock(block, textColor, fontSize, isStreaming)
                 is MdBlock.CodeBlock -> RenderedCodeBlock(block, forceText = false, isStreaming = isStreaming)
-                is MdBlock.MathBlock -> MathTextBlock(block.latex, textColor, fontSize)
-                is MdBlock.ListBlock -> ListBlockView(block, textColor, fontSize)
-                is MdBlock.Quote -> QuoteBlockView(block, textColor, fontSize)
-                is MdBlock.Table -> TableRenderBox(block)
+                is MdBlock.MathBlock -> MathImage(
+                    block.latex, display = true, textColor = textColor,
+                    fontSize = fontSize, enabled = !isStreaming
+                ) { MathTextBlock(block.latex, textColor, fontSize) }
+                is MdBlock.ListBlock -> ListBlockView(block, textColor, fontSize, isStreaming)
+                is MdBlock.Quote -> QuoteBlockView(block, textColor, fontSize, isStreaming)
+                is MdBlock.Table -> TableRenderBox(block, isStreaming)
                 is MdBlock.Hr -> HorizontalDivider(
                     color = textColor.copy(0.15f),
                     thickness = 0.5.dp,
                     modifier = Modifier.padding(vertical = 4.dp)
                 )
-                is MdBlock.Paragraph -> ParagraphBlock(block.text, textColor, fontSize, forceText = false)
+                is MdBlock.Paragraph -> ParagraphBlock(block.text, textColor, fontSize, forceText = false, isStreaming = isStreaming)
             }
         }
+    }
     }
 }
 
@@ -167,6 +190,65 @@ private fun MathTextBlock(latex: String, textColor: Color, fontSize: Int) {
                 .horizontalScroll(rememberScrollState())
                 .padding(vertical = 4.dp)
         )
+    }
+}
+
+/** Compose 颜色 → CSS #RRGGBB */
+private fun colorToHex(c: Color): String = String.format("#%06X", 0xFFFFFF and c.toArgb())
+
+/**
+ * 数学/化学公式渲染:优先用 KaTeX 离屏渲染成图片(缓存),渲染前/失败/无字体/流式中回退到 [fallback]。
+ * @param display true=块级($$),false=行内($)
+ * @param enabled false(如流式生成中)时直接走 fallback,不触发渲染
+ */
+@Composable
+private fun MathImage(
+    latex: String,
+    display: Boolean,
+    textColor: Color,
+    fontSize: Int,
+    enabled: Boolean,
+    fallback: @Composable () -> Unit
+) {
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val trimmed = latex.trim()
+    if (!enabled || trimmed.isEmpty() || !KatexRenderer.fontsAvailable(context)) {
+        fallback(); return
+    }
+    val colorHex = remember(textColor) { colorToHex(textColor) }
+    val key = remember(trimmed, display, colorHex, fontSize) {
+        KatexRenderer.keyOf(trimmed, display, colorHex, fontSize)
+    }
+    var bmp by remember(key) { mutableStateOf(KatexRenderer.cached(key)) }
+    LaunchedEffect(key) {
+        if (bmp == null) KatexRenderer.request(context, trimmed, display, colorHex, fontSize) { bmp = it }
+    }
+    val b = bmp
+    if (b == null) {
+        fallback()   // 渲染完成前显示原生文本占位,完成后无缝替换为图片
+    } else {
+        val wDp = with(density) { b.width.toDp() }
+        val hDp = with(density) { b.height.toDp() }
+        val img = @Composable {
+            Image(
+                bitmap = b.asImageBitmap(),
+                contentDescription = trimmed,
+                modifier = Modifier.width(wDp).height(hDp)
+            )
+        }
+        if (display) {
+            // 块级:居中,超宽可横向滚动
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(vertical = 4.dp),
+                contentAlignment = androidx.compose.ui.Alignment.Center
+            ) { img() }
+        } else {
+            img()
+        }
     }
 }
 
@@ -364,7 +446,7 @@ private fun splitTableRow(row: String): List<String> =
     row.trim().trim('|').split("|").map { it.trim() }
 
 @Composable
-private fun ParagraphBlock(text: String, textColor: Color, fontSize: Int, forceText: Boolean = false) {
+private fun ParagraphBlock(text: String, textColor: Color, fontSize: Int, forceText: Boolean = false, isStreaming: Boolean = false) {
     val raw = text.trim()
     val prettyJson = remember(raw) { prettyJsonOrNull(raw) }
     val csv = remember(raw) { parseCsvOrNull(raw) }
@@ -374,39 +456,138 @@ private fun ParagraphBlock(text: String, textColor: Color, fontSize: Int, forceT
             CodeText(prettyJson, Modifier.fillMaxWidth())
         }
         csv != null -> CsvRenderBox(csv, raw)
-        else -> {
-            val segments = remember(text) { splitInlineContent(text) }
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                segments.forEach { seg ->
-                    when (seg.kind) {
-                        // 行内数学:直接融入文段(无框),用衬线斜体示意数学语义。
-                        // 块级公式 $$...$$ 用 MathTextBlock 原生文本渲染。
-                        InlineKind.Math -> Text(
-                            text = seg.text,
-                            fontFamily = FontFamily.Serif,
-                            fontStyle = FontStyle.Italic,
-                            color = textColor.copy(0.85f),
+        else -> InlineBlock(text, textColor, fontSize, isStreaming, forceText)
+    }
+}
+
+/**
+ * 行内块统一入口(段落/列表项共用):
+ * 含化学结构式($smiles{})→分段渲染(SMILES 需整块);否则→真·内联(文本+行内数学同流)。
+ */
+@Composable
+private fun InlineBlock(text: String, textColor: Color, fontSize: Int, isStreaming: Boolean, forceText: Boolean = false) {
+    if (text.contains("\$smiles{")) {
+        InlineContent(text, textColor, fontSize, isStreaming, forceText)
+    } else {
+        RichInlineText(text, textColor, fontSize, isStreaming)
+    }
+}
+
+/**
+ * 行内内容渲染(文本/行内数学/SMILES 混排),供段落、列表项复用。
+ * 含 `$...$`/`$smiles{}` 时拆成多段逐行渲染;纯文本则一段渲染。
+ */
+@Composable
+private fun InlineContent(text: String, textColor: Color, fontSize: Int, isStreaming: Boolean, forceText: Boolean = false) {
+    val segments = remember(text) { splitInlineContent(text) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        segments.forEach { seg ->
+            when (seg.kind) {
+                InlineKind.Math -> MathImage(
+                    seg.text, display = false, textColor = textColor,
+                    fontSize = fontSize, enabled = !isStreaming
+                ) {
+                    Text(
+                        text = seg.text,
+                        fontFamily = FontFamily.Serif,
+                        fontStyle = FontStyle.Italic,
+                        color = textColor.copy(0.85f),
+                        fontSize = fontSize.sp,
+                        modifier = Modifier.padding(horizontal = 2.dp)
+                    )
+                }
+                InlineKind.Smiles -> if (forceText) FallbackFormula(seg.text) else RenderBox(title = "SMILES", raw = seg.text, exportText = seg.text) {
+                    SmilesWebView(seg.text, modifier = Modifier.fillMaxWidth().height(210.dp))
+                }
+                InlineKind.Text -> if (seg.text.isNotBlank()) {
+                    SelectionContainer {
+                        Text(
+                            text = renderInline(seg.text, textColor),
+                            color = textColor,
                             fontSize = fontSize.sp,
-                            modifier = Modifier.padding(horizontal = 2.dp)
+                            lineHeight = (fontSize + 6).sp
                         )
-                        InlineKind.Smiles -> if (forceText) FallbackFormula(seg.text) else RenderBox(title = "SMILES", raw = seg.text, exportText = seg.text) {
-                            SmilesWebView(seg.text, modifier = Modifier.fillMaxWidth().height(210.dp))
-                        }
-                        InlineKind.Text -> if (seg.text.isNotBlank()) {
-                            SelectionContainer {
-                                Text(
-                                    text = renderInline(seg.text, textColor),
-                                    color = textColor,
-                                    fontSize = fontSize.sp,
-                                    lineHeight = (fontSize + 6).sp
-                                )
-                            }
-                        }
                     }
                 }
             }
         }
     }
+}
+
+/** 行内数学正则(仅 $...$,不跨行);供 RichInlineText 提取内联公式 */
+private val INLINE_MATH_REGEX = Regex("\\${'$'}([^${'$'}\n]+)\\${'$'}")
+
+/**
+ * 富行内文本:用 InlineTextContent 让 $...$ 行内数学「真正内联」于文字流,
+ * 适用于表格单元格、标题、引用块等任意 Text 语境。
+ * 占位符先用估算尺寸,图片就绪后重组用真实尺寸(类图片加载)。
+ * 无行内数学 / 无字体 / 流式中 → 退回普通 renderInline。
+ */
+@Composable
+private fun RichInlineText(
+    text: String,
+    textColor: Color,
+    fontSize: Int,
+    isStreaming: Boolean,
+    fontWeight: FontWeight? = null,
+    fontStyle: FontStyle? = null
+) {
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val hasMath = remember(text) { text.contains('$') && INLINE_MATH_REGEX.containsMatchIn(text) }
+    if (!hasMath || isStreaming || !KatexRenderer.fontsAvailable(context)) {
+        Text(
+            renderInline(text, textColor), color = textColor, fontSize = fontSize.sp,
+            fontWeight = fontWeight, fontStyle = fontStyle, lineHeight = (fontSize + 6).sp
+        )
+        return
+    }
+    val colorHex = remember(textColor) { colorToHex(textColor) }
+    val bitmaps = remember(text) { mutableStateMapOf<String, android.graphics.Bitmap>() }
+    LaunchedEffect(text, colorHex, fontSize) {
+        INLINE_MATH_REGEX.findAll(text).map { it.groupValues[1] }.distinct().forEach { latex ->
+            KatexRenderer.request(context, latex, false, colorHex, fontSize) { b ->
+                if (b != null) bitmaps[latex] = b
+            }
+        }
+    }
+    val inlineContent = HashMap<String, InlineTextContent>()
+    var idx = 0
+    val annotated = buildAnnotatedString {
+        var last = 0
+        INLINE_MATH_REGEX.findAll(text).forEach { m ->
+            if (m.range.first > last) parseInlineRec(text.substring(last, m.range.first), textColor, SpanStyle())
+            val latex = m.groupValues[1]
+            val id = "m${idx++}"
+            val bmp = bitmaps[latex]
+            val wSp: TextUnit
+            val hSp: TextUnit
+            if (bmp != null) {
+                wSp = with(density) { bmp.width.toSp() }
+                hSp = with(density) { bmp.height.toSp() }
+            } else {
+                wSp = (fontSize * 0.62 * latex.length).coerceIn(fontSize.toDouble(), 320.0).sp
+                hSp = (fontSize * 1.25).sp
+            }
+            appendInlineContent(id, latex)
+            inlineContent[id] = InlineTextContent(
+                Placeholder(wSp, hSp, PlaceholderVerticalAlign.TextCenter)
+            ) {
+                if (bmp != null) {
+                    Image(bmp.asImageBitmap(), contentDescription = latex, modifier = Modifier.fillMaxSize())
+                } else {
+                    Text(latex, fontFamily = FontFamily.Serif, fontStyle = FontStyle.Italic,
+                        color = textColor.copy(0.85f), fontSize = fontSize.sp, maxLines = 1)
+                }
+            }
+            last = m.range.last + 1
+        }
+        if (last < text.length) parseInlineRec(text.substring(last), textColor, SpanStyle())
+    }
+    Text(
+        annotated, inlineContent = inlineContent, color = textColor, fontSize = fontSize.sp,
+        fontWeight = fontWeight, fontStyle = fontStyle, lineHeight = (fontSize + 6).sp
+    )
 }
 
 @Composable
@@ -433,20 +614,25 @@ private fun RenderedCodeBlock(block: MdBlock.CodeBlock, forceText: Boolean = fal
             }
         }
         lang in setOf("tex", "latex", "math") -> RenderBox(title = "LaTeX", raw = block.code, exportText = block.code) {
-            // ★ 用原生文本展示数学公式,不用 MathWebView(避免渲染失败/内容丢失)
-            SelectionContainer {
-                Text(
-                    text = block.code,
-                    color = TextPrimary.copy(0.9f),
-                    fontSize = 13.sp,
-                    lineHeight = 20.sp,
-                    fontStyle = FontStyle.Italic,
-                    fontFamily = FontFamily.Serif,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(vertical = 4.dp)
-                )
+            // 优先 KaTeX 离屏渲染成图;无字体/失败/流式中回退到原生文本
+            MathImage(
+                block.code, display = true, textColor = TextPrimary,
+                fontSize = 14, enabled = !isStreaming
+            ) {
+                SelectionContainer {
+                    Text(
+                        text = block.code,
+                        color = TextPrimary.copy(0.9f),
+                        fontSize = 13.sp,
+                        lineHeight = 20.sp,
+                        fontStyle = FontStyle.Italic,
+                        fontFamily = FontFamily.Serif,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(vertical = 4.dp)
+                    )
+                }
             }
         }
         else -> GenericCodeBlock(block)
@@ -575,10 +761,10 @@ private fun CodeText(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun TableRenderBox(block: MdBlock.Table) {
+private fun TableRenderBox(block: MdBlock.Table, isStreaming: Boolean = false) {
     val csv = tableToCsv(block.headers, block.rows)
     RenderBox(title = "Table", raw = csv, exportText = csv) {
-        TableView(block.headers, block.rows)
+        TableView(block.headers, block.rows, isStreaming)
     }
 }
 
@@ -587,39 +773,54 @@ private fun CsvRenderBox(rows: List<List<String>>, raw: String) {
     val headers = rows.firstOrNull().orEmpty()
     val body = rows.drop(1)
     RenderBox(title = "CSV", raw = raw, exportText = raw) {
-        TableView(headers, body)
+        TableView(headers, body, false)
     }
 }
 
 @Composable
-private fun TableView(headers: List<String>, rows: List<List<String>>) {
+private fun TableView(headers: List<String>, rows: List<List<String>>, isStreaming: Boolean = false) {
     val scroll = rememberScrollState()
+    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+    val density = LocalDensity.current
+    val colCount = maxOf(headers.size, rows.maxOfOrNull { it.size } ?: 0)
+    // 量出每列最大内容宽度并统一列宽 → 跨行对齐(修复"部分行偏移";列宽含内边距与余量)
+    val colWidths = remember(headers, rows) {
+        val style = androidx.compose.ui.text.TextStyle(fontSize = 12.sp)
+        List(colCount) { c ->
+            val cells = buildList {
+                add(headers.getOrNull(c).orEmpty())
+                rows.forEach { add(it.getOrNull(c).orEmpty()) }
+            }
+            val maxPx = cells.maxOf { measurer.measure(renderInline(it, TextPrimary), style = style).size.width }
+            with(density) { maxPx.toDp() } + 24.dp
+        }
+    }
     Column(
         Modifier
-            .fillMaxWidth()
             .horizontalScroll(scroll)
             .clip(RoundedCornerShape(8.dp))
             .background(Color.White)
     ) {
         if (headers.isNotEmpty()) {
-            Row(Modifier.background(Color(0xFFEFF3FA)).padding(vertical = 7.dp, horizontal = 8.dp)) {
-                headers.forEach { cell ->
-                    Text(
-                        cell, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.widthIn(min = 80.dp).padding(horizontal = 4.dp)
-                    )
+            Row(Modifier.background(Color(0xFFEFF3FA)).padding(vertical = 7.dp)) {
+                repeat(colCount) { c ->
+                    Box(Modifier.width(colWidths[c]).padding(horizontal = 8.dp)) {
+                        RichInlineText(headers.getOrNull(c).orEmpty(), TextPrimary, 12, isStreaming, fontWeight = FontWeight.SemiBold)
+                    }
                 }
             }
         }
-        rows.forEach { row ->
+        rows.forEachIndexed { rIdx, row ->
             HorizontalDivider(color = Color(0x11000000), thickness = 0.5.dp)
-            Row(Modifier.padding(vertical = 7.dp, horizontal = 8.dp)) {
-                val count = maxOf(headers.size, row.size)
-                repeat(count) { index ->
-                    Text(
-                        row.getOrNull(index).orEmpty(), color = TextPrimary, fontSize = 12.sp, lineHeight = 16.sp,
-                        modifier = Modifier.widthIn(min = 80.dp).padding(horizontal = 4.dp)
-                    )
+            Row(
+                Modifier
+                    .background(if (rIdx % 2 == 1) Color(0xFFF7F9FC) else Color.White)
+                    .padding(vertical = 7.dp)
+            ) {
+                repeat(colCount) { index ->
+                    Box(Modifier.width(colWidths[index]).padding(horizontal = 8.dp)) {
+                        RichInlineText(row.getOrNull(index).orEmpty(), TextPrimary, 12, isStreaming)
+                    }
                 }
             }
         }
@@ -627,26 +828,19 @@ private fun TableView(headers: List<String>, rows: List<List<String>>) {
 }
 
 @Composable
-private fun HeadingBlock(block: MdBlock.Heading, textColor: Color, baseSize: Int) {
+private fun HeadingBlock(block: MdBlock.Heading, textColor: Color, baseSize: Int, isStreaming: Boolean = false) {
     val size = when (block.level) {
         1 -> baseSize + 8
         2 -> baseSize + 6
         3 -> baseSize + 4
         else -> baseSize + 2
     }
-    SelectionContainer {
-        Text(
-            text = renderInline(block.text, textColor),
-            color = textColor,
-            fontSize = size.sp,
-            fontWeight = FontWeight.Bold,
-            lineHeight = (size + 6).sp
-        )
-    }
+    // 标题:不再包 SelectionContainer(屏蔽系统长按选中,交由自定义长按逻辑处理)
+    RichInlineText(block.text, textColor, size, isStreaming, fontWeight = FontWeight.Bold)
 }
 
 @Composable
-private fun ListBlockView(block: MdBlock.ListBlock, textColor: Color, fontSize: Int) {
+private fun ListBlockView(block: MdBlock.ListBlock, textColor: Color, fontSize: Int, isStreaming: Boolean = false) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         block.items.forEachIndexed { idx, item ->
             Row(Modifier.padding(start = (item.level * 12).dp)) {
@@ -655,28 +849,22 @@ private fun ListBlockView(block: MdBlock.ListBlock, textColor: Color, fontSize: 
                     item.checked == true -> "☑ "
                     item.checked == false -> "☐ "
                     item.ordered -> "${idx + 1}. "
-                    else -> "- "
+                    else -> "• "
                 }
                 Text(
                     text = prefix,
                     color = if (item.checked == true) textColor.copy(0.5f) else textColor,
                     fontSize = fontSize.sp
                 )
-                SelectionContainer {
-                    Text(
-                        text = renderInline(item.text, textColor),
-                        color = if (item.checked == true) textColor.copy(0.5f) else textColor,
-                        fontSize = fontSize.sp,
-                        lineHeight = (fontSize + 6).sp
-                    )
-                }
+                val itemColor = if (item.checked == true) textColor.copy(0.5f) else textColor
+                InlineBlock(item.text, itemColor, fontSize, isStreaming)
             }
         }
     }
 }
 
 @Composable
-private fun QuoteBlockView(block: MdBlock.Quote, textColor: Color, fontSize: Int) {
+private fun QuoteBlockView(block: MdBlock.Quote, textColor: Color, fontSize: Int, isStreaming: Boolean = false) {
     // ★ 引用块样式增强(参考 rikkahub:左竖线 + 背景色 + 内边距,视觉层次更清晰)
     Box(
         Modifier
@@ -692,15 +880,7 @@ private fun QuoteBlockView(block: MdBlock.Quote, textColor: Color, fontSize: Int
                     .background(textColor.copy(0.3f))
             )
             Spacer(Modifier.width(10.dp))
-            SelectionContainer {
-                Text(
-                    text = renderInline(block.text, textColor),
-                    color = textColor.copy(0.8f),
-                    fontSize = fontSize.sp,
-                    fontStyle = FontStyle.Italic,
-                    lineHeight = (fontSize + 6).sp
-                )
-            }
+            RichInlineText(block.text, textColor.copy(0.8f), fontSize, isStreaming, fontStyle = FontStyle.Italic)
         }
     }
 }
@@ -896,7 +1076,7 @@ private fun csvEscape(value: String): String =
 private fun copyText(context: Context, text: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
     clipboard.setPrimaryClip(ClipData.newPlainText("content", text))
-    Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
+    ToastUtil.show(context, "已复制")
 }
 
 private fun shareText(context: Context, title: String, text: String) {

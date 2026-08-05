@@ -17,7 +17,8 @@ android {
 
     signingConfigs {
         release {
-            storeFile file(props.getProperty('keystore.file', 'examate-release.jks'))
+            // keystore 文件统一放在 app/ 模块下,显式用 rootProject.file 避免歧义
+            storeFile rootProject.file("app/${props.getProperty('keystore.file', 'examate-release.jks')}")
             storePassword props.getProperty('keystore.password', '')
             keyAlias props.getProperty('keystore.alias', '')
             keyPassword props.getProperty('keystore.keyPassword', '')
@@ -27,11 +28,16 @@ android {
     defaultConfig {
         applicationId "go.examate.hyp"
         minSdk 31
-        targetSdk 35
-        versionCode 6
-        versionName "1.1"
+        targetSdk 36
+        versionCode 7
+        versionName "1.2"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        // 限定 QuickJS 等原生库 ABI:仅 arm64-v8a(当前设备主流,控制体积;老 armv7 机占比极低)
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
     }
 
     buildTypes {
@@ -73,6 +79,12 @@ dependencies {
     // OkHttp: 校园 API 客户端(淮北师范大学 CAS/教务/一卡通/第二课堂)
     implementation libs.okhttp
 
+    // jsoup: legado 书源 HTML 解析(class./id./tag. 选择器)
+    implementation libs.jsoup
+
+    // QuickJS: 执行 legado 书源内嵌 JS(@js/<js>),沙箱内只注入受控 java.* 方法
+    implementation libs.quickjs.wrapper
+
     // ViewModel for Compose
     implementation libs.lifecycle.viewmodel.compose
     implementation libs.lifecycle.runtime.compose
@@ -85,6 +97,7 @@ dependencies {
     implementation libs.compose.ui.tooling.preview
     implementation libs.compose.material3
     implementation libs.compose.material.icons.core
+    implementation libs.compose.material.icons.extended
     implementation libs.compose.foundation
     debugImplementation libs.compose.ui.tooling
 

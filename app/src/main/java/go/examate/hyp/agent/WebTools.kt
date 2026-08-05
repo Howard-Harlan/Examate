@@ -34,41 +34,34 @@ object WebTools {
 
     private val WebSearch = object : ToolRegistry.Tool {
         override val name = "web_search"
-        override val description = "联网搜索获取实时信息(新闻、天气、最新数据等)"
+        override val description = "联网搜索获取实时信息(新闻、天气、最新数据等)。不要用此工具查询校园信息"
         override val category = ToolRegistry.Category.SAFE
         override val parametersHint = "query(搜索关键词,必填)"
+        override val params = listOf(ToolRegistry.ParamDef("query", "string", "搜索关键词", true))
 
         override suspend fun execute(context: Context, args: JSONObject): ToolRegistry.Result {
             val query = args.optString("query", "").ifEmpty { return ToolRegistry.Result(false, "缺少 query 参数") }
             return try {
                 val encoded = URLEncoder.encode(query, "UTF-8")
-                // 使用 DuckDuckGo Instant Answer API(无需 API Key)
-                val url = "https://api.duckduckgo.com/?q=$encoded&format=json&no_html=1&skip_disambig=1"
-                val raw = httpGet(url, mapOf("Accept" to "application/json")) ?: return ToolRegistry.Result(false, "搜索请求失败")
-                val resp = JSONObject(raw)
+                // 抓取 Bing 国内站搜索结果页并解析(无需 API Key;DuckDuckGo 国内不可访问)
+                val url = "https://cn.bing.com/search?q=$encoded&ensearch=0"
+                val html = httpGet(url, mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept-Language" to "zh-CN,zh;q=0.9",
+                    "Accept" to "text/html,application/xhtml+xml"
+                )) ?: return ToolRegistry.Result(false, "搜索请求失败")
+                val hits = parseBingResults(html)
                 val sb = StringBuilder("搜索结果: $query\n\n")
-
-                val abstract = resp.optString("AbstractText", "")
-                if (abstract.isNotEmpty()) {
-                    sb.append("$abstract\n")
-                    resp.optString("AbstractURL", "").let { if (it.isNotEmpty()) sb.append("来源: $it\n") }
-                }
-
-                val topics = resp.optJSONArray("RelatedTopics")
-                if (topics != null && topics.length() > 0) {
-                    sb.append("\n相关结果:\n")
-                    val count = minOf(topics.length(), 8)
-                    for (i in 0 until count) {
-                        val topic = topics.optJSONObject(i)
-                        val text = topic?.optString("Text", "") ?: ""
-                        if (text.isNotEmpty()) sb.append("${i + 1}. $text\n")
+                if (hits.isEmpty()) {
+                    sb.append("未找到结果,建议用 web_fetch 抓取具体网页。")
+                } else {
+                    hits.take(8).forEachIndexed { i, r ->
+                        sb.append("${i + 1}. ${r.title}\n")
+                        if (r.snippet.isNotEmpty()) sb.append("   ${r.snippet}\n")
+                        if (r.url.isNotEmpty()) sb.append("   ${r.url}\n")
                     }
                 }
-
-                if (abstract.isEmpty() && (topics == null || topics.length() == 0)) {
-                    sb.append("未找到直接结果,建议用 web_fetch 抓取具体网页。")
-                }
-                ToolRegistry.Result(true, sb.toString())
+                ToolRegistry.Result(true, sb.toString().trimEnd())
             } catch (e: Exception) {
                 Log.e(TAG, "web_search failed", e)
                 ToolRegistry.Result(false, "搜索失败: ${e.message}")
@@ -81,6 +74,7 @@ object WebTools {
         override val description = "抓取指定 URL 的网页内容(提取文本)"
         override val category = ToolRegistry.Category.SAFE
         override val parametersHint = "url(网址,必填)"
+        override val params = listOf(ToolRegistry.ParamDef("url", "string", "网页地址", true))
 
         override suspend fun execute(context: Context, args: JSONObject): ToolRegistry.Result {
             val url = args.optString("url", "").ifEmpty { return ToolRegistry.Result(false, "缺少 url 参数") }
@@ -108,6 +102,34 @@ object WebTools {
             }
         }
     }
+
+    /** 搜索结果条目 */
+    private data class SearchHit(val title: String, val url: String, val snippet: String)
+
+    /** 解析 Bing 结果页 HTML:每个 b_algo 块提取标题/链接/摘要 */
+    private fun parseBingResults(html: String): List<SearchHit> {
+        val hits = mutableListOf<SearchHit>()
+        val blockRe = Regex("<li class=\"b_algo[^\"]*\"[^>]*>(.*?)</li>", setOf(RegexOption.DOT_MATCHES_ALL))
+        val titleRe = Regex("<h2[^>]*>.*?<a[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>", setOf(RegexOption.DOT_MATCHES_ALL))
+        val pRe = Regex("<p[^>]*>(.*?)</p>", setOf(RegexOption.DOT_MATCHES_ALL))
+        for (bm in blockRe.findAll(html)) {
+            val block = bm.groupValues[1]
+            val tm = titleRe.find(block) ?: continue
+            val link = tm.groupValues[1]
+            val title = stripHtml(tm.groupValues[2])
+            if (title.isBlank()) continue
+            val snippet = pRe.find(block)?.groupValues?.get(1)?.let { stripHtml(it) } ?: ""
+            hits.add(SearchHit(title, link, snippet))
+        }
+        return hits
+    }
+
+    /** 去 HTML 标签 + 常见实体反转义 */
+    private fun stripHtml(s: String): String = s
+        .replace(Regex("<[^>]+>"), "")
+        .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+        .replace("&quot;", "\"").replace("&#39;", "'").replace("&nbsp;", " ")
+        .trim()
 
     fun all(): List<ToolRegistry.Tool> = listOf(WebSearch, WebFetch)
 }

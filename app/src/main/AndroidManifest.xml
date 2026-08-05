@@ -16,11 +16,36 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
+    <!-- Wi-Fi Aware (NAN) 传输:需要 CHANGE_WIFI_STATE + 位置(Android 13+ 用 NEARBY_WIFI_DEVICES) -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="33" />
+    <uses-feature android:name="android.hardware.wifi.aware" android:required="false" />
+
+    <!-- BLE Mesh 聊天:蓝牙 + 定位(Android 12+ 需要新权限) -->
+    <uses-permission android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+
+    <!-- BLE 硬件特性声明(非必需) -->
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+
     <uses-permission
         android:name="android.permission.WRITE_SECURE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
 
+    <!-- 音乐:本地音频扫描改用 SAF 目录树授权(OpenDocumentTree),无需 READ_MEDIA_AUDIO / READ_EXTERNAL_STORAGE 大权限 -->
+
+
     <application
+        android:name=".ExamateApp"
         android:allowBackup="true"
         android:networkSecurityConfig="@xml/network_security_config"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -34,6 +59,8 @@
             android:name=".service.UnifiedFloatingService"
             android:foregroundServiceType="mediaProjection" />
         <service android:name=".service.LanChatService"/>
+        <!-- Mesh 聊天悬浮窗服务(ComposeView 挂载到 WindowManager) -->
+        <service android:name=".meschat.MesChatFloatingService"/>
         <service
             android:name=".service.MyAccessibilityService"
             android:description="@string/description_in_xml"
@@ -91,6 +118,11 @@
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize" />
         <activity
+            android:name=".meschat.MesChatActivity"
+            android:label="Mesh 聊天"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
             android:name=".CampusServiceActivity"
             android:label="校园服务"
             android:screenOrientation="portrait"
@@ -100,6 +132,100 @@
             android:label="乐校通水卡"
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".PdfPreviewActivity"
+            android:label="PDF预览"
+            android:screenOrientation="portrait" />
+        <activity
+            android:name=".ScheduleActivity"
+            android:label="课程表"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".DownloaderActivity"
+            android:label="下载"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".DownloadSettingsActivity"
+            android:label="下载设置"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ReadingActivity"
+            android:label="阅读"
+            android:exported="true"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize">
+            <!-- 系统打开文本类文件快捷打开:txt/md/html/log/csv/json/xml/epub -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="application/epub+zip" />
+                <data android:mimeType="application/xml" />
+                <data android:mimeType="application/json" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="file" />
+                <data android:scheme="content" />
+                <data android:host="*" />
+                <data android:pathPattern=".*\\.txt" />
+                <data android:pathPattern=".*\\.md" />
+                <data android:pathPattern=".*\\.html" />
+                <data android:pathPattern=".*\\.htm" />
+                <data android:pathPattern=".*\\.log" />
+                <data android:pathPattern=".*\\.csv" />
+                <data android:pathPattern=".*\\.epub" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".MusicActivity"
+            android:label="音乐"
+            android:exported="true"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize">
+            <!-- 系统打开音乐类文件快捷打开:mp3/flac/m4a/wav/ogg/aac/opus -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="application/ogg" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="file" />
+                <data android:scheme="content" />
+                <data android:host="*" />
+                <data android:pathPattern=".*\\.mp3" />
+                <data android:pathPattern=".*\\.flac" />
+                <data android:pathPattern=".*\\.m4a" />
+                <data android:pathPattern=".*\\.wav" />
+                <data android:pathPattern=".*\\.ogg" />
+                <data android:pathPattern=".*\\.aac" />
+                <data android:pathPattern=".*\\.opus" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".music.bili.BiliLoginActivity"
+            android:label="B站登录"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ScheduleWebImportActivity"
+            android:label="网页导入课表"
+            android:screenOrientation="portrait" />
+        <activity
+            android:name=".ScheduleSettingsActivity"
+            android:label="课表设置"
+            android:screenOrientation="portrait" />
         <activity
             android:name=".UserSettingsActivity"
             android:label="用户设置"
@@ -116,6 +242,43 @@
             android:name=".SearchSettingsActivity"
             android:label="搜题功能设置"
             android:screenOrientation="portrait" />
+        <activity
+            android:name=".SystemSettingsActivity"
+            android:label="系统设置"
+            android:screenOrientation="portrait" />
+        <activity
+            android:name=".notes.NotesActivity"
+            android:label="笔记"
+            android:exported="true"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize">
+            <!-- deep link:外部传 noteId 直接打开对应笔记 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <!-- 文件分享/打开:把沙箱生成的文件暴露为 content:// URI -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+        <!-- 今日课表桌面小组件 -->
+        <receiver
+            android:name=".widget.ScheduleWidgetProvider"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_schedule_info" />
+        </receiver>
         <!-- Shizuku API -->
         <provider
             android:name="rikka.shizuku.ShizukuProvider"

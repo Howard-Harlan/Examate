@@ -127,7 +127,7 @@ private fun SearchSettingsScreen(onBack: () -> Unit) {
                 .padding(horizontal = 24.dp)
                 .padding(top = 16.dp, bottom = 60.dp)
         ) {
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(4.dp))
 
         // 多 AI 验证
         Text(

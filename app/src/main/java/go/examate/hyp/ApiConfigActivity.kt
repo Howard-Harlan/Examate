@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import go.examate.hyp.util.ToastUtil
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import go.examate.hyp.config.MyConfig
@@ -28,7 +29,7 @@ class ApiConfigActivity : ComponentActivity() {
                         onBack = { finish() },
                         onSave = { providers ->
                             MyConfig.saveProviders(this@ApiConfigActivity, providers)
-                            Toast.makeText(this@ApiConfigActivity, "已保存", Toast.LENGTH_SHORT).show()
+                            ToastUtil.show(this@ApiConfigActivity, "已保存")
                             finish()
                         },
                         onOpenTutorial = {
@@ -57,7 +58,7 @@ class ApiConfigActivity : ComponentActivity() {
                             })
                         },
                         onToast = { msg ->
-                            Toast.makeText(this@ApiConfigActivity, msg, Toast.LENGTH_SHORT).show()
+                            ToastUtil.show(this@ApiConfigActivity, msg)
                         }
                     )
                 }

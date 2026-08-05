@@ -2,4 +2,64 @@
     <string name="app_name">Examate</string>
     <string name="back">&lt;</string>
     <string name="description_in_xml">Examate 需要无障碍权限来识别当前屏幕上的文本内容，以便为您提供 AI 解题辅助服务。\n\n权限用途说明：\n· 读取屏幕文字内容，用于 AI 分析与解题\n· 执行手势操作，辅助选区截取\n\n安全承诺：\n· 本应用不会收集、上传或分享您的任何个人数据\n· 无障碍权限仅用于上述功能，不会用于其他用途\n· 您可以随时在系统设置中关闭此权限</string>
+
+    <!-- ═══ 通用提示 ═══ -->
+    <string name="toast_saved">已保存</string>
+    <string name="toast_copied">已复制</string>
+    <string name="toast_deleted">已删除</string>
+    <string name="toast_cancelled">已取消</string>
+    <string name="toast_success">成功</string>
+    <string name="toast_failed">失败</string>
+    <string name="toast_loading">加载中…</string>
+    <string name="toast_no_data">暂无数据</string>
+    <string name="toast_network_error">网络错误,请检查网络</string>
+    <string name="toast_unknown_error">未知错误</string>
+
+    <!-- ═══ 权限相关 ═══ -->
+    <string name="toast_overlay_required">请授权悬浮窗权限</string>
+    <string name="toast_accessibility_required">请授权无障碍权限</string>
+    <string name="toast_battery_suggest">建议开启无限制省电策略以获得更稳定的后台运行</string>
+    <string name="toast_battery_unrestricted_hint">请把后台使用情况改为无限制</string>
+    <string name="toast_shizuku_not_installed">Shizuku未安装</string>
+    <string name="toast_shizuku_update_required">请更新Shizuku</string>
+    <string name="toast_shizuku_permission_denied">权限被拒绝且不再询问</string>
+    <string name="toast_shizuku_start_failed">Shizuku启动失败,请检查授权情况</string>
+    <string name="toast_authorize_success">授权成功</string>
+    <string name="toast_execute_error">执行错误</string>
+    <string name="toast_service_bind_success">服务绑定成功</string>
+    <string name="toast_service_bind_failed">服务绑定失败</string>
+
+    <!-- ═══ 模式启动 ═══ -->
+    <string name="toast_start_manual_mode">启动手动模式</string>
+    <string name="toast_start_screenshot">启动截图搜题</string>
+    <string name="toast_screenshot_denied">截屏授权被拒绝</string>
+
+    <!-- ═══ API/模型相关 ═══ -->
+    <string name="toast_api_required">请先配置 API</string>
+    <string name="toast_api_key_required">请先填写 API Key</string>
+
+    <!-- ═══ 页面标题 ═══ -->
+    <string name="title_main">Examate</string>
+    <string name="title_campus_service">校园服务</string>
+    <string name="title_water_card">乐校通水卡</string>
+    <string name="title_schedule">课表</string>
+    <string name="title_lan_chat">局域网聊天</string>
+    <string name="title_chat">AI 对话</string>
+    <string name="title_api_config">API 设置</string>
+    <string name="title_agent_settings">Agent 设置</string>
+    <string name="title_search_settings">搜题设置</string>
+    <string name="title_user_settings">用户设置</string>
+    <string name="title_about">关于</string>
+
+    <!-- ═══ 通用操作 ═══ -->
+    <string name="action_back">返回</string>
+    <string name="action_save">保存</string>
+    <string name="action_delete">删除</string>
+    <string name="action_cancel">取消</string>
+    <string name="action_confirm">确认</string>
+    <string name="action_close">关闭</string>
+    <string name="action_add">添加</string>
+    <string name="action_edit">编辑</string>
+    <string name="action_refresh">刷新</string>
+    <string name="action_retry">重试</string>
 </resources>

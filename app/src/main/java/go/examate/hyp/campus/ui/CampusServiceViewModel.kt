@@ -16,7 +16,7 @@ import kotlinx.coroutines.launch
  * CampusServiceActivity 的 ViewModel
  *
  * 将校园服务页的登录态、路由、账号表单状态从 Composable 中抽出,
- * 统一用 StateFlow 管理,Composable 通过 collectAsState() 收集。
+ * 统一用 StateFlow 管理,Composable 通过 collectAsStateWithLifecycle() 收集。
  *
  * 优势:
  * 1. 状态与 UI 解耦,便于测试
@@ -59,7 +59,7 @@ class CampusServiceViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 repo.login(prefs.campusUsername.trim(), prefs.campusPassword)
-                repo.prefetchJwxtData(prefs)
+                repo.prefetchJwxtData(prefs, viewModelScope)
                 fetchStudentName()
                 _uiState.update {
                     it.copy(
@@ -102,7 +102,7 @@ class CampusServiceViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 repo.login(username.trim(), password)
-                repo.prefetchJwxtData(prefs)
+                repo.prefetchJwxtData(prefs, viewModelScope)
                 prefs.campusUsername = username.trim()
                 prefs.campusPassword = password
                 fetchStudentName()
@@ -205,10 +205,18 @@ data class CampusServiceUiState(
 sealed class CampusRoute {
     object Home : CampusRoute()
     object Jwxt : CampusRoute()
+    /** 独立课表页面(周视图) */
+    object Schedule : CampusRoute()
     /** @param tab Ecard 目标 Tab: "balance"/"bill"/"payfee",null 默认余额 */
     data class Ecard(val tab: String? = null) : CampusRoute()
     object Sc : CampusRoute()
     object Hsxs : CampusRoute()
+    /** 智慧思政:综合测评成绩明细 */
+    object Szs : CampusRoute()
+    /** 快捷服务:无需登录的轻量功能聚合页(校历等) */
+    object QuickService : CampusRoute()
+    /** 班级通讯录:需要登录智慧门户 */
+    object ClassContact : CampusRoute()
 }
 
 /** 登录状态 */

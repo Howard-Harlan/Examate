@@ -36,3 +36,11 @@ test_hsxs.py
 test_hsxs2.py
 analyze_payfee.py
 test_rsa.py
+
+# 抓包脚本与数据(含个人成绩/课表等敏感信息)
+sniff_*.py
+sniff_data/
+# 临时上传/工具目录
+.uploads/
+.qoder/
+.workbuddy/

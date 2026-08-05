@@ -1,7 +1,11 @@
 package go.examate.hyp.util
 
 import android.util.Log
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 /**
@@ -24,6 +28,12 @@ object ModelSyncUtil {
     }
 
     /**
+     * 用于 fetchModels 的私有作用域,SupervisorJob 保证单个请求失败不会影响其他请求。
+     * 通过 [cancelScope] 在不需要时(如 App 退出)取消所有进行中的请求。
+     */
+    private val fetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
      * 从厂商 API 地址推导出 /v1/models 端点并请求。
      * @param requestUrl 厂商的 chat completions 地址，如 https://api.deepseek.com/v1/chat/completions
      * @param apiKey     API Key
@@ -31,17 +41,18 @@ object ModelSyncUtil {
      */
     @JvmStatic
     fun fetchModels(requestUrl: String?, apiKey: String?, callback: SyncCallback) {
-        Thread {
-            // 检查 API Key
-            if (apiKey.isNullOrBlank()) {
-                callback.onError("请先填写 API Key，同步模型需要身份验证")
-                return@Thread
-            }
+        // 检查 API Key
+        if (apiKey.isNullOrBlank()) {
+            callback.onError("请先填写 API Key，同步模型需要身份验证")
+            return
+        }
 
-            val modelsUrl = deriveModelsUrl(requestUrl)
-            Log.d(TAG, "Fetching models from: $modelsUrl")
+        val modelsUrl = deriveModelsUrl(requestUrl)
+        Log.d(TAG, "Fetching models from: $modelsUrl")
 
-            val result = runBlocking { HttpUtils.fetchModelsResult(modelsUrl, apiKey) }
+        // 使用受管理的协程作用域,避免 runBlocking;回调切换到主线程由调用方处理
+        fetchScope.launch {
+            val result = HttpUtils.fetchModelsResult(modelsUrl, apiKey)
             when (result) {
                 is ApiResult.Success -> {
                     val models = parseModelsResponse(result.data)
@@ -57,7 +68,15 @@ object ModelSyncUtil {
                     callback.onError("请求失败: ${result.errorMessage()}")
                 }
             }
-        }.start()
+        }
+    }
+
+    /**
+     * 取消所有进行中的模型同步请求(可在 App 退出时调用)。
+     */
+    @JvmStatic
+    fun cancelScope() {
+        fetchScope.cancel()
     }
 
     /**

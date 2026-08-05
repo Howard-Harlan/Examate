@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -42,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.TextPrimary
+import go.examate.hyp.ui.theme.ScheduleCellBg
 import go.examate.hyp.ui.theme.TextSecondary
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -166,10 +168,16 @@ fun LanChatWindow(
                         .weight(1f)
                         .onFocusChanged { onInputFocusChange(it.isFocused) },
                     placeholder = { Text("输入消息", fontSize = 13.sp, color = TextSecondary) },
-                    shape = RoundedCornerShape(20.dp),
+                    shape = RoundedCornerShape(22.dp),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { onSend() })
+                    keyboardActions = KeyboardActions(onSend = { onSend() }),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = Color.White.copy(0.25f),
+                        unfocusedContainerColor = Color.White.copy(0.15f),
+                        focusedBorderColor = AccentBlue.copy(0.45f),
+                        unfocusedBorderColor = Color.White.copy(0.35f)
+                    )
                 )
                 Spacer(Modifier.width(8.dp))
                 val canSend = inputText.trim().isNotEmpty()
@@ -196,7 +204,7 @@ fun LanChatWindow(
 @Composable
 private fun MessageBubble(msg: LanChatMessage, isMine: Boolean, timeFmt: SimpleDateFormat) {
     val alignment = if (isMine) Alignment.End else Alignment.Start
-    val bgColor = if (isMine) AccentBlue else Color(0xFFF0F0F2)
+    val bgColor = if (isMine) AccentBlue else ScheduleCellBg
     val textColor = if (isMine) Color.White else TextPrimary
 
     Column(

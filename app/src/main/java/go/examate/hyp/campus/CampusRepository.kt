@@ -3,10 +3,15 @@ package go.examate.hyp.campus
 import go.examate.hyp.campus.model.AvailableCourse
 import go.examate.hyp.campus.model.BankCard
 import go.examate.hyp.campus.model.BillRecord
+import go.examate.hyp.campus.model.BuildingInfo
+import go.examate.hyp.campus.model.ClassroomPageData
 import go.examate.hyp.campus.model.EcardBalance
+import go.examate.hyp.campus.model.EmptyClassroom
 import go.examate.hyp.campus.model.EvaluationItem
+import go.examate.hyp.campus.model.EvaluationQuestion
 import go.examate.hyp.campus.model.ExamItem
 import go.examate.hyp.campus.model.Grade
+import go.examate.hyp.campus.model.GradeDetail
 import go.examate.hyp.campus.model.PayArea
 import go.examate.hyp.campus.model.PayBuilding
 import go.examate.hyp.campus.model.PayResult
@@ -20,7 +25,6 @@ import go.examate.hyp.campus.model.XkCredits
 import go.examate.hyp.campus.model.XkStatus
 import go.examate.hyp.config.PrefsManager
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
@@ -134,9 +138,12 @@ class CampusRepository private constructor() {
     /**
      * 登录成功后预取关键数据(后台执行,不阻塞 UI)。
      * 课表、学生信息等低频数据预加载到缓存,用户进入页面时直接命中缓存。
+     *
+     * @param scope 外部传入的协程作用域(通常是 viewModelScope),
+     *              避免 GlobalScope 导致协程无法随生命周期取消而泄漏。
      */
-    fun prefetchJwxtData(prefs: PrefsManager) {
-        GlobalScope.launch(Dispatchers.IO) {
+    fun prefetchJwxtData(prefs: PrefsManager, scope: kotlinx.coroutines.CoroutineScope) {
+        scope.launch(Dispatchers.IO) {
             try {
                 val (xn, xq) = ChnuConfig.currentXnXq()
                 kotlinx.coroutines.coroutineScope {
@@ -215,6 +222,40 @@ class CampusRepository private constructor() {
 
     suspend fun getXkCredits(prefs: PrefsManager, xn: String, xq: String): XkCredits =
         withJwxt(prefs) { it.getXkCredits(xn, xq) }
+
+    // ── 新增:成绩明细 ──
+
+    suspend fun getGradeDetail(prefs: PrefsManager, kch: String, xn: String, xq: String): GradeDetail? =
+        withJwxt(prefs) { it.getGradeDetail(kch, xn, xq) }
+
+    // ── 新增:空闲教室 ──
+
+    suspend fun getClassroomPageData(prefs: PrefsManager): ClassroomPageData =
+        withJwxt(prefs) { it.getClassroomPageData() }
+
+    suspend fun getEmptyClassrooms(
+        prefs: PrefsManager, campusId: String = "1", roomTypeId: String = "", buildingId: String = "",
+        startWeek: String = "", endWeek: String = "", weekDays: String = "", sectionRange: String = ""
+    ): List<EmptyClassroom> =
+        withJwxt(prefs) { it.getEmptyClassrooms(campusId, roomTypeId, buildingId, startWeek, endWeek, weekDays, sectionRange) }
+
+    // ── 新增:教学评价题目与提交 ──
+
+    suspend fun getEvaluationQuestions(prefs: PrefsManager, wjbm: String): List<EvaluationQuestion> =
+        withJwxt(prefs) { it.getEvaluationQuestions(wjbm) }
+
+    suspend fun submitEvaluation(prefs: PrefsManager, wjbm: String, xn: String, xq: String, scores: Map<String, Double>): String =
+        withJwxt(prefs) { it.submitEvaluation(wjbm, xn, xq, scores) }
+
+    // ── 新增:课表确认页(选课结果,任何时间可用) ──
+
+    suspend fun getScheduleConfirmation(prefs: PrefsManager, xn: String? = null, xq: String? = null): List<SelectedCourse> =
+        withJwxt(prefs) { it.getScheduleConfirmation(xn, xq) }
+
+    // ── 新增:实验课表 ──
+
+    suspend fun getExperimentSchedule(prefs: PrefsManager, xn: String? = null, xq: String? = null): List<ScheduleItem> =
+        withJwxt(prefs) { it.getExperimentSchedule(xn, xq) }
 
     private suspend fun <T> withJwxt(prefs: PrefsManager, block: (ChnuClient.JWXTClient) -> T): T {
         val c = jwxtLogin(prefs)
@@ -384,6 +425,50 @@ class CampusRepository private constructor() {
         val c = hsxsLogin(prefs)
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             block(c.hsxs)
+        }
+    }
+
+    // ════════════════════════════════════════════════
+    //  智慧思政(Szs) — 综合测评成绩
+    // ════════════════════════════════════════════════
+
+    suspend fun szsLogin(prefs: PrefsManager): ChnuClient =
+        ensureLoggedIn(prefs).also {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                if (!it.szs.loggedIn) it.szs.login()
+            }
+        }
+
+    suspend fun getChangeScore(prefs: PrefsManager): List<go.examate.hyp.campus.model.SzsScoreItem> {
+        return withSzs(prefs) { it.getChangeScore() }
+    }
+
+    private suspend fun <T> withSzs(prefs: PrefsManager, block: (ChnuClient.SzsClient) -> T): T {
+        val c = szsLogin(prefs)
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            block(c.szs)
+        }
+    }
+
+    // ════════════════════════════════════════════════
+    //  智慧门户(Zhxy) — 班级通讯录
+    // ════════════════════════════════════════════════
+
+    suspend fun zhxyLogin(prefs: PrefsManager): ChnuClient =
+        ensureLoggedIn(prefs).also {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                if (!it.zhxy.loggedIn) it.zhxy.login()
+            }
+        }
+
+    suspend fun getStudentPhoneList(prefs: PrefsManager): List<go.examate.hyp.campus.model.ClassContact> {
+        return withZhxy(prefs) { it.getStudentPhoneList() }
+    }
+
+    private suspend fun <T> withZhxy(prefs: PrefsManager, block: (ChnuClient.ZhxyClient) -> T): T {
+        val c = zhxyLogin(prefs)
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            block(c.zhxy)
         }
     }
 

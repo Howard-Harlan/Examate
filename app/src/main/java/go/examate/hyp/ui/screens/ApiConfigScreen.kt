@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -102,7 +103,8 @@ fun ApiConfigScreen(
             a.displayName != b.displayName || a.modelId != b.modelId ||
                 a.requestUrl != b.requestUrl || a.apiKey != b.apiKey ||
                 a.endpointType != b.endpointType ||
-                a.label != b.label || a.barColor != b.barColor || a.visible != b.visible
+                a.label != b.label || a.barColor != b.barColor || a.visible != b.visible ||
+                a.capabilities != b.capabilities
         }
     }
     var showSaveConfirm by remember { mutableStateOf(false) }
@@ -119,11 +121,12 @@ fun ApiConfigScreen(
         Modifier
             .fillMaxSize()
             .background(BgPrimary)
+            .statusBarsPadding()
     ) {
         Column(Modifier.fillMaxSize()) {
             // ═══ 顶部:标题栏(教程+编辑共处胶囊) ═══
             ApiConfigTopBar(
-                modifier = Modifier.padding(top = 48.dp),
+                modifier = Modifier,
                 onBack = { handleBack() },
                 onTutorial = { onOpenTutorial() }
             )
@@ -354,7 +357,7 @@ private fun ApiConfigTopBar(
     Box(
         modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .padding(horizontal = 10.dp, vertical = 6.dp)
     ) {
         LiquidGlassIconButton(
             icon = Icons.AutoMirrored.Filled.ArrowBack,
@@ -651,6 +654,7 @@ private fun EditProviderDialog(
     var apiKey by remember { mutableStateOf(provider.apiKey) }
     // 接口格式:OpenAI(chat) / OpenAI Responses / Anthropic
     var endpointType by remember { mutableStateOf(provider.endpointType.ifEmpty { ModelProvider.inferEndpointType(apiUrl) }) }
+    var caps by remember { mutableStateOf(provider.capabilities) }
     var fetching by remember { mutableStateOf(false) }
     var modelList by remember { mutableStateOf<List<String>?>(null) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
@@ -658,11 +662,11 @@ private fun EditProviderDialog(
     // 接口格式选项:OpenAI(chat/responses 兼容)/ Anthropic
     PlainDialog(onDismissRequest = onDismiss) {
         PlainDialogTitle("API 配置")
-        Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp, 0.dp, 24.dp, 12.dp)) {
+        Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()).padding(24.dp, 0.dp, 24.dp, 12.dp)) {
             FieldLabel("厂商名称")
             OutlinedTextField(
                 value = name,
-                onValueChange = { name = it },
+                onValueChange = { name = truncateToWidth(it, 14) },
                 placeholder = { Text("如 DeepSeek") },
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp),
@@ -758,6 +762,30 @@ private fun EditProviderDialog(
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.fillMaxWidth()
             )
+            Spacer(Modifier.height(12.dp))
+
+            // ═══ 模型能力(多模态按需路由) ═══
+            FieldLabel("模型能力")
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(
+                    ModelProvider.CAP_CHAT to "聊天",
+                    ModelProvider.CAP_VISION to "多模态",
+                    ModelProvider.CAP_IMAGE_GEN to "生图"
+                ).forEach { (cap, capLabel) ->
+                    val on = caps.contains(cap)
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (on) Primary else SurfaceVariant)
+                            .clickable { caps = if (on) caps - cap else caps + cap }
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        Text(capLabel, color = if (on) Color.White else TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    }
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            Text("多模态=能理解图片,生图=文生图;发图/生图时自动路由到对应能力的模型", color = TextHint, fontSize = 10.sp)
         }
 
         // 按钮区:[删除] [间距] [取消] [保存]
@@ -766,11 +794,18 @@ private fun EditProviderDialog(
                 Triple("删除", false) { showDeleteConfirm = true },
                 Triple("取消", false) { onDismiss() },
                 Triple("保存", true) {
+                    // 规范化 URL:用户可能只填了 baseUrl(到 /v1)或完整地址
+                    // 若不含 /chat/completions、/responses、/messages 路径,根据 endpointType 自动补全
+                    val normalizedUrl = runCatching {
+                        val u = apiUrl.trim()
+                        val hasPath = u.contains("/chat/completions") || u.contains("/responses") || u.contains("/messages")
+                        if (hasPath) u else ModelProvider.buildFullUrl(ModelProvider.extractBaseUrl(u), endpointType)
+                    }.getOrDefault(apiUrl.trim())
                     onConfirm(
                         ModelProvider(
                             name.trim(),
                             modelId.trim(),
-                            apiUrl.trim(),
+                            normalizedUrl,
                             apiKey.trim(),
                             provider.enableThinking,
                             provider.registerUrl ?: "",
@@ -779,7 +814,8 @@ private fun EditProviderDialog(
                             endpointType,
                             provider.label,
                             provider.barColor,
-                            provider.visible
+                            provider.visible,
+                            caps
                         )
                     )
                 }
@@ -854,4 +890,29 @@ private fun FieldLabel(text: String) {
         letterSpacing = 0.4.sp,
         modifier = Modifier.padding(start = 4.dp, bottom = 6.dp)
     )
+}
+
+/**
+ * 计算字符串显示宽度:汉字/全角字符=2,英文/数字/半角符号=1。
+ * 用于厂商名称长度限制(上限 14,即最多 7 个汉字或 14 个英文字符)。
+ */
+private fun displayWidth(s: String): Int {
+    var w = 0
+    for (c in s) {
+        w += if (c.code > 0x2E80) 2 else 1  // CJK 统一表意文字及更靠后的全角字符算 2
+    }
+    return w
+}
+
+/** 截断字符串使其显示宽度不超过 max */
+private fun truncateToWidth(s: String, max: Int): String {
+    val sb = StringBuilder()
+    var w = 0
+    for (c in s) {
+        val cw = if (c.code > 0x2E80) 2 else 1
+        if (w + cw > max) break
+        sb.append(c)
+        w += cw
+    }
+    return sb.toString()
 }

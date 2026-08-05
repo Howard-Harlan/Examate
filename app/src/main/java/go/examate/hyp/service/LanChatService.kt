@@ -12,6 +12,7 @@ import android.view.Gravity
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.compose.runtime.mutableStateListOf
+import go.examate.hyp.util.ToastUtil
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.ComposeView
 import androidx.lifecycle.Lifecycle
@@ -82,14 +83,15 @@ class LanChatService : Service(), LifecycleOwner, SavedStateRegistryOwner, LanCh
             messages.addAll(LanChatCache.load(this))
         } catch (e: Exception) {
             Log.e(TAG, "onCreate failed", e)
-            Toast.makeText(this, "启动失败: ${e.message}", Toast.LENGTH_LONG).show()
+            ToastUtil.showLong(this, "启动失败: ${e.message}")
             stopSelf()
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // 启动 transport(onCreate 已加载缓存,这里只负责启动通信)
-        if (transport == null) {
+        // transport 不存在或上次 start 失败(端口占用等)时重建,避免服务处于"永久哑巴"状态
+        if (transport?.isRunning != true) {
+            transport?.stop()
             transport = LanChatTransport(this, this).also { it.start() }
         }
         return START_NOT_STICKY
@@ -122,7 +124,7 @@ class LanChatService : Service(), LifecycleOwner, SavedStateRegistryOwner, LanCh
     }
 
     override fun onError(message: String) {
-        mainHandler.post { Toast.makeText(this, message, Toast.LENGTH_SHORT).show() }
+        ToastUtil.show(this, message)
     }
 
     // ═══ 消息发送 ═══

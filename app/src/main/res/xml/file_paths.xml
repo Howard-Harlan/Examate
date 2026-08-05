@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- AI 生成文件的沙箱目录: filesDir/workspace -->
+    <files-path name="workspace" path="workspace/" />
+    <!-- 笔记目录: filesDir/notes(笔记引用的图片/音频通过 FileProvider 暴露给系统播放器) -->
+    <files-path name="notes" path="notes/" />
+    <!-- 缓存目录(导出/临时文件) -->
+    <cache-path name="cache" path="." />
+</paths>

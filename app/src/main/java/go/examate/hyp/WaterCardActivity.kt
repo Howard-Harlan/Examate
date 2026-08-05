@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -32,16 +34,20 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
@@ -53,6 +59,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.foundation.layout.heightIn
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -72,6 +80,8 @@ import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
 import go.examate.hyp.ui.theme.ExamateTheme
+import go.examate.hyp.ui.theme.ScheduleGradientEnd
+import go.examate.hyp.ui.theme.ScheduleGradientStart
 import go.examate.hyp.watercard.Page
 import go.examate.hyp.watercard.PayEvent
 import go.examate.hyp.watercard.WaterCardViewModel
@@ -94,9 +104,11 @@ class WaterCardActivity : ComponentActivity() {
 
 @Composable
 private fun WaterCardRoot(vm: WaterCardViewModel = viewModel()) {
-    val state by vm.uiState.collectAsState()
+    val state by vm.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    // 返回按钮:退出当前 Activity
+    val onBack: () -> Unit = { (context as? android.app.Activity)?.finish() }
 
     // 监听支付事件：拉起支付宝/微信 SDK
     LaunchedEffect(Unit) {
@@ -152,8 +164,8 @@ private fun WaterCardRoot(vm: WaterCardViewModel = viewModel()) {
     }
 
     when (state.page) {
-        Page.LOGIN -> LoginPage(state, vm)
-        Page.MAIN -> MainPage(state, vm)
+        Page.LOGIN -> LoginPage(state, vm, onBack)
+        Page.MAIN -> MainPage(state, vm, onBack)
     }
 }
 
@@ -162,24 +174,32 @@ private fun WaterCardRoot(vm: WaterCardViewModel = viewModel()) {
 // ════════════════════════════════════════════════
 
 @Composable
-private fun LoginPage(state: go.examate.hyp.watercard.WaterCardUiState, vm: WaterCardViewModel) {
+private fun LoginPage(state: go.examate.hyp.watercard.WaterCardUiState, vm: WaterCardViewModel, onBack: () -> Unit) {
     // 快速登录态：已保存学校/账号/密码，只需输验证码
     val quickMode = vm.isQuickLoginMode()
 
-    Column(
+    // 真悬浮无顶栏:返回按钮悬浮于内容之上,布局位置不变(补偿原顶栏高度 48dp + 原 8dp = 56dp)
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp, vertical = 32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .imePadding()
+            .navigationBarsPadding()
     ) {
-        if (quickMode) {
-            Text("欢迎回来,请输入验证码登录", fontSize = 13.sp, color = TextSecondary)
-            Spacer(Modifier.height(28.dp))
-        } else {
-            Spacer(Modifier.height(28.dp))
-        }
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp)
+                .padding(top = 56.dp, bottom = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            if (quickMode) {
+                Text("欢迎回来,请输入验证码登录", fontSize = 13.sp, color = TextSecondary)
+                Spacer(Modifier.height(28.dp))
+            } else {
+                // 完整登录态:直接显示学校搜索,不再额外加顶部间距
+            }
 
         if (quickMode) {
             // ─── 快速登录态：学校/账号/密码折叠为只读摘要卡片 ───
@@ -390,6 +410,19 @@ private fun LoginPage(state: go.examate.hyp.watercard.WaterCardUiState, vm: Wate
             fontSize = 11.sp,
             color = TextHint
         )
+        }
+        // 悬浮返回按钮(无顶栏,悬浮于内容之上)
+        Box(
+            Modifier.align(Alignment.TopStart)
+                .padding(horizontal = 10.dp, vertical = 4.dp)
+        ) {
+            LiquidGlassIconButton(
+                icon = Icons.Filled.ArrowBack,
+                contentDescription = "返回",
+                onClick = onBack,
+                modifier = Modifier.size(40.dp)
+            )
+        }
     }
 }
 
@@ -419,27 +452,38 @@ private fun CaptchaImage(dataUri: String) {
 // ════════════════════════════════════════════════
 
 @Composable
-private fun MainPage(state: go.examate.hyp.watercard.WaterCardUiState, vm: WaterCardViewModel) {
+private fun MainPage(state: go.examate.hyp.watercard.WaterCardUiState, vm: WaterCardViewModel, onBack: () -> Unit) {
     LaunchedEffect(Unit) { vm.refreshAll() }
+    var showBillsDialog by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-        // 顶栏(无标题文字,仅返回+刷新按钮)
+        // 顶栏:返回(退出页面) + 退出登录 + 刷新,按钮大小统一 40dp
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .padding(horizontal = 10.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             LiquidGlassIconButton(
                 icon = Icons.Filled.ArrowBack,
-                contentDescription = "退出",
-                onClick = { vm.logout(clearCredentials = false) }
+                contentDescription = "返回",
+                onClick = onBack,
+                modifier = Modifier.size(40.dp)
             )
             Spacer(Modifier.weight(1f))
+            // 退出登录按钮(仅退出会话,保留账号/密码/学校,下次只需输验证码)
+            LiquidGlassIconButton(
+                icon = Icons.Filled.Close,
+                contentDescription = "退出登录",
+                onClick = { vm.logout(clearCredentials = false) },
+                modifier = Modifier.size(40.dp)
+            )
+            Spacer(Modifier.width(8.dp))
             LiquidGlassIconButton(
                 icon = Icons.Filled.Refresh,
                 contentDescription = "刷新",
-                onClick = { vm.refreshAll() }
+                onClick = { vm.refreshAll() },
+                modifier = Modifier.size(40.dp)
             )
         }
 
@@ -456,114 +500,217 @@ private fun MainPage(state: go.examate.hyp.watercard.WaterCardUiState, vm: Water
             // 充值卡片
             item { RechargeCard(state, vm) }
 
-            // 账单标题(点击后才加载/展开账单)
+            // 账单记录:醒目按钮,点击后弹窗显示
             item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable {
-                            if (!state.bills.loaded && !state.bills.loading) vm.loadBills()
-                        }
-                        .padding(vertical = 6.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("账单记录", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            if (state.bills.loaded) "点击刷新" else "点击查看",
-                            fontSize = 12.sp,
-                            color = TextHint
-                        )
-                    }
-                    if (state.bills.loaded && state.bills.items.isNotEmpty()) {
-                        Text("共 ${state.bills.items.size} 条", fontSize = 12.sp, color = TextHint)
-                    }
-                }
-            }
-
-            // 账单列表(仅加载过才显示)
-            if (state.bills.loaded || state.bills.loading) {
-                if (state.bills.loading && state.bills.items.isEmpty()) {
-                    item { LoadingBlock("正在查询账单...") }
-                } else if (state.bills.error.isNotBlank()) {
-                    item { ErrorBanner(state.bills.error) }
-                } else if (state.bills.items.isEmpty()) {
-                    item { EmptyBlock("暂无账单记录") }
-                } else {
-                    items(state.bills.items) { bill -> BillItemCard(bill) }
-                }
+                LiquidGlassButton(
+                    text = if (state.bills.loaded) "查看账单记录(共 ${state.bills.items.size} 条)" else "查看账单记录",
+                    onClick = {
+                        // 未加载过则先触发加载,弹窗内会显示 loading 状态
+                        if (!state.bills.loaded && !state.bills.loading) vm.loadBills()
+                        showBillsDialog = true
+                    },
+                    style = ButtonStyle.Outline,
+                    height = 48.dp,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
 
             item { Spacer(Modifier.height(20.dp)) }
         }
     }
+
+    // 账单弹窗
+    if (showBillsDialog) {
+        BillsDialog(
+            state = state,
+            onRefresh = { vm.loadBills() },
+            onDismiss = { showBillsDialog = false }
+        )
+    }
+}
+
+/** 账单记录弹窗 */
+@Composable
+private fun BillsDialog(
+    state: go.examate.hyp.watercard.WaterCardUiState,
+    onRefresh: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(Color.White)
+                .padding(vertical = 12.dp)
+        ) {
+            // 标题栏
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "账单记录",
+                    color = TextPrimary,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.weight(1f)
+                )
+                if (state.bills.loaded && !state.bills.loading) {
+                    Text(
+                        "刷新",
+                        color = AccentBlue,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.clickable { onRefresh() }.padding(4.dp)
+                    )
+                }
+            }
+
+            // 内容区
+            if (state.bills.loading && state.bills.items.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(40.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = AccentBlue)
+                        Spacer(Modifier.width(10.dp))
+                        Text("正在查询账单...", fontSize = 13.sp, color = TextSecondary)
+                    }
+                }
+            } else if (state.bills.error.isNotBlank()) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(28.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(state.bills.error, fontSize = 13.sp, color = Error)
+                }
+            } else if (state.bills.items.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(28.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("暂无账单记录", fontSize = 13.sp, color = TextHint)
+                }
+            } else {
+                HorizontalDividerLocal()
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                        horizontal = 14.dp, vertical = 8.dp
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(state.bills.items) { bill -> BillItemCard(bill) }
+                }
+            }
+
+            // 底部关闭按钮
+            HorizontalDividerLocal()
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onDismiss() }
+                    .padding(vertical = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("关闭", color = TextSecondary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            }
+        }
+    }
+}
+
+/** 弹窗内的分隔线 */
+@Composable
+private fun HorizontalDividerLocal() {
+    androidx.compose.material3.HorizontalDivider(
+        color = Color(0xFFEEEEEE), thickness = 0.5.dp
+    )
 }
 
 @Composable
 private fun BalanceCard(state: go.examate.hyp.watercard.WaterCardUiState, vm: WaterCardViewModel) {
-    FrostedGlassCard(modifier = Modifier.fillMaxWidth(), tint = AccentBlue.copy(0.06f)) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(22.dp)
-        ) {
+    // 卡片样式参考一卡通余额卡片:深色渐变背景 + 白色文字
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.linearGradient(listOf(ScheduleGradientStart, ScheduleGradientEnd))
+            )
+            .padding(24.dp)
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            // 顶部:标题 + 加载指示器
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("钱包余额", fontSize = 13.sp, color = TextSecondary)
+                Text("钱包余额", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
                 Spacer(Modifier.weight(1f))
                 if (state.wallet?.loading == true) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(14.dp),
                         strokeWidth = 1.5.dp,
-                        color = AccentBlue
+                        color = Color.White.copy(alpha = 0.8f)
                     )
                 }
             }
-            Spacer(Modifier.height(10.dp))
-            // 主余额:大号数字 + 元符号
+            Spacer(Modifier.height(8.dp))
+            // 主余额:¥符号 + 大号数字
             Row(verticalAlignment = Alignment.Bottom) {
                 Text(
                     "¥",
-                    fontSize = 20.sp,
+                    color = Color.White,
+                    fontSize = 18.sp,
                     fontWeight = FontWeight.Medium,
-                    color = AccentBlue.copy(0.7f),
-                    modifier = Modifier.padding(bottom = 14.dp)
+                    modifier = Modifier.padding(bottom = 4.dp)
                 )
                 Spacer(Modifier.width(2.dp))
                 Text(
                     state.wallet?.balance ?: "0.00",
-                    fontSize = 46.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = AccentBlue
+                    color = Color.White,
+                    fontSize = 36.sp,
+                    fontWeight = FontWeight.Bold
                 )
             }
-            // 赠送余额 / 总余额(小字次要信息)
+            // 赠送余额 / 总余额(分隔线 + 双列)
             if (!state.wallet?.giftBalance.isNullOrBlank() || !state.wallet?.totalBalance.isNullOrBlank()) {
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(12.dp))
                 androidx.compose.material3.HorizontalDivider(
-                    color = Color.White.copy(0.3f), thickness = 0.5.dp
+                    color = Color.White.copy(alpha = 0.2f), thickness = 0.5.dp
                 )
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(10.dp))
                 Row(modifier = Modifier.fillMaxWidth()) {
                     if (!state.wallet?.giftBalance.isNullOrBlank()) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("赠送余额", fontSize = 10.sp, color = TextHint)
-                            Text("¥${state.wallet?.giftBalance}", fontSize = 13.sp, color = TextSecondary, fontWeight = FontWeight.Medium)
+                            Text("赠送余额", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                "¥${state.wallet?.giftBalance}",
+                                color = Color.White.copy(alpha = 0.9f),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium
+                            )
                         }
                     }
                     if (!state.wallet?.totalBalance.isNullOrBlank()) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("总余额", fontSize = 10.sp, color = TextHint)
-                            Text("¥${state.wallet?.totalBalance}", fontSize = 13.sp, color = TextSecondary, fontWeight = FontWeight.Medium)
+                            Text("总余额", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                "¥${state.wallet?.totalBalance}",
+                                color = Color.White.copy(alpha = 0.9f),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium
+                            )
                         }
                     }
                 }
             }
             if (state.wallet?.error?.isNotBlank() == true) {
                 Spacer(Modifier.height(6.dp))
-                Text(state.wallet.error, fontSize = 11.sp, color = Error)
+                Text(state.wallet.error, fontSize = 11.sp, color = Color.White.copy(alpha = 0.7f))
             }
         }
     }

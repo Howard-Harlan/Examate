@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
+import go.examate.hyp.util.ToastUtil
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AltRoute
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -290,74 +292,52 @@ private fun ToolStepRow(step: ToolStep, coverColor: Color) {
 fun MessageActionRow(
     isUser: Boolean,
     onCopy: () -> Unit,
+    onBranch: () -> Unit,
     onRegenerate: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var pendingDelete by remember { mutableStateOf(false) }
-
     LaunchedEffect(pendingDelete) {
-        if (pendingDelete) {
-            delay(3000)
-            pendingDelete = false
-        }
+        if (pendingDelete) { delay(3000); pendingDelete = false }
     }
-
     Row(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        ActionIconButton(
-            icon = CopyIcon,
-            description = "复制",
-            onClick = onCopy
-        )
+        ActionChip(CopyIcon, "复制", TextSecondary, onCopy)
         if (!isUser) {
-            ActionIconButton(
-                icon = Icons.Filled.Refresh,
-                description = "重新生成",
-                onClick = onRegenerate
-            )
+            ActionChip(Icons.Filled.AltRoute, "追问", AccentBlue, onBranch)
+            ActionChip(Icons.Filled.Refresh, "重新生成", TextSecondary, onRegenerate)
         }
-        ActionIconButton(
+        ActionChip(
             icon = Icons.Filled.Delete,
-            description = if (pendingDelete) "再次点击删除" else "删除",
-            onClick = {
-                if (pendingDelete) {
-                    pendingDelete = false
-                    onDelete()
-                } else {
-                    pendingDelete = true
-                }
-            },
+            label = if (pendingDelete) "再点删除" else "删除",
             tint = if (pendingDelete) Danger else TextSecondary
-        )
+        ) {
+            if (pendingDelete) { pendingDelete = false; onDelete() } else pendingDelete = true
+        }
     }
 }
 
+/** 操作行小按钮:图标 + 文字标签(比原纯图标更大更易点) */
 @Composable
-private fun ActionIconButton(
-    icon: ImageVector,
-    description: String,
-    onClick: () -> Unit,
-    tint: Color = TextSecondary
-) {
-    Icon(
-        imageVector = icon,
-        contentDescription = description,
-        modifier = Modifier
-            .clip(CircleShape)
-            .clickable(onClick = onClick)
-            .padding(6.dp)
-            .size(14.dp),
-        tint = tint
-    )
+private fun ActionChip(icon: ImageVector, label: String, tint: Color, onClick: () -> Unit) {
+    Row(
+        Modifier.clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(17.dp))
+        Text(label, color = tint, fontSize = 12.sp)
+    }
 }
 
 /** 复制消息文本到剪贴板并 Toast 提示 */
 internal fun copyMessageText(context: Context, content: String) {
     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     cm.setPrimaryClip(ClipData.newPlainText("message", content))
-    Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
+    ToastUtil.show(context, "已复制")
 }

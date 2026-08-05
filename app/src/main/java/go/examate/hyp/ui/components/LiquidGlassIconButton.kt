@@ -32,7 +32,8 @@ fun LiquidGlassIconButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     tint: Color = TextPrimary,
-    surfaceAlpha: Float = 0.5f
+    surfaceAlpha: Float = 0.42f,
+    ambientHighlight: Boolean = true
 ) {
     val backdrop = LocalGlassBackdrop.current
     Box(
@@ -46,7 +47,7 @@ fun LiquidGlassIconButton(
                             vibrancy()
                             blur(12f)
                         },
-                        highlight = { Highlight.Plain },
+                        highlight = { if (ambientHighlight) Highlight.Ambient else Highlight.Plain },
                         onDrawSurface = { drawRect(Color.White.copy(surfaceAlpha)) }
                     )
                 } else {

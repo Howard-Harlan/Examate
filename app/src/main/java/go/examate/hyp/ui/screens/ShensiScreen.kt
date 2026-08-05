@@ -12,14 +12,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -30,6 +28,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import go.examate.hyp.config.PrefsManager
@@ -38,17 +37,14 @@ import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.components.PlainDialog
 import go.examate.hyp.ui.components.PlainDialogButtons
+import go.examate.hyp.ui.components.PlainDialogContent
 import go.examate.hyp.ui.components.PlainDialogTitle
+import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.BgPrimary
 import go.examate.hyp.ui.theme.Danger
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
-import kotlinx.coroutines.delay
-import go.examate.hyp.ui.components.PlainDialog
-import go.examate.hyp.ui.components.PlainDialogButtons
-import go.examate.hyp.ui.components.PlainDialogContent
-import go.examate.hyp.ui.components.PlainDialogTitle
 
 /**
  * 慎思页:启动入口 + AI 聊天
@@ -98,11 +94,6 @@ fun ShensiScreen(
 
         Spacer(Modifier.height(14.dp))
 
-        // ═══ 滚动提示卡片(logo 与权限状态之间) ═══
-        TipStackCard()
-
-        Spacer(Modifier.height(14.dp))
-
         // ═══ 权限状态卡片 ═══
         PermissionCard(
             overlayGranted = overlayGranted,
@@ -137,18 +128,26 @@ fun ShensiScreen(
         PlainDialog(onDismissRequest = { showLaunchDialog = false }) {
             PlainDialogTitle("选择启动模式")
             PlainDialogContent("无障碍搜题:通过无障碍服务读取屏幕文本自动搜题。\n截屏搜题:通过截屏框选区域,由 AI 视觉识别题目。")
-            PlainDialogButtons(
-                buttons = listOf(
-                    Triple("无障碍搜题", true) {
-                        showLaunchDialog = false
-                        onLaunchAccessibility()
-                    },
-                    Triple("截屏搜题", true) {
-                        showLaunchDialog = false
-                        onLaunchScreenshot()
-                    }
-                )
-            )
+            // 三按钮等宽排列:无障碍 | 取消(浅色) | 截屏
+            Row(
+                Modifier
+                    .padding(20.dp, 8.dp, 20.dp, 20.dp)
+                    .fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                LaunchDialogButton("无障碍", isAccent = true, Modifier.weight(1f)) {
+                    showLaunchDialog = false
+                    onLaunchAccessibility()
+                }
+                LaunchDialogButton("取消", isAccent = false, Modifier.weight(1f)) {
+                    showLaunchDialog = false
+                }
+                LaunchDialogButton("截屏", isAccent = true, Modifier.weight(1f)) {
+                    showLaunchDialog = false
+                    onLaunchScreenshot()
+                }
+            }
         }
     }
 }
@@ -266,69 +265,31 @@ private fun PermissionDetailRow(item: PermissionItem) {
     }
 }
 
-private data class Tip(val title: String, val content: String)
-
-private val Tips = listOf(
-    Tip("剪切板权限", "请授权写入剪切板权限,并将省电策略改为无限制"),
-    Tip("双击关闭", "双击小白球可快速关闭窗口"),
-    Tip("快速启动", "推荐在控制中心添加快速启动入口"),
-    Tip("藏匿模式", "藏匿模式已移至设置页的 Shizuku 设置中,需 Shizuku 授权"),
-    Tip("长按退出", "长按悬浮球 3 秒可直接退出藏匿模式")
-)
-
+/**
+ * 启动模式弹窗按钮:等宽排列,取消按钮用浅灰色(isAccent=false)。
+ * 与 PlainDialog.DialogButton 样式一致,但支持 weight 等宽分布。
+ */
 @Composable
-private fun TipStackCard() {
-    val pagerState = rememberPagerState(pageCount = { Tips.size })
-
-    // 自动滚动:每 5 秒切下一张,最后一张回到第一张
-    LaunchedEffect(pagerState) {
-        while (true) {
-            delay(5000)
-            val next = if (pagerState.currentPage == Tips.lastIndex) 0 else pagerState.currentPage + 1
-            pagerState.animateScrollToPage(next)
-        }
-    }
-
-    Column(Modifier.fillMaxWidth()) {
-        HorizontalPager(
-            state = pagerState,
-            modifier = Modifier.fillMaxWidth().height(120.dp),
-            pageSpacing = 12.dp
-        ) { page ->
-            val tip = Tips[page]
-            FrostedGlassCard(
-                modifier = Modifier.fillMaxWidth().height(120.dp),
-                tint = Color.White.copy(alpha = 1f)
-            ) {
-                Column(
-                    Modifier.fillMaxSize().background(Color.White).padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(tip.title, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                    Text(tip.content, color = TextHint, fontSize = 12.sp, lineHeight = 17.sp)
-                    Spacer(Modifier.weight(1f))
-                    // 指示器移入卡片内部,弱化样式
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        Tips.indices.forEach { i ->
-                            Box(
-                                Modifier
-                                    .padding(horizontal = 2.dp)
-                                    .size(if (i == pagerState.currentPage) 5.dp else 3.dp)
-                                    .clip(CircleShape)
-                                    .background(
-                                        if (i == pagerState.currentPage)
-                                            TextHint.copy(alpha = 0.5f)
-                                        else
-                                            TextHint.copy(alpha = 0.15f)
-                                    )
-                            )
-                        }
-                    }
-                }
-            }
-        }
+private fun LaunchDialogButton(
+    text: String,
+    isAccent: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (isAccent) AccentBlue else Color(0xFFE5E5EA))
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            color = if (isAccent) Color.White else Color.Black,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            textAlign = TextAlign.Center
+        )
     }
 }

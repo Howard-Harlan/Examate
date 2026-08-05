@@ -3,10 +3,14 @@ package go.examate.hyp.ui.chat
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -23,8 +27,25 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.Assessment
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.HelpOutline
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.NoteAdd
+import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Reply
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -37,6 +58,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -65,30 +89,55 @@ fun MessageBubble(
     onQuickFollowUp: (String) -> Unit = {},
     onRegenerate: () -> Unit = {},
     onDelete: () -> Unit = {},
+    onBranch: () -> Unit = {},
+    onSaveToNote: (String) -> Unit = {},
+    onQiushi: (String) -> Unit = {},
     showActions: Boolean = false,
     isStreaming: Boolean = false
 ) {
     val isUser = msg.role == "user"
+    var menuOpen by remember { mutableStateOf(false) }
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
 
     Column(
         if (isUser) Modifier.wrapContentWidth(Alignment.End) else Modifier.fillMaxWidth(),
         horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
     ) {
-        BubbleContent(
-            msg = msg,
-            isUser = isUser,
-            isStreaming = isStreaming,
-            context = context,
-            onQuickFollowUp = onQuickFollowUp,
-            modifier = Modifier.fillMaxWidth(),
-            contentAlignment = if (isUser) Alignment.CenterEnd else Alignment.CenterStart
-        )
+        Box {
+            BubbleContent(
+                msg = msg,
+                isUser = isUser,
+                isStreaming = isStreaming,
+                context = context,
+                onQuickFollowUp = onQuickFollowUp,
+                onLongPress = {
+                    if (!isStreaming) {
+                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                        menuOpen = true
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = if (isUser) Alignment.CenterEnd else Alignment.CenterStart
+            )
+            // 自定义长按菜单(液态玻璃风格):复制 / 保存到笔记 / 求是 / 追问(开分支) / 重新生成(后两项仅助手消息)
+            MessageLongPressMenu(
+                expanded = menuOpen,
+                isAssistant = !isUser && !msg.isError,
+                onDismiss = { menuOpen = false },
+                onCopy = { copyMessageText(context, msg.content); menuOpen = false },
+                onSaveToNote = { menuOpen = false; onSaveToNote(msg.content) },
+                onQiushi = { menuOpen = false; onQiushi(msg.content) },
+                onBranch = { menuOpen = false; onBranch() },
+                onRegenerate = { menuOpen = false; onRegenerate() }
+            )
+        }
 
-        // 消息操作行(复制 / 重新生成 / 删除):仅在非流式且需要展示时出现
+        // 消息操作行(复制 / 追问 / 重新生成 / 删除):仅在非流式且需要展示时出现
         if (showActions && !isStreaming) {
             MessageActionRow(
                 isUser = isUser,
                 onCopy = { copyMessageText(context, msg.content) },
+                onBranch = onBranch,
                 onRegenerate = onRegenerate,
                 onDelete = onDelete,
                 modifier = Modifier.padding(
@@ -112,6 +161,53 @@ fun MessageBubble(
     }
 }
 
+/**
+ * 自定义长按消息菜单(液态玻璃风格):
+ * 复制 → 保存到笔记 → 求是 → 追问(仅助手) → 重新生成(仅助手)
+ * 使用 DropdownMenu + 半透明白容器 + 阴影 + 圆角,视觉接近液态玻璃
+ */
+@Composable
+private fun MessageLongPressMenu(
+    expanded: Boolean,
+    isAssistant: Boolean,
+    onDismiss: () -> Unit,
+    onCopy: () -> Unit,
+    onSaveToNote: () -> Unit,
+    onQiushi: () -> Unit,
+    onBranch: () -> Unit,
+    onRegenerate: () -> Unit
+) {
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+        containerColor = Color.White.copy(0.92f),
+        shadowElevation = 12.dp
+    ) {
+        GlassMenuItem(icon = Icons.Filled.ContentCopy, label = "复制", onClick = onCopy)
+        GlassMenuItem(icon = Icons.Filled.NoteAdd, label = "保存到笔记", onClick = onSaveToNote)
+        GlassMenuItem(icon = Icons.Filled.HelpOutline, label = "求是", onClick = onQiushi)
+        if (isAssistant) {
+            GlassMenuItem(icon = Icons.Filled.Reply, label = "追问", onClick = onBranch)
+            GlassMenuItem(icon = Icons.Filled.Refresh, label = "重新生成", onClick = onRegenerate)
+        }
+    }
+}
+
+/** 液态玻璃菜单项:图标 + 文字 */
+@Composable
+private fun GlassMenuItem(icon: ImageVector, label: String, onClick: () -> Unit) {
+    DropdownMenuItem(
+        text = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(icon, contentDescription = label, modifier = Modifier.size(18.dp), tint = TextPrimary)
+                Spacer(Modifier.width(8.dp))
+                Text(label, fontSize = 14.sp, color = TextPrimary)
+            }
+        },
+        onClick = onClick
+    )
+}
+
 @Composable
 private fun BubbleContent(
     msg: ChatMsg,
@@ -119,6 +215,7 @@ private fun BubbleContent(
     isStreaming: Boolean,
     context: Context,
     onQuickFollowUp: (String) -> Unit,
+    onLongPress: () -> Unit,
     modifier: Modifier,
     contentAlignment: Alignment
 ) {
@@ -156,6 +253,7 @@ private fun BubbleContent(
                         Modifier
                     }
                 )
+                .combinedClickable(onClick = {}, onLongClick = onLongPress)
                 .padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
             UserImage(msg, context)
@@ -190,7 +288,24 @@ private fun ToolStepsSection(msg: ChatMsg) {
 
 @Composable
 private fun UserImage(msg: ChatMsg, context: Context) {
-    val uriStr = msg.imageUriString ?: return
+    // 兼容旧单图 imageUriString;多图横向排列,单图大图展示
+    val uris = msg.imageUris.ifEmpty { listOfNotNull(msg.imageUriString) }
+    if (uris.isEmpty()) return
+    if (uris.size == 1) {
+        UserImageOne(uris[0], context, Modifier.fillMaxWidth().height(180.dp))
+    } else {
+        Row(
+            Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            uris.forEach { UserImageOne(it, context, Modifier.size(110.dp)) }
+        }
+    }
+    if (msg.content.isNotEmpty()) Spacer(Modifier.height(8.dp))
+}
+
+@Composable
+private fun UserImageOne(uriStr: String, context: Context, modifier: Modifier) {
     var bitmap by remember(uriStr) { mutableStateOf<android.graphics.Bitmap?>(null) }
     LaunchedEffect(uriStr) {
         bitmap = withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -213,13 +328,9 @@ private fun UserImage(msg: ChatMsg, context: Context) {
         Image(
             bitmap = it.asImageBitmap(),
             contentDescription = "图片",
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(180.dp)
-                .clip(RoundedCornerShape(8.dp)),
+            modifier = modifier.clip(RoundedCornerShape(8.dp)),
             contentScale = ContentScale.Crop
         )
-        if (msg.content.isNotEmpty()) Spacer(Modifier.height(8.dp))
     }
 }
 
@@ -289,10 +400,12 @@ private fun MessageContent(msg: ChatMsg, isUser: Boolean, isStreaming: Boolean =
             lineHeight = 20.sp
         )
     } else {
+        val ctx = androidx.compose.ui.platform.LocalContext.current
         MarkdownText(
             markdown = msg.content,
             textColor = if (msg.isError) Danger else TextPrimary,
-            fontSize = 14,
+            fontSize = go.examate.hyp.config.PrefsManager.getInstance(ctx).chatFontSize,
+            fontFamily = go.examate.hyp.util.ReadingFont.family(ctx),
             isStreaming = isStreaming
         )
     }
@@ -300,21 +413,175 @@ private fun MessageContent(msg: ChatMsg, isUser: Boolean, isStreaming: Boolean =
 
 @Composable
 internal fun ActionCardView(card: ActionCard) {
+    AnimatedCardAppear {
+        when (card.type) {
+            "ecard_balance" -> BalanceCard(card)
+            "campus_schedule" -> ScheduleCard(card)
+            else -> GenericActionCard(card)
+        }
+    }
+}
+
+/** 卡片入场微动效:淡入 + 轻微上滑(220ms),让结果卡片出现得更自然 */
+@Composable
+private fun AnimatedCardAppear(content: @Composable () -> Unit) {
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { visible = true }
+    val progress by animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = tween(220),
+        label = "cardAppear"
+    )
+    val slidePx = with(LocalDensity.current) { 8.dp.toPx() }
+    Box(
+        Modifier.graphicsLayer {
+            alpha = progress
+            translationY = (1f - progress) * slidePx
+        }
+    ) {
+        content()
+    }
+}
+
+/** 一卡通余额:承载数据的富卡片(大号金额 + 账户名) */
+@Composable
+private fun BalanceCard(card: ActionCard) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val accent = Color(0xFF34C759)
+    val amount = card.payload["amount"] ?: card.summary.removePrefix("¥")
+    val account = card.payload["account"].orEmpty()
     Row(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(Color(0xFFF0F4FF))
+            .clip(RoundedCornerShape(14.dp))
+            .background(accent.copy(alpha = 0.07f))
+            .border(0.7.dp, accent.copy(alpha = 0.18f), RoundedCornerShape(14.dp))
+            .clickable { openCampusEcard(context, "balance") }
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        CardIcon(Icons.Filled.AccountBalanceWallet, accent)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text("一卡通余额", color = TextSecondary, fontSize = 11.sp)
+            val target = amount.toFloatOrNull()
+            if (target != null) {
+                var play by remember(target) { mutableStateOf(false) }
+                LaunchedEffect(target) { play = true }
+                val shown by animateFloatAsState(
+                    targetValue = if (play) target else 0f,
+                    animationSpec = tween(600),
+                    label = "balanceRoll"
+                )
+                Text("¥%.2f".format(shown), color = accent, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            } else {
+                Text("¥$amount", color = accent, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            }
+            if (account.isNotEmpty()) {
+                Text(account, color = TextSecondary, fontSize = 11.sp,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        CardChevron(accent)
+    }
+}
+
+/** 今日课表:承载数据的富卡片(列出今日各节课程 + 今日代办) */
+@Composable
+private fun ScheduleCard(card: ActionCard) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val accent = Color(0xFF5B7CFA)
+    val weekday = card.payload["weekday"].orEmpty()
+    val courses = card.payload["today"].orEmpty().split("\n").filter { it.isNotBlank() }
+    val todos = card.payload["todos"].orEmpty().split("\n").filter { it.isNotBlank() }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(accent.copy(alpha = 0.07f))
+            .border(0.7.dp, accent.copy(alpha = 0.18f), RoundedCornerShape(14.dp))
+            .clickable {
+                try {
+                    context.startActivity(android.content.Intent(context, go.examate.hyp.ScheduleActivity::class.java))
+                } catch (e: Exception) { Log.w(TAG, "open schedule failed", e) }
+            }
+            .padding(14.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CardIcon(Icons.Filled.CalendarMonth, accent)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("今日课表", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                if (weekday.isNotEmpty()) Text(weekday, color = TextSecondary, fontSize = 11.sp)
+            }
+            CardChevron(accent)
+        }
+        if (courses.isEmpty()) {
+            Text("今日无课 🎉", color = TextSecondary, fontSize = 12.sp,
+                modifier = Modifier.padding(top = 8.dp, start = 50.dp))
+        } else {
+            Spacer(Modifier.height(8.dp))
+            courses.take(6).forEach { c ->
+                Row(
+                    Modifier.padding(start = 50.dp, top = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(Modifier.size(5.dp).clip(CircleShape).background(accent))
+                    Spacer(Modifier.width(8.dp))
+                    Text(c, color = TextPrimary, fontSize = 12.sp,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            if (courses.size > 6) {
+                Text("…共 ${courses.size} 节", color = TextSecondary, fontSize = 11.sp,
+                    modifier = Modifier.padding(start = 50.dp, top = 3.dp))
+            }
+        }
+        // 今日代办
+        if (todos.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Text("今日待办", color = TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(start = 50.dp))
+            todos.take(4).forEach { t ->
+                Row(
+                    Modifier.padding(start = 50.dp, top = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("📌", fontSize = 10.sp)
+                    Spacer(Modifier.width(6.dp))
+                    Text(t, color = TextPrimary, fontSize = 12.sp,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            if (todos.size > 4) {
+                Text("…共 ${todos.size} 项", color = TextSecondary, fontSize = 11.sp,
+                    modifier = Modifier.padding(start = 50.dp, top = 3.dp))
+            }
+        }
+    }
+}
+
+/** 通用入口/摘要卡片:图标 + 标题 + 摘要 + 跳转箭头 */
+@Composable
+private fun GenericActionCard(card: ActionCard) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val (iconVec, accent) = when (card.type) {
+        "ecard_topup" -> Icons.Filled.Payments to AccentBlue
+        "room_electricity" -> Icons.Filled.Bolt to Color(0xFFEF6C00)
+        "campus_grades" -> Icons.Filled.Assessment to Color(0xFF9B7BE8)
+        "campus_info" -> Icons.Filled.Person to AccentBlue
+        else -> Icons.Filled.Link to AccentBlue
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(accent.copy(alpha = 0.07f))
+            .border(0.7.dp, accent.copy(alpha = 0.18f), RoundedCornerShape(14.dp))
             .clickable {
                 try {
                     val intent = android.content.Intent(context, go.examate.hyp.CampusServiceActivity::class.java)
-                    // 按 card.type 分发到具体页面和 Tab
                     when (card.type) {
-                        "ecard_balance" -> {
-                            intent.putExtra("target_route", "ecard")
-                            intent.putExtra("target_tab", "balance")
-                        }
                         "ecard_topup" -> {
                             intent.putExtra("target_route", "ecard")
                             intent.putExtra("target_tab", "balance")
@@ -323,26 +590,98 @@ internal fun ActionCardView(card: ActionCard) {
                             intent.putExtra("target_route", "ecard")
                             intent.putExtra("target_tab", "payfee")
                         }
-                        "campus_grades" -> {
-                            intent.putExtra("target_route", "jwxt")
-                        }
-                        "campus_info" -> {
-                            intent.putExtra("target_route", "jwxt")
-                        }
+                        "campus_grades" -> intent.putExtra("target_route", "jwxt")
+                        "campus_info" -> intent.putExtra("target_route", "jwxt")
                     }
                     context.startActivity(intent)
                 } catch (e: Exception) { Log.w(TAG, "startActivity failed", e) }
             }
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        CardIcon(iconVec, accent)
+        Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(card.title, color = AccentBlue, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Text(card.title, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             if (card.summary.isNotEmpty()) {
-                Text(card.summary, color = TextSecondary, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp))
+                Text(card.summary, color = TextSecondary, fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 2.dp))
             }
         }
-        Text("›", color = AccentBlue, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        CardChevron(accent)
+    }
+}
+
+/** 卡片左侧:强调色 tint 图标方底 */
+@Composable
+private fun CardIcon(icon: ImageVector, accent: Color) {
+    Box(
+        Modifier
+            .size(38.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .background(accent.copy(alpha = 0.16f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(20.dp))
+    }
+}
+
+/** 卡片右侧:圆形跳转箭头 */
+@Composable
+private fun CardChevron(accent: Color) {
+    Box(
+        Modifier
+            .size(24.dp)
+            .clip(CircleShape)
+            .background(accent.copy(alpha = 0.12f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Text("›", color = accent, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+/** 跳转到校园服务一卡通页 */
+private fun openCampusEcard(context: Context, tab: String) {
+    try {
+        val intent = android.content.Intent(context, go.examate.hyp.CampusServiceActivity::class.java)
+        intent.putExtra("target_route", "ecard")
+        intent.putExtra("target_tab", tab)
+        context.startActivity(intent)
+    } catch (e: Exception) { Log.w(TAG, "startActivity failed", e) }
+}
+
+/**
+ * 消息页脚:分支切换器(该消息有多个子分支时)。
+ * 「追问」已移至操作行/长按菜单;切换器在兄弟分支间移动激活路径。
+ */
+@Composable
+fun MessageBranchFooter(
+    message: ChatMsg,
+    allMessages: List<ChatMsg>,
+    activePathIds: Set<String>,
+    onSwitch: (Boolean) -> Unit
+) {
+    val kids = remember(allMessages, message.id) {
+        allMessages.filter { it.parentId == message.id }.sortedBy { it.time }
+    }
+    val hasBranches = kids.size > 1
+    if (!hasBranches) return   // 页脚只保留分支切换器
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = if (message.role == "user") 0.dp else 4.dp, top = 2.dp),
+        horizontalArrangement = if (message.role == "user") Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        val idx = kids.indexOfFirst { it.id in activePathIds }.coerceAtLeast(0)
+        Text("‹", color = AccentBlue, fontSize = 15.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { onSwitch(false) }
+                .padding(horizontal = 6.dp, vertical = 1.dp))
+        Text("${idx + 1}/${kids.size} 分支", color = TextSecondary, fontSize = 11.sp,
+            modifier = Modifier.padding(horizontal = 2.dp))
+        Text("›", color = AccentBlue, fontSize = 15.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { onSwitch(true) }
+                .padding(horizontal = 6.dp, vertical = 1.dp))
     }
 }
 
@@ -395,12 +734,14 @@ private fun FilePreviewCard(filePath: String) {
     }
 }
 
-/** 文件预览弹窗 — 根据文件类型用不同方式渲染 */
+/** 文件预览弹窗 — 根据文件类型用不同方式渲染,顶栏支持导出PDF/分享 */
 @Composable
 private fun FilePreviewDialog(filePath: String, onDismiss: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val file = java.io.File(filePath)
     val content = remember { try { file.readText() } catch (_: Exception) { "" } }
     val ext = file.extension.lowercase()
+    var webViewRef by remember { mutableStateOf<android.webkit.WebView?>(null) }
 
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -410,7 +751,7 @@ private fun FilePreviewDialog(filePath: String, onDismiss: () -> Unit) {
                 .clip(RoundedCornerShape(14.dp))
                 .background(Color.White)
         ) {
-            // 顶栏
+            // 顶栏:文件名 + 导出PDF(仅html) + 分享 + 关闭
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -420,8 +761,31 @@ private fun FilePreviewDialog(filePath: String, onDismiss: () -> Unit) {
             ) {
                 Text(file.name, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium,
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                if (ext == "html") {
+                    Text("导出PDF", color = AccentBlue, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                        modifier = Modifier.clickable {
+                            val wv = webViewRef
+                            if (wv == null) {
+                                go.examate.hyp.util.ToastUtil.show(context, "页面未加载完成")
+                            } else try {
+                                val pm = context.getSystemService(Context.PRINT_SERVICE) as android.print.PrintManager
+                                pm.print(
+                                    file.nameWithoutExtension,
+                                    wv.createPrintDocumentAdapter(file.nameWithoutExtension),
+                                    android.print.PrintAttributes.Builder().build()
+                                )
+                            } catch (e: Exception) {
+                                Log.w(TAG, "print failed", e)
+                                go.examate.hyp.util.ToastUtil.show(context, "导出失败")
+                            }
+                        }.padding(horizontal = 8.dp))
+                }
+                Text("分享", color = AccentBlue, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .clickable { go.examate.hyp.util.FileShareUtil.shareFile(context, filePath) }
+                        .padding(horizontal = 8.dp))
                 Text("关闭", color = AccentBlue, fontSize = 13.sp, fontWeight = FontWeight.Medium,
-                    modifier = Modifier.clickable { onDismiss() }.padding(start = 12.dp))
+                    modifier = Modifier.clickable { onDismiss() }.padding(start = 8.dp))
             }
 
             // 内容区
@@ -433,6 +797,7 @@ private fun FilePreviewDialog(filePath: String, onDismiss: () -> Unit) {
                                 settings.javaScriptEnabled = true
                                 settings.domStorageEnabled = true
                                 loadDataWithBaseURL(null, content, "text/html", "UTF-8", null)
+                                webViewRef = this
                             }
                         },
                         modifier = Modifier.fillMaxSize()
@@ -453,7 +818,7 @@ private fun FilePreviewDialog(filePath: String, onDismiss: () -> Unit) {
                     }
                 }
                 else -> {
-                    // txt, json, etc.
+                    // txt, json, csv, etc.
                     Column(
                         Modifier
                             .fillMaxSize()

@@ -79,6 +79,9 @@ class LanChatTransport(
 
     private var multicastLock: WifiManager.MulticastLock? = null
 
+    /** 传输层是否在运行(start 成功且未 stop);供调用方判断是否需重建 */
+    val isRunning: Boolean get() = running
+
     /** 启动 UDP(开 socket、收发线程、心跳),并发送 hello */
     fun start() {
         acquireMulticastLock()
@@ -113,20 +116,20 @@ class LanChatTransport(
         })
     }
 
-    /** 停止:发送 bye,中断线程,关闭 socket */
+    /** 停止:发送 bye(经 executor 异步,避免主线程网络IO),中断线程,关闭 socket */
     fun stop() {
         running = false
         try {
-            val bye = JSONObject().apply {
+            send(JSONObject().apply {
                 put("type", "bye"); put("id", myId); put("time", System.currentTimeMillis())
-            }
-            val data = bye.toString().toByteArray(Charsets.UTF_8)
-            socket?.send(DatagramPacket(data, data.size, InetAddress.getByName(BROADCAST_ADDR), PORT))
+            })
         } catch (e: Exception) { Log.w(TAG, "send bye failed", e) }
+        // 温和关闭:拒绝新任务但让 bye 发完;最多等 300ms(UDP 发送极快)
+        executor.shutdown()
+        try { executor.awaitTermination(300, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (_: InterruptedException) {}
         receiveThread?.interrupt(); heartbeatThread?.interrupt()
         try { socket?.close() } catch (e: Exception) { Log.w(TAG, "socket close failed", e) }
         socket = null
-        executor.shutdownNow()
         try { multicastLock?.release() } catch (e: Exception) { Log.w(TAG, "multicastLock release failed", e) }
         multicastLock = null
         devices.clear()
@@ -192,7 +195,10 @@ class LanChatTransport(
                 val packet = DatagramPacket(buf, buf.size)
                 socket?.receive(packet) ?: break
                 onPacketReceived(JSONObject(String(packet.data, 0, packet.length)))
-            } catch (e: Exception) { if (!running) break }
+            } catch (e: Exception) {
+                if (!running) break
+                Log.w(TAG, "receiveLoop error", e)
+            }
         }
     }
 
@@ -200,20 +206,32 @@ class LanChatTransport(
         while (running && !Thread.currentThread().isInterrupted) {
             try { Thread.sleep(HEARTBEAT_INTERVAL_MS) } catch (e: InterruptedException) { break }
             if (!running) break
-            val now = System.currentTimeMillis()
-            devices.entries.filter { now - it.value.lastSeen > DEVICE_TIMEOUT_MS }
-                .map { it.key }.forEach { devices.remove(it) }
-            notifyOnlineCount()
-            send(buildPacket("heartbeat"))
+            // 整体 try-catch:避免 stop() 竞态下(如 executor 已关闭)抛未捕获异常导致闪退
+            try {
+                val now = System.currentTimeMillis()
+                devices.entries.filter { now - it.value.lastSeen > DEVICE_TIMEOUT_MS }
+                    .map { it.key }.forEach { devices.remove(it) }
+                notifyOnlineCount()
+                send(buildPacket("heartbeat"))
+            } catch (e: Exception) {
+                Log.w(TAG, "heartbeatLoop error", e)
+                if (!running) break
+            }
         }
     }
 
     private fun send(json: JSONObject) {
-        executor.execute {
-            try {
-                val data = json.toString().toByteArray(Charsets.UTF_8)
-                socket?.send(DatagramPacket(data, data.size, InetAddress.getByName(BROADCAST_ADDR), PORT))
-            } catch (e: Exception) { Log.w(TAG, "send failed", e) }
+        // stop() 后 executor 已关闭:静默丢弃,避免 RejectedExecutionException 击穿后台线程
+        if (executor.isShutdown) return
+        try {
+            executor.execute {
+                try {
+                    val data = json.toString().toByteArray(Charsets.UTF_8)
+                    socket?.send(DatagramPacket(data, data.size, InetAddress.getByName(BROADCAST_ADDR), PORT))
+                } catch (e: Exception) { Log.w(TAG, "send failed", e) }
+            }
+        } catch (e: java.util.concurrent.RejectedExecutionException) {
+            Log.w(TAG, "send rejected: executor stopped")
         }
     }
 }

@@ -36,6 +36,26 @@ class PrefsManager private constructor(context: Context) {
         get() = prefsConfig.getBoolean(KEY_TRANSPARENT_FLOAT, false)
         set(value) = prefsConfig.edit().putBoolean(KEY_TRANSPARENT_FLOAT, value).apply()
 
+    /** 聊天正文自定义字体文件路径(空=系统默认) */
+    var chatFontPath: String
+        get() = prefsConfig.getString(KEY_CHAT_FONT_PATH, "") ?: ""
+        set(value) = prefsConfig.edit().putString(KEY_CHAT_FONT_PATH, value).apply()
+
+    /** 聊天正文字号(sp),默认 14 */
+    var chatFontSize: Int
+        get() = prefsConfig.getInt(KEY_CHAT_FONT_SIZE, 14)
+        set(value) = prefsConfig.edit().putInt(KEY_CHAT_FONT_SIZE, value).apply()
+
+    /** 聊天正文字号档位(0偏小/1常规/2偏大),默认 1 */
+    var chatFontSizeLevel: Int
+        get() = prefsConfig.getInt(KEY_CHAT_FONT_SIZE_LEVEL, 1)
+        set(value) = prefsConfig.edit().putInt(KEY_CHAT_FONT_SIZE_LEVEL, value).apply()
+
+    /** 聊天背景图片路径(空=默认背景) */
+    var chatBackgroundPath: String
+        get() = prefsConfig.getString(KEY_CHAT_BACKGROUND_PATH, "") ?: ""
+        set(value) = prefsConfig.edit().putString(KEY_CHAT_BACKGROUND_PATH, value).apply()
+
     /** 多AI验证(圆桌会议):开启后自动答题会同时请求多个AI并投票 */
     var isMultiAiVerify: Boolean
         get() = prefsConfig.getBoolean(KEY_MULTI_AI_VERIFY, false)
@@ -62,6 +82,11 @@ class PrefsManager private constructor(context: Context) {
     var nickname: String
         get() = prefsConfig.getString(KEY_NICKNAME, "") ?: ""
         set(value) = prefsConfig.edit().putString(KEY_NICKNAME, value).apply()
+
+    /** 用户生日(yyyy-MM-dd,空表示未设置;用于匹配星座/节日等人情味功能) */
+    var birthday: String
+        get() = prefsConfig.getString(KEY_BIRTHDAY, "") ?: ""
+        set(value) = prefsConfig.edit().putString(KEY_BIRTHDAY, value).apply()
 
     /** Agents 模式:开启后 AI 可调用工具(查成绩/课表等)并多步推理 */
     var isAgentsMode: Boolean
@@ -193,6 +218,24 @@ class PrefsManager private constructor(context: Context) {
         prefsConfig.registerOnSharedPreferenceChangeListener(listener)
     }
 
+    /**
+     * 默认首页:启动 App 时默认选中的 Tab。
+     * - 0 = 慎思页(默认)
+     * - 1 = 探索页
+     */
+    var defaultHomeTab: Int
+        get() = prefsConfig.getInt(KEY_DEFAULT_HOME_TAB, 0)
+        set(value) = prefsConfig.edit().putInt(KEY_DEFAULT_HOME_TAB, value).apply()
+
+    /**
+     * 课程表视图模式:持久化用户最后选择的视图,下次进入时恢复。
+     * - "week" = 周视图(默认)
+     * - "day"  = 日视图
+     */
+    var scheduleViewMode: String
+        get() = prefsConfig.getString(KEY_SCHEDULE_VIEW_MODE, "week") ?: "week"
+        set(value) = prefsConfig.edit().putString(KEY_SCHEDULE_VIEW_MODE, value).apply()
+
     fun unregisterSettingsListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) {
         prefsConfig.unregisterOnSharedPreferenceChangeListener(listener)
     }
@@ -220,6 +263,7 @@ class PrefsManager private constructor(context: Context) {
         const val KEY_MULTI_AI_VERIFY = "multi_ai_verify"
         const val KEY_MULTI_AI_VERIFY_SELECTED = "multi_ai_verify_selected"
         const val KEY_NICKNAME = "nickname"
+        const val KEY_BIRTHDAY = "birthday"
         const val KEY_AGENTS_MODE = "agents_mode"
         const val KEY_MEMORY_ENABLED = "memory_enabled"
         const val KEY_SCHOOL = "school"
@@ -236,6 +280,12 @@ class PrefsManager private constructor(context: Context) {
         const val KEY_AGENT_CHAT_AVATAR_ENABLED = "agent_chat_avatar_enabled"
         const val KEY_USER_DISPLAY_FIELDS = "user_display_fields"
         const val KEY_FLOATING_MENU_ITEMS = "floating_menu_items"
+        const val KEY_DEFAULT_HOME_TAB = "default_home_tab"
+        const val KEY_SCHEDULE_VIEW_MODE = "schedule_view_mode"
+        const val KEY_CHAT_FONT_PATH = "chat_font_path"
+        const val KEY_CHAT_FONT_SIZE = "chat_font_size"
+        const val KEY_CHAT_FONT_SIZE_LEVEL = "chat_font_size_level"
+        const val KEY_CHAT_BACKGROUND_PATH = "chat_background_path"
         private const val KEY_PROVIDERS = "providers"
         private const val KEY_COMPLETED = "completed"
 

@@ -16,11 +16,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,6 +36,8 @@ import go.examate.hyp.ui.theme.Error
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.Success
 import go.examate.hyp.ui.theme.TextHint
+import go.examate.hyp.ui.theme.ScheduleGradientEnd
+import go.examate.hyp.ui.theme.ScheduleGradientStart
 import go.examate.hyp.ui.theme.Warning
 
 /** 第二课堂功能 Tab */
@@ -47,7 +49,7 @@ private enum class ScTab(val label: String) {
 @Composable
 fun ScScreen(onBack: () -> Unit) {
     val viewModel: ScViewModel = viewModel()
-    val state by viewModel.uiState.collectAsState()
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
 
     var tab by remember { mutableStateOf(ScTab.SUMMARY) }
 
@@ -103,7 +105,7 @@ private fun SummarySection(
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
-                .background(Brush.linearGradient(listOf(Color(0xFF374151), Color(0xFF4B5563))))
+                .background(Brush.linearGradient(listOf(ScheduleGradientStart, ScheduleGradientEnd)))
                 .padding(24.dp)
         ) {
             Column {

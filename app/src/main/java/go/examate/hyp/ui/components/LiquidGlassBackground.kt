@@ -33,9 +33,9 @@ fun LiquidGlassBackground(
                     drawRect(BgPrimary)
                     drawRect(
                         Brush.verticalGradient(
-                            0f to Color.White.copy(0.08f),
-                            0.5f to Color.White.copy(0.02f),
-                            1f to Color(0xFFE8EAF0).copy(0.35f)
+                            0f to Color.White.copy(0.04f),
+                            0.6f to Color.White.copy(0.03f),
+                            1f to Color(0xFFE8EAF0).copy(0.18f)
                         )
                     )
                 }

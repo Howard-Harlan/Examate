@@ -1,6 +1,7 @@
 package go.examate.hyp.agent
 
 import android.content.Context
+import android.net.Uri
 import go.examate.hyp.config.PrefsManager
 import org.json.JSONObject
 import java.io.File
@@ -28,11 +29,41 @@ object FileTools {
         return if (target.startsWith(ws)) File(target) else null
     }
 
+    /** 把外部 content URI 文件拷入 workspace/uploads/,返回相对路径(供 read_file 读取);失败返回 null */
+    fun importToWorkspace(context: Context, uri: Uri): String? {
+        return try {
+            val name = queryDisplayName(context, uri)
+            val dir = File(workspaceDir(context), "uploads").apply { mkdirs() }
+            val dst = File(dir, name)
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                dst.outputStream().use { input.copyTo(it) }
+            } ?: return null
+            "uploads/$name"
+        } catch (_: Exception) { null }
+    }
+
+    private fun queryDisplayName(context: Context, uri: Uri): String {
+        var name = "file_${System.currentTimeMillis()}"
+        try {
+            context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0) c.getString(idx)?.let { name = it }
+                }
+            }
+        } catch (_: Exception) {}
+        return name.replace(Regex("[/\\\\]"), "_")
+    }
+
     private val CreateFile = object : ToolRegistry.Tool {
         override val name = "create_file"
         override val description = "创建文件(支持 .html/.md/.txt/.json 等),可生成网页或文档供用户预览"
         override val category = ToolRegistry.Category.PRIVILEGED
         override val parametersHint = "path(文件名如\"report.html\"), content(文件内容)"
+        override val params = listOf(
+            ToolRegistry.ParamDef("path", "string", "文件名,如 report.html", true),
+            ToolRegistry.ParamDef("content", "string", "文件内容", true)
+        )
 
         override suspend fun execute(context: Context, args: JSONObject): ToolRegistry.Result {
             val path = args.optString("path", "").ifEmpty { return ToolRegistry.Result(false, "缺少 path 参数") }
@@ -52,6 +83,7 @@ object FileTools {
         override val description = "读取沙箱内的文件内容"
         override val category = ToolRegistry.Category.SAFE
         override val parametersHint = "path(文件名)"
+        override val params = listOf(ToolRegistry.ParamDef("path", "string", "文件名", true))
 
         override suspend fun execute(context: Context, args: JSONObject): ToolRegistry.Result {
             val path = args.optString("path", "").ifEmpty { return ToolRegistry.Result(false, "缺少 path 参数") }
@@ -68,6 +100,7 @@ object FileTools {
         override val description = "列出沙箱目录中的文件"
         override val category = ToolRegistry.Category.SAFE
         override val parametersHint = "path(子目录,可选,默认根目录)"
+        override val params = listOf(ToolRegistry.ParamDef("path", "string", "子目录,可选,默认根目录", false))
 
         override suspend fun execute(context: Context, args: JSONObject): ToolRegistry.Result {
             val path = args.optString("path", "")
@@ -91,6 +124,11 @@ object FileTools {
         override val description = "编辑已有文件(替换内容或追加)。生成大文件时建议先创建骨架,再用 append 模式分多次追加,避免单次输出被截断"
         override val category = ToolRegistry.Category.PRIVILEGED
         override val parametersHint = "path(文件名), content(新内容), mode(\"replace\"替换/\"append\"追加,默认replace)"
+        override val params = listOf(
+            ToolRegistry.ParamDef("path", "string", "文件名", true),
+            ToolRegistry.ParamDef("content", "string", "新内容", true),
+            ToolRegistry.ParamDef("mode", "string", "replace替换/append追加,默认replace", false)
+        )
 
         override suspend fun execute(context: Context, args: JSONObject): ToolRegistry.Result {
             val path = args.optString("path", "").ifEmpty { return ToolRegistry.Result(false, "缺少 path 参数") }
@@ -117,6 +155,11 @@ object FileTools {
         override val description = "在文件的指定锚点处插入内容(适合分块构建大 HTML/MD)。锚点格式:<!-- ANCHOR:名称 --> 或 {{ANCHOR:名称}}。插入后锚点保留,可多次填充同一文件不同位置"
         override val category = ToolRegistry.Category.PRIVILEGED
         override val parametersHint = "path(文件名), anchor(锚点名称), content(要插入的内容)"
+        override val params = listOf(
+            ToolRegistry.ParamDef("path", "string", "文件名", true),
+            ToolRegistry.ParamDef("anchor", "string", "锚点名称", true),
+            ToolRegistry.ParamDef("content", "string", "要插入的内容", true)
+        )
 
         override suspend fun execute(context: Context, args: JSONObject): ToolRegistry.Result {
             val path = args.optString("path", "").ifEmpty { return ToolRegistry.Result(false, "缺少 path 参数") }

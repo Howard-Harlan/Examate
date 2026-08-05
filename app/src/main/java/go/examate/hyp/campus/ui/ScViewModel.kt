@@ -18,7 +18,7 @@ import kotlinx.coroutines.launch
  * ScScreen(第二课堂) 的 ViewModel
  *
  * 将成绩汇总/成绩明细两个 Tab 的状态从 Composable 中抽出,
- * 统一用 StateFlow 管理,Composable 通过 collectAsState() 收集。
+ * 统一用 StateFlow 管理,Composable 通过 collectAsStateWithLifecycle() 收集。
  *
  * 优势:
  * 1. 状态与 UI 解耦,便于测试

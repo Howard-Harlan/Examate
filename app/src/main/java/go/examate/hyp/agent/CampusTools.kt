@@ -22,7 +22,8 @@ object CampusTools {
     private abstract class CampusTool(
         override val name: String,
         override val description: String,
-        override val parametersHint: String = ""
+        override val parametersHint: String = "",
+        override val params: List<ToolRegistry.ParamDef> = emptyList()
     ) : ToolRegistry.Tool {
         override val category = ToolRegistry.Category.SAFE
         override val requiresLogin = true
@@ -44,8 +45,12 @@ object CampusTools {
     }
 
     private val GetGrades = object : CampusTool(
-        "get_grades", "查询成绩",
-        "xn(学年如\"2024-2025\",可选), xq(学期\"1\"或\"2\",可选)"
+        "get_grades", "查询成绩。用户说查成绩时必须调用此工具",
+        "xn(学年如\"2024-2025\",可选), xq(学期\"1\"或\"2\",可选)",
+        listOf(
+            ToolRegistry.ParamDef("xn", "string", "学年,如 2024-2025,可选", false),
+            ToolRegistry.ParamDef("xq", "string", "学期,1 或 2,可选", false)
+        )
     ) {
         override suspend fun execute(context: Context, args: JSONObject): ToolRegistry.Result {
             val xn = args.optString("xn", "").ifEmpty { null }
@@ -61,7 +66,11 @@ object CampusTools {
     }
 
     private val GetSchedule = object : CampusTool(
-        "get_schedule", "查询课表", "xn(学年,可选), xq(学期,可选)"
+        "get_schedule", "查询课表", "xn(学年,可选), xq(学期,可选)",
+        listOf(
+            ToolRegistry.ParamDef("xn", "string", "学年,如 2024-2025,可选", false),
+            ToolRegistry.ParamDef("xq", "string", "学期,1 或 2,可选", false)
+        )
     ) {
         override suspend fun execute(context: Context, args: JSONObject): ToolRegistry.Result {
             val xn = args.optString("xn", "").ifEmpty { null }
@@ -77,7 +86,11 @@ object CampusTools {
     }
 
     private val GetExamSchedule = object : CampusTool(
-        "get_exam_schedule", "查询考试安排", "xn(学年,可选), xq(学期,可选)"
+        "get_exam_schedule", "查询考试安排", "xn(学年,可选), xq(学期,可选)",
+        listOf(
+            ToolRegistry.ParamDef("xn", "string", "学年,如 2024-2025,可选", false),
+            ToolRegistry.ParamDef("xq", "string", "学期,1 或 2,可选", false)
+        )
     ) {
         override suspend fun execute(context: Context, args: JSONObject): ToolRegistry.Result {
             val xn = args.optString("xn", "").ifEmpty { null }
@@ -93,7 +106,11 @@ object CampusTools {
     }
 
     private val GetSelectedCourses = object : CampusTool(
-        "get_selected_courses", "查询已选课程", "xn(学年,可选), xq(学期,可选)"
+        "get_selected_courses", "查询已选课程", "xn(学年,可选), xq(学期,可选)",
+        listOf(
+            ToolRegistry.ParamDef("xn", "string", "学年,如 2024-2025,可选", false),
+            ToolRegistry.ParamDef("xq", "string", "学期,1 或 2,可选", false)
+        )
     ) {
         override suspend fun execute(context: Context, args: JSONObject): ToolRegistry.Result {
             val xn = args.optString("xn", "").ifEmpty { null }
@@ -109,7 +126,7 @@ object CampusTools {
     }
 
     private val GetBalance = object : CampusTool(
-        "get_balance", "查询一卡通余额"
+        "get_balance", "查询一卡通余额。用户说查余额时必须调用此工具"
     ) {
         override suspend fun execute(context: Context, args: JSONObject) = ToolRegistry.Result(
             true, cachedExecute("get_balance") {
@@ -121,7 +138,8 @@ object CampusTools {
 
     private val GetEcardBill = object : CampusTool(
         "get_ecard_bill", "查询一卡通消费账单",
-        "record_type(类型如\"消费\"/\"充值\",可选)"
+        "record_type(类型如\"消费\"/\"充值\",可选)",
+        listOf(ToolRegistry.ParamDef("record_type", "string", "消费类型,如 消费/充值,可选", false))
     ) {
         override suspend fun execute(context: Context, args: JSONObject): ToolRegistry.Result {
             val recordType = args.optString("record_type", "").ifEmpty { "" }
@@ -177,7 +195,11 @@ object CampusTools {
 
     private val GetLostFound = object : CampusTool(
         "get_lost_found", "查询失物招领列表",
-        "type(\"1\"=寻物/\"2\"=招领,可选), page(页码,可选)"
+        "type(\"1\"=寻物/\"2\"=招领,可选), page(页码,可选)",
+        listOf(
+            ToolRegistry.ParamDef("type", "string", "类型 1寻物/2招领,可选", false),
+            ToolRegistry.ParamDef("page", "number", "页码,默认1", false)
+        )
     ) {
         override suspend fun execute(context: Context, args: JSONObject): ToolRegistry.Result {
             val type = args.optString("type", "").ifEmpty { "" }

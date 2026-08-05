@@ -13,6 +13,7 @@ import android.widget.Toast
 
 import go.examate.hyp.R
 import go.examate.hyp.util.AdbCommandHelper
+import go.examate.hyp.util.ToastUtil
 
 import rikka.shizuku.Shizuku
 
@@ -113,7 +114,7 @@ class MyQSTileService : TileService() {
             if (!EnableAccessibleService()) {
                 commandHelper?.TryExecuteCommand("pm grant " + packageName + " android.permission.WRITE_SECURE_SETTINGS")
             } else {
-                Toast.makeText(this, "无障碍已开启,请再次点击磁贴启动搜题", Toast.LENGTH_LONG).show()
+                ToastUtil.showLong(this, "无障碍已开启,请再次点击磁贴启动搜题")
             }
         }
         //检查权限

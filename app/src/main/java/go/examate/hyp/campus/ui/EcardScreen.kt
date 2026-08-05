@@ -28,6 +28,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,6 +52,10 @@ import go.examate.hyp.campus.model.RoomElectricity
 import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassButton
+import go.examate.hyp.ui.components.LiquidGlassIconButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import kotlinx.coroutines.launch
 import go.examate.hyp.ui.theme.Divider as DividerColor
 import go.examate.hyp.ui.theme.Error
 import go.examate.hyp.ui.theme.ErrorBg
@@ -61,6 +66,8 @@ import go.examate.hyp.ui.theme.SurfaceVariant
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
+import go.examate.hyp.ui.theme.ScheduleGradientEnd
+import go.examate.hyp.ui.theme.ScheduleGradientStart
 import go.examate.hyp.ui.theme.Warning
 import java.time.LocalDate
 
@@ -96,11 +103,27 @@ fun EcardScreen(onBack: () -> Unit, initialTab: String? = null) {
             Spacer(Modifier.height(16.dp))
         }
     ) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-            when (tab) {
-                EcardTab.BALANCE -> BalanceSection(state.balance, viewModel)
-                EcardTab.BILL -> BillSection(state.bill, viewModel)
-                EcardTab.PAYFEE -> PayFeeSection(state.payFee, viewModel)
+        val scrollState = rememberScrollState()
+        val scope = rememberCoroutineScope()
+        Box(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().verticalScroll(scrollState)) {
+                when (tab) {
+                    EcardTab.BALANCE -> BalanceSection(state.balance, viewModel)
+                    EcardTab.BILL -> BillSection(state.bill, viewModel)
+                    EcardTab.PAYFEE -> PayFeeSection(state.payFee, viewModel)
+                }
+            }
+            // 回顶部浮动按钮: 滚动超过 600px 时显示
+            if (scrollState.value > 600) {
+                LiquidGlassIconButton(
+                    icon = Icons.Filled.KeyboardArrowUp,
+                    contentDescription = "回到顶部",
+                    onClick = { scope.launch { scrollState.animateScrollTo(0) } },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 16.dp, bottom = 16.dp)
+                        .size(44.dp)
+                )
             }
         }
     }
@@ -137,7 +160,7 @@ private fun BalanceSection(state: BalanceState, vm: EcardViewModel) {
                     .clip(RoundedCornerShape(20.dp))
                     .background(
                         androidx.compose.ui.graphics.Brush.linearGradient(
-                            listOf(Color(0xFF374151), Color(0xFF4B5563))
+                            listOf(ScheduleGradientStart, ScheduleGradientEnd)
                         )
                     )
                     .padding(24.dp)
@@ -522,20 +545,20 @@ private fun CustomCalendarDialog(
 }
 
 /** 账单项卡片。
- *  布局:左侧消费场所+时间,右侧消费数量(金额)+变化后余额 */
+ *  布局:左侧描述+时间,右侧变化金额(高亮)+变动后余额。
+ *  通过金额符号判断消费(-)/充值(+),不依赖 type 名称 */
 @Composable
 private fun BillItemCard(r: BillRecord) {
     val amount = r.amount.toDoubleOrNull() ?: 0.0
-    // 消费记录(type 含"消费")为支出;充值记录为收入。
-    // 金额可能带负号(消费)或正号(充值),统一取绝对值展示,用颜色区分。
-    val isExpense = r.type.contains("消费") || amount < 0
+    // 金额带负号或为负数=消费;带正号或为正数=充值
+    val isExpense = r.amount.trim().startsWith("-") || amount < 0
     val displayAmount = kotlin.math.abs(amount)
     FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
         Row(
             Modifier.fillMaxWidth().padding(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 左侧:消费场所 + 时间
+            // 左侧:描述 + 时间
             Column(Modifier.weight(1f)) {
                 Text(
                     r.description.ifEmpty { r.type },
@@ -544,16 +567,16 @@ private fun BillItemCard(r: BillRecord) {
                 Spacer(Modifier.height(3.dp))
                 Text(r.time, color = TextHint, fontSize = 11.sp)
             }
-            // 右侧:消费数量(金额) + 变化后余额
+            // 右侧:变化金额(高亮) + 变动后余额
             Column(horizontalAlignment = Alignment.End) {
                 Text(
                     "${if (isExpense) "-" else "+"}¥${"%.2f".format(displayAmount)}",
                     color = if (isExpense) Error else Success,
-                    fontSize = 15.sp, fontWeight = FontWeight.Bold
+                    fontSize = 16.sp, fontWeight = FontWeight.Bold
                 )
                 if (r.balanceAfter.isNotEmpty()) {
                     Spacer(Modifier.height(2.dp))
-                    Text("余额 ¥$r.balanceAfter", color = TextHint, fontSize = 11.sp)
+                    Text("余额 ¥${r.balanceAfter}", color = TextHint, fontSize = 11.sp)
                 }
             }
         }
@@ -561,15 +584,17 @@ private fun BillItemCard(r: BillRecord) {
 }
 
 /** 计算支出与充值总额。
- *  消费记录(type 含"消费"或金额为负)计入支出,其余计入充值 */
+ *  金额为负(消费)计入支出,金额为正(充值)计入充值 */
 private fun summarize(bills: List<BillRecord>): Pair<String, String> {
     var expense = 0.0
     var income = 0.0
     bills.forEach { r ->
         val amt = r.amount.toDoubleOrNull() ?: 0.0
-        val isExpense = r.type.contains("消费") || amt < 0
-        if (isExpense) expense += kotlin.math.abs(amt)
-        else income += kotlin.math.abs(amt)
+        if (r.amount.trim().startsWith("-") || amt < 0) {
+            expense += kotlin.math.abs(amt)
+        } else {
+            income += kotlin.math.abs(amt)
+        }
     }
     return "%.2f".format(expense) to "%.2f".format(income)
 }

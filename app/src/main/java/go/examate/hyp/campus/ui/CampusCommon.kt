@@ -10,11 +10,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
@@ -222,17 +225,24 @@ fun <T> SingleChoiceDialog(
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
             )
-            options.forEach { (value, label) ->
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable { cur = value }
-                        .padding(horizontal = 20.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(label, color = TextPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                    if (value == cur) {
-                        Text("✓", color = Primary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+            // 选项区:限高 + 可滚动,避免选项过多把取消/确认按钮挤出屏幕
+            Column(
+                Modifier
+                    .heightIn(max = 320.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                options.forEach { (value, label) ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { cur = value }
+                            .padding(horizontal = 20.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(label, color = TextPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        if (value == cur) {
+                            Text("✓", color = Primary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                        }
                     }
                 }
             }
@@ -247,7 +257,7 @@ fun <T> SingleChoiceDialog(
                     modifier = Modifier.weight(1f)
                 )
                 LiquidGlassButton(
-                    text = "确认", onClick = { onConfirm(cur) },
+                    text = "确认", onClick = { onConfirm(cur); onDismiss() },
                     style = ButtonStyle.White, height = 42.dp,
                     modifier = Modifier.weight(1f)
                 )

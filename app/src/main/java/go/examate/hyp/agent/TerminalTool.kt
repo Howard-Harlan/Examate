@@ -109,6 +109,7 @@ object TerminalTool {
             "工作目录为 workspace 沙箱,无法访问系统其他目录。"
         override val category = ToolRegistry.Category.PRIVILEGED
         override val parametersHint = "command(命令字符串,如\"ls -la\"或\"grep 'error' log.txt | head -20\")"
+        override val params = listOf(ToolRegistry.ParamDef("command", "string", "命令字符串", true))
 
         override suspend fun execute(context: Context, args: JSONObject): ToolRegistry.Result {
             val command = args.optString("command", "").ifEmpty {

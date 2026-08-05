@@ -24,6 +24,10 @@ object ChnuConfig {
     const val SC_API_BASE = "https://sc.chnu.edu.cn/hbsdDkApi"
     const val HSXS_BASE_URL = "https://hsxs.chnu.edu.cn"
     const val HSXS_API_BASE = "https://hsxs.chnu.edu.cn/api"
+    /** 智慧思政(教工房系统 jgf) — 综合测评成绩 */
+    const val SZS_BASE_URL = "http://jgf.chnu.edu.cn"
+    /** 智慧校园门户(oshall) — 班级通讯录等 API */
+    const val ZHXY_API_BASE = "https://oshall.chnu.edu.cn/apiZhxy"
     const val TIMEOUT_SECONDS = 20L
 
     /** 默认 User-Agent(Chrome) */

@@ -8,7 +8,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,11 +19,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -34,12 +33,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -55,14 +52,13 @@ import go.examate.hyp.ui.components.PlainDialogButtons
 import go.examate.hyp.ui.components.PlainDialogContent
 import go.examate.hyp.ui.components.PlainDialogTitle
 import go.examate.hyp.ui.theme.BgPrimary
-import go.examate.hyp.ui.theme.Divider as DividerColor
 import go.examate.hyp.ui.theme.ExamateTheme
-import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
 import go.examate.hyp.util.UpdateChecker
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.rememberCoroutineScope
 
 class AboutActivity : ComponentActivity() {
@@ -123,7 +119,7 @@ private fun AboutScreen(onBack: () -> Unit) {
                 .padding(horizontal = 24.dp)
                 .padding(top = 16.dp, bottom = 60.dp)
         ) {
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(4.dp))
 
         // ═══ 应用信息 ═══
         FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
@@ -131,17 +127,12 @@ private fun AboutScreen(onBack: () -> Unit) {
                 Modifier.fillMaxWidth().padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Logo — 使用应用图标前景(VectorDrawable,兼容painterResource)
-                Box(
-                    Modifier.size(72.dp).clip(CircleShape).background(Primary),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Image(
-                        painter = painterResource(id = go.examate.hyp.R.drawable.ic_launcher_foreground),
-                        contentDescription = "logo",
-                        modifier = Modifier.size(72.dp)
-                    )
-                }
+                // Logo — 使用应用图标前景(VectorDrawable,移除黑边圆形背景)
+                Image(
+                    painter = painterResource(id = go.examate.hyp.R.drawable.ic_launcher_foreground),
+                    contentDescription = "logo",
+                    modifier = Modifier.size(72.dp)
+                )
                 Spacer(Modifier.height(12.dp))
                 Text("Examate", color = TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(4.dp))
@@ -167,35 +158,26 @@ private fun AboutScreen(onBack: () -> Unit) {
             height = 44.dp
         )
 
+        Spacer(Modifier.height(12.dp))
+
+        // ═══ 项目地址 ═══
+        LiquidGlassButton(
+            text = "项目地址",
+            onClick = {
+                runCatching {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/duringk/Examate"))
+                    )
+                }
+            },
+            style = ButtonStyle.Outline,
+            height = 44.dp
+        )
+
         Spacer(Modifier.height(20.dp))
 
-        // ═══ 开源技术 ═══
-        Text(
-            "开源技术",
-            color = TextPrimary,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.padding(start = 4.dp, bottom = 10.dp)
-        )
-        FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
-            Column {
-                openSourceLibs.forEachIndexed { index, lib ->
-                    if (index > 0) {
-                        HorizontalDivider(color = DividerColor, thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 16.dp))
-                    }
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(lib.name, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                            Text(lib.description, color = TextHint, fontSize = 11.sp, modifier = Modifier.padding(top = 1.dp))
-                        }
-                        Text(lib.license, color = TextSecondary, fontSize = 11.sp)
-                    }
-                }
-            }
-        }
+        // ═══ 使用提示 ═══
+        TipStackCard()
 
         Spacer(Modifier.height(20.dp))
 
@@ -203,8 +185,9 @@ private fun AboutScreen(onBack: () -> Unit) {
     }
 
     // 更新检查结果弹窗
-    if (showUpdateDialog && updateResult != null) {
-        when (val result = updateResult!!) {
+    val result = updateResult
+    if (showUpdateDialog && result != null) {
+        when (result) {
             is UpdateChecker.Result.NewVersion -> {
                 PlainDialog(onDismissRequest = { showUpdateDialog = false }) {
                     PlainDialogTitle("发现新版本")
@@ -252,20 +235,66 @@ private fun AboutScreen(onBack: () -> Unit) {
     }
 }
 
-/** 开源技术清单 */
-private data class OpenSourceLib(
-    val name: String,
-    val description: String,
-    val license: String
+private data class Tip(val title: String, val content: String)
+
+private val Tips = listOf(
+    Tip("剪切板权限", "请授权写入剪切板权限,并将省电策略改为无限制"),
+    Tip("双击关闭", "双击小白球可快速关闭窗口"),
+    Tip("快速启动", "推荐在控制中心添加快速启动入口"),
+    Tip("藏匿模式", "藏匿模式已移至设置页的 Shizuku 设置中,需 Shizuku 授权"),
+    Tip("长按退出", "长按悬浮球 3 秒可直接退出藏匿模式")
 )
 
-private val openSourceLibs = listOf(
-    OpenSourceLib("Jetpack Compose", "Android 现代声明式 UI 框架", "Apache 2.0"),
-    OpenSourceLib("OkHttp", "HTTP 网络请求客户端", "Apache 2.0"),
-    OpenSourceLib("Kotlin Coroutines", "异步编程与协程", "Apache 2.0"),
-    OpenSourceLib("Shizuku", "免 Root 特权操作框架", "Apache 2.0"),
-    OpenSourceLib("AndroidX Lifecycle", "生命周期感知组件与 ViewModel", "Apache 2.0"),
-    OpenSourceLib("Material Components", "Material Design 组件库", "Apache 2.0"),
-    OpenSourceLib("KaTeX", "LaTeX 数学公式渲染(WebView)", "MIT"),
-    OpenSourceLib("Backdrop Liquid Glass", "液态玻璃效果组件", "Apache 2.0")
-)
+/** 使用提示卡:自动轮播的悬浮球使用技巧 */
+@Composable
+private fun TipStackCard() {
+    val pagerState = rememberPagerState(pageCount = { Tips.size })
+
+    // 自动滚动:每 5 秒切下一张,最后一张回到第一张
+    LaunchedEffect(pagerState) {
+        while (true) {
+            delay(5000)
+            val next = if (pagerState.currentPage == Tips.lastIndex) 0 else pagerState.currentPage + 1
+            pagerState.animateScrollToPage(next)
+        }
+    }
+
+    HorizontalPager(
+        state = pagerState,
+        modifier = Modifier.fillMaxWidth().height(120.dp),
+        pageSpacing = 12.dp
+    ) { page ->
+        val tip = Tips[page]
+        FrostedGlassCard(
+            modifier = Modifier.fillMaxWidth().height(120.dp),
+            tint = Color.White.copy(alpha = 1f)
+        ) {
+            Column(
+                Modifier.fillMaxSize().background(Color.White).padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(tip.title, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text(tip.content, color = TextHint, fontSize = 12.sp, lineHeight = 17.sp)
+                Spacer(Modifier.weight(1f))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    Tips.indices.forEach { i ->
+                        Box(
+                            Modifier
+                                .padding(horizontal = 2.dp)
+                                .size(if (i == pagerState.currentPage) 5.dp else 3.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (i == pagerState.currentPage)
+                                        TextHint.copy(alpha = 0.5f)
+                                    else
+                                        TextHint.copy(alpha = 0.15f)
+                                )
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+

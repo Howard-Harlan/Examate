@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/qiushi_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_float_30">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <!-- 标题栏(可拖拽) -->
+        <LinearLayout
+            android:id="@+id/qiushi_title_bar"
+            android:layout_width="match_parent"
+            android:layout_height="36dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/bg_float_input_30"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp">
+
+            <TextView
+                android:id="@+id/qiushi_title_text"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textStyle="bold"
+                android:textSize="12sp"
+                android:text="求是"
+                android:textColor="@color/text_hint" />
+
+            <Button
+                android:id="@+id/qiushi_close_btn"
+                android:layout_width="wrap_content"
+                android:layout_height="30dp"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:background="@drawable/btn_float_white"
+                android:textColor="@color/text_hint"
+                android:textSize="11sp"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:text="关闭" />
+
+        </LinearLayout>
+
+        <!-- 输出区(可滚动,weight=1 填充剩余空间) -->
+        <ScrollView
+            android:id="@+id/qiushi_scroll"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:padding="8dp"
+            android:scrollbarThumbVertical="@color/bg_divider">
+
+            <TextView
+                android:id="@+id/qiushi_output"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:focusable="true"
+                android:padding="3dp"
+                android:textIsSelectable="true"
+                android:text="求是结果将显示在这里..."
+                android:textColor="@color/text_hint"
+                android:textSize="13sp"
+                android:lineSpacingExtra="3dp"
+                android:lineSpacingMultiplier="1.15" />
+
+        </ScrollView>
+
+        <!-- 输入框(预设参考内容) -->
+        <EditText
+            android:id="@+id/qiushi_input"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxHeight="96dp"
+            android:focusable="true"
+            android:focusableInTouchMode="true"
+            android:hint="输入问题..."
+            android:inputType="textMultiLine"
+            android:scrollbars="vertical"
+            android:textColor="@color/text_hint"
+            android:textColorHint="#809CA3AF"
+            android:background="@drawable/bg_float_input_30"
+            android:padding="6dp"
+            android:layout_marginStart="6dp"
+            android:layout_marginEnd="6dp"
+            android:layout_marginBottom="4dp"
+            android:textSize="12sp" />
+
+        <!-- 按钮行:发送 + 停止 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp"
+            android:paddingBottom="6dp">
+
+            <Button
+                android:id="@+id/qiushi_submit_btn"
+                android:layout_width="0dp"
+                android:layout_height="30dp"
+                android:layout_weight="1"
+                android:background="@drawable/btn_float_white"
+                android:textColor="@color/text_hint"
+                android:textSize="11sp"
+                android:layout_marginEnd="3dp"
+                android:text="发送" />
+
+            <Button
+                android:id="@+id/qiushi_stop_btn"
+                android:layout_width="0dp"
+                android:layout_height="30dp"
+                android:layout_weight="1"
+                android:background="@drawable/btn_float_white"
+                android:textColor="@color/text_hint"
+                android:textSize="11sp"
+                android:layout_marginStart="3dp"
+                android:visibility="gone"
+                android:text="停止" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- 右下角拖拽调节大小手柄(24dp) -->
+    <View
+        android:id="@+id/qiushi_resize_handle"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:layout_gravity="bottom|end"
+        android:background="#33000000" />
+
+</FrameLayout>

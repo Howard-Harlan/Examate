@@ -29,7 +29,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * ChatViewModel:持有 ChatActivity 的 UI 状态,使用 MutableStateFlow + asStateFlow()
- * 暴露不可变 StateFlow,由 Composable 用 collectAsState() 收集。
+ * 暴露不可变 StateFlow,由 Composable 用 collectAsStateWithLifecycle() 收集。
  *
  * - 不持有 Context:需要 Context 的操作(send/loadHistory/deleteSession/saveCurrentSession)
  *   在方法参数里传入;PrefsManager 单例(内部持有 applicationContext,不会泄漏)会被缓存。
@@ -44,10 +44,42 @@ class ChatViewModel : ViewModel() {
     /** 当前发送任务(用于停止生成) */
     private var sendJob: Job? = null
 
+    /**
+     * 流式文本缓冲:逐 token 追加到此,按节流窗口(约 40ms)批量刷新到 streamingText,
+     * 避免每个 token 都触发一次全量 StateFlow copy 与整列表重组。
+     * 仅在 viewModelScope(主线程)访问,无需同步。
+     */
+    private val streamBuffer = StringBuilder()
+    private var lastStreamFlushAt = 0L
+
+    private fun resetStreamBuffer() {
+        streamBuffer.setLength(0)
+        lastStreamFlushAt = 0L
+    }
+
+    /** 取出缓冲全部文本并清空(用于流式结束/停止时落为正式消息) */
+    private fun consumeStreamText(): String {
+        val text = streamBuffer.toString()
+        resetStreamBuffer()
+        return text
+    }
+
+    /** 刷新缓冲到 UI:force=true 立即刷新,否则距上次刷新超过节流窗口才刷新 */
+    private fun flushStream(force: Boolean) {
+        val now = System.currentTimeMillis()
+        if (!force && now - lastStreamFlushAt < 40L) return
+        lastStreamFlushAt = now
+        val text = streamBuffer.toString()
+        updateState { it.copy(streamingText = text) }
+    }
+
     private val _uiState = MutableStateFlow(
         ChatUiState(currentSession = ChatHistoryManager.newSession())
     )
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
+
+    /** 本轮回复的父节点 id(发送时捕获,生成完成时用于挂载 assistant),避免生成中被改动 */
+    private var pendingReplyParent: String? = null
 
     private fun updateState(transform: (ChatUiState) -> ChatUiState) {
         _uiState.value = transform(_uiState.value)
@@ -65,26 +97,32 @@ class ChatViewModel : ViewModel() {
      * AgentOrchestrator.executeFlow(流式 SSE) / HttpUtils.sendImageRequest。
      *
      * @param text 用户输入文本(已 trim)
-     * @param imageUri 待发送图片(可选,非空时走 vision 分支)
+     * @param imageUris 待发送图片列表(非空时走 vision 分支)
      * @param providers 已加载的 provider 列表
      * @param context 用于读取图片流 / 初始化 prefs
      */
     fun send(
         text: String,
-        imageUri: Uri?,
+        imageUris: List<Uri>,
         providers: List<ModelProvider>,
         context: Context
     ) {
         if (providers.isEmpty()) return
-        val uriStr = imageUri?.toString()
+        resetStreamBuffer()
         val now = System.currentTimeMillis()
+        val uriStrs = imageUris.map { it.toString() }
 
-        // 追加用户消息并重置输入框 / 图片 / 加载状态
+        // 追加用户消息:挂到分支锚点或当前激活叶子;重置输入/图片/加载状态
+        val branchParent = _uiState.value.branchAnchorId ?: _uiState.value.activeLeafId
+        val userMsg = ChatMsg("user", text, false, now, imageUris = uriStrs, parentId = branchParent)
+        pendingReplyParent = userMsg.id
         updateState {
             it.copy(
-                messages = it.messages + ChatMsg("user", text, false, now, uriStr),
+                messages = it.messages + userMsg,
+                activeLeafId = userMsg.id,
+                branchAnchorId = null,
                 inputText = "",
-                pendingImageUriString = null,
+                pendingImageUris = emptyList(),
                 isLoading = true,
                 loadingStatus = "",
                 toolProgressCards = emptyList(),
@@ -98,48 +136,20 @@ class ChatViewModel : ViewModel() {
 
         sendJob = viewModelScope.launch {
             try {
-                if (imageUri != null) {
-                    // 图片消息:走原有 vision 逻辑
-                    updateState { it.copy(loadingStatus = "正在识别图片...") }
-                    val imageBytes = withContext(Dispatchers.IO) {
-                        context.contentResolver.openInputStream(imageUri)?.use { stream ->
-                            stream.readBytes()
-                        }
-                    }
-                    val result = HttpUtils.sendImageRequestResult(
-                        provider.requestUrl, provider.modelId, imageBytes,
-                        provider.apiKey, MyConfig.CHAT_SYSTEM_PROMPT, provider.endpointType
-                    )
-                    updateState { it.copy(isLoading = false) }
-                    when (result) {
-                        is go.examate.hyp.util.ApiResult.Success -> {
-                            val content = HttpUtils.extractContent(result.data, provider.endpointType)
-                            appendAssistant(
-                                if (content.isEmpty()) "解析失败:\n${result.data}" else content,
-                                isError = content.isEmpty()
-                            )
-                        }
-                        else -> appendAssistant("请求失败: ${result.errorMessage()}", isError = true)
-                    }
+                if (imageUris.isNotEmpty()) {
+                    runVision(context, provider, imageUris, text)
                 } else {
-                    // Agents 模式(Flow 渐进式 + SSE 流式输出)
                     val history = historyPairs()
                     AgentOrchestrator.executeFlow(
-                        context = context,
-                        provider = provider,
-                        userMessage = text,
-                        history = history.dropLast(1),
-                        agentsMode = true
+                        context = context, provider = provider, userMessage = text,
+                        history = history.dropLast(1), agentsMode = true
                     ).collect { event -> handleAgentEvent(event, context) }
                 }
             } catch (e: CancellationException) {
-                // 用户主动停止:清理加载状态,保留已生成的流式文本(如果有)
-                val partial = _uiState.value.streamingText
+                val partial = consumeStreamText()
                 val steps = _uiState.value.currentToolSteps
                 updateState { it.copy(isLoading = false, streamingText = "", toolProgressCards = emptyList(), currentToolSteps = emptyList()) }
-                if (partial.isNotBlank()) {
-                    appendAssistant(partial, toolSteps = steps)
-                }
+                if (partial.isNotBlank()) appendAssistant(partial, toolSteps = steps)
                 throw e
             } catch (e: Exception) {
                 updateState { it.copy(isLoading = false, streamingText = "") }
@@ -148,11 +158,33 @@ class ChatViewModel : ViewModel() {
         }
     }
 
+    /** 识图公共逻辑(send/regenerate 复用):多图 + 用户文本 → vision provider */
+    private suspend fun runVision(context: Context, provider: ModelProvider, imageUris: List<Uri>, userText: String) {
+        updateState { it.copy(loadingStatus = "正在识别图片...") }
+        val visionProvider = if (provider.hasCapability(ModelProvider.CAP_VISION)) provider
+            else MyConfig.providersFor(context, ModelProvider.CAP_VISION).firstOrNull() ?: provider
+        val imagesBytes = withContext(Dispatchers.IO) {
+            imageUris.mapNotNull { uri -> context.contentResolver.openInputStream(uri)?.use { it.readBytes() } }
+        }
+        val result = HttpUtils.sendImagesRequestResult(
+            visionProvider.requestUrl, visionProvider.modelId, imagesBytes,
+            visionProvider.apiKey, MyConfig.CHAT_SYSTEM_PROMPT, userText, visionProvider.endpointType
+        )
+        updateState { it.copy(isLoading = false) }
+        when (result) {
+            is go.examate.hyp.util.ApiResult.Success -> {
+                val content = HttpUtils.extractContent(result.data, visionProvider.endpointType)
+                appendAssistant(if (content.isEmpty()) "解析失败:\n${result.data}" else content, isError = content.isEmpty())
+            }
+            else -> appendAssistant("请求失败: ${result.errorMessage()}", isError = true)
+        }
+    }
+
     /** 停止当前生成(取消正在进行的请求,保留已输出的部分文本) */
     fun stopSend() {
         sendJob?.cancel()
         sendJob = null
-        val partial = _uiState.value.streamingText
+        val partial = consumeStreamText()
         val steps = _uiState.value.currentToolSteps
         updateState {
             it.copy(
@@ -180,26 +212,26 @@ class ChatViewModel : ViewModel() {
         if (providers.isEmpty()) return
         val state = _uiState.value
         if (state.isLoading) return  // 正在生成时不允许重新生成
+        resetStreamBuffer()
 
-        val targetIdx = state.messages.indexOfFirst { it.id == messageId }
-        if (targetIdx < 0) return
-        val targetMsg = state.messages[targetIdx]
+        val targetMsg = state.messages.firstOrNull { it.id == messageId } ?: return
         if (targetMsg.role != "assistant") return
 
-        // 向前找最近一条 user 消息
-        val userIdx = (0 until targetIdx).reversed().firstOrNull {
-            state.messages[it].role == "user"
-        } ?: return
-        val userMsg = state.messages[userIdx]
+        // 找该回复对应的 user 消息:优先其父,回退向前最近 user
+        val userMsg = state.messages.firstOrNull { it.id == targetMsg.parentId && it.role == "user" }
+            ?: run {
+                val tIdx = state.messages.indexOfFirst { it.id == messageId }
+                val uIdx = (0 until tIdx).reversed().firstOrNull { state.messages[it].role == "user" } ?: return
+                state.messages[uIdx]
+            }
 
-        // 删除该 user 消息之后的所有消息(含原助手回复),保留 user 消息
-        val kept = state.messages.subList(0, userIdx + 1).toList()
-
+        // 非破坏式:不删旧回复,新回复作为该 user 消息的兄弟分支;激活叶子指向 user 消息
+        pendingReplyParent = userMsg.id
         updateState {
             it.copy(
-                messages = kept,
+                activeLeafId = userMsg.id,
                 inputText = "",
-                pendingImageUriString = null,
+                pendingImageUris = emptyList(),
                 isLoading = true,
                 loadingStatus = "",
                 toolProgressCards = emptyList(),
@@ -211,32 +243,12 @@ class ChatViewModel : ViewModel() {
 
         val provider = providers[_uiState.value.modelIndex.coerceIn(0, providers.size - 1)]
         val userText = userMsg.content
-        val imageUri = userMsg.imageUriString?.let { Uri.parse(it) }
+        val imageUris = userMsg.imageUris.ifEmpty { listOfNotNull(userMsg.imageUriString) }.map { Uri.parse(it) }
 
         sendJob = viewModelScope.launch {
             try {
-                if (imageUri != null) {
-                    updateState { it.copy(loadingStatus = "正在识别图片...") }
-                    val imageBytes = withContext(Dispatchers.IO) {
-                        context.contentResolver.openInputStream(imageUri)?.use { stream ->
-                            stream.readBytes()
-                        }
-                    }
-                    val result = HttpUtils.sendImageRequestResult(
-                        provider.requestUrl, provider.modelId, imageBytes,
-                        provider.apiKey, MyConfig.CHAT_SYSTEM_PROMPT, provider.endpointType
-                    )
-                    updateState { it.copy(isLoading = false) }
-                    when (result) {
-                        is go.examate.hyp.util.ApiResult.Success -> {
-                            val content = HttpUtils.extractContent(result.data, provider.endpointType)
-                            appendAssistant(
-                                if (content.isEmpty()) "解析失败:\n${result.data}" else content,
-                                isError = content.isEmpty()
-                            )
-                        }
-                        else -> appendAssistant("请求失败: ${result.errorMessage()}", isError = true)
-                    }
+                if (imageUris.isNotEmpty()) {
+                    runVision(context, provider, imageUris, userText)
                 } else {
                     val history = historyPairs()
                     AgentOrchestrator.executeFlow(
@@ -248,7 +260,7 @@ class ChatViewModel : ViewModel() {
                     ).collect { event -> handleAgentEvent(event, context) }
                 }
             } catch (e: CancellationException) {
-                val partial = _uiState.value.streamingText
+                val partial = consumeStreamText()
                 val steps = _uiState.value.currentToolSteps
                 updateState { it.copy(isLoading = false, streamingText = "", toolProgressCards = emptyList(), currentToolSteps = emptyList()) }
                 if (partial.isNotBlank()) {
@@ -263,25 +275,86 @@ class ChatViewModel : ViewModel() {
     }
 
     /**
-     * 删除指定消息(按 id)。删除 user 消息时,其后紧跟的 assistant 回复一并删除,
-     * 避免出现孤立的助手回复。
+     * 删除指定消息(按 id)及其整棵子树(所有后代)。
+     * 若激活叶子落在被删子树内,回退到被删节点的父或最后一条。
      */
     fun deleteMessage(messageId: String) {
         val state = _uiState.value
-        val idx = state.messages.indexOfFirst { it.id == messageId }
-        if (idx < 0) return
-        val msg = state.messages[idx]
-        var endIdx = idx + 1
-        // 删除 user 消息时连带删除其后连续的 assistant 消息
-        if (msg.role == "user") {
-            while (endIdx < state.messages.size && state.messages[endIdx].role == "assistant") {
-                endIdx++
-            }
+        val target = state.messages.firstOrNull { it.id == messageId } ?: return
+        // 收集该消息及其所有后代(子树)
+        val childrenOf = state.messages.groupBy { it.parentId }
+        val toRemove = HashSet<String>()
+        fun collect(id: String) {
+            if (!toRemove.add(id)) return
+            childrenOf[id]?.forEach { collect(it.id) }
         }
-        val newMessages = state.messages.toMutableList().apply {
-            subList(idx, endIdx).clear()
+        collect(messageId)
+        val remaining = state.messages.filterNot { it.id in toRemove }
+        // 若激活叶子在被删子树内,回退到被删节点的父(仍存在时)或最后一条
+        val newLeaf = if (state.activeLeafId in toRemove) {
+            target.parentId?.takeIf { pid -> remaining.any { it.id == pid } } ?: remaining.lastOrNull()?.id
+        } else state.activeLeafId
+        updateState { it.copy(messages = remaining, activeLeafId = newLeaf) }
+    }
+
+    // ═════════════════════════════
+    //  分支对话(消息树)
+    // ═════════════════════════════
+
+    /** 从某消息开分支:下一次发送将挂到该消息下,并把视图聚焦到该消息 */
+    fun startBranchFrom(messageId: String) {
+        if (_uiState.value.isLoading) return  // 生成中不允许改动树结构
+        updateState { it.copy(branchAnchorId = messageId, activeLeafId = messageId) }
+    }
+
+    /** 取消待开分支状态:恢复到锤点子树的叶子,避免锤点之后的对话在 UI 上不可达 */
+    fun cancelBranch() {
+        updateState {
+            val restored = it.branchAnchorId?.let { a -> descendToLeaf(a, it.messages) } ?: it.activeLeafId
+            it.copy(branchAnchorId = null, activeLeafId = restored)
         }
-        updateState { it.copy(messages = newMessages) }
+    }
+
+    /** 在某分支点(有多个子)的兄弟分支间切换 */
+    fun switchBranch(parentMessageId: String, forward: Boolean) {
+        if (_uiState.value.isLoading) return
+        val msgs = _uiState.value.messages
+        val children = msgs.filter { it.parentId == parentMessageId }.sortedBy { it.time }
+        if (children.size < 2) return
+        val pathIds = _uiState.value.activePath().map { it.id }.toSet()
+        val curIdx = children.indexOfFirst { it.id in pathIds }.let { if (it < 0) 0 else it }
+        val nextIdx = ((curIdx + if (forward) 1 else -1) + children.size) % children.size
+        updateState { it.copy(activeLeafId = descendToLeaf(children[nextIdx].id, msgs)) }
+    }
+
+    /** 从某节点沿最新子链下探到叶子 */
+    private fun descendToLeaf(startId: String, msgs: List<ChatMsg>): String {
+        val childrenOf = msgs.groupBy { it.parentId }
+        var cur = startId
+        while (true) {
+            val kids = childrenOf[cur]?.sortedBy { it.time }
+            if (kids.isNullOrEmpty()) break
+            cur = kids.last().id
+        }
+        return cur
+    }
+
+    /** 图谱点击聚焦某节点(下探到其子树叶子),并回到线性视图 */
+    fun focusNode(messageId: String) {
+        if (_uiState.value.isLoading) return
+        val msgs = _uiState.value.messages
+        if (msgs.none { it.id == messageId }) return
+        updateState { it.copy(activeLeafId = descendToLeaf(messageId, msgs), graphMode = false) }
+    }
+
+    /** 切换知识图谱视图 */
+    fun toggleGraphMode() {
+        updateState { it.copy(graphMode = !it.graphMode) }
+    }
+
+    /** 关闭知识图谱视图(幂等:多次/快速点击只保持关闭,不会切回打开) */
+    fun closeGraph() {
+        updateState { if (it.graphMode) it.copy(graphMode = false) else it }
     }
 
     /**
@@ -322,6 +395,7 @@ class ChatViewModel : ViewModel() {
                 }
             }
             is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.FinalReply -> {
+                resetStreamBuffer()
                 val steps = _uiState.value.currentToolSteps
                 updateState {
                     it.copy(
@@ -343,10 +417,11 @@ class ChatViewModel : ViewModel() {
                 if (!event.isError) maybeCaptureMemory(context)
             }
             is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.FinalTextToken -> {
-                updateState { it.copy(streamingText = it.streamingText + event.token) }
+                streamBuffer.append(event.token)
+                flushStream(false)
             }
             is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.FinalTextEnd -> {
-                val finalText = _uiState.value.streamingText
+                val finalText = consumeStreamText()
                 val steps = _uiState.value.currentToolSteps
                 updateState {
                     it.copy(
@@ -369,14 +444,15 @@ class ChatViewModel : ViewModel() {
                 maybeCaptureMemory(context)
             }
             is go.examate.hyp.agent.AgentOrchestrator.AgentEvent.ClearStream -> {
+                resetStreamBuffer()
                 updateState { it.copy(streamingText = "") }
             }
         }
     }
 
-    /** 当前消息列表转为 (role, content) 历史,仅保留 user/assistant */
+    /** 当前激活路径转为 (role, content) 历史,仅保留 user/assistant */
     private fun historyPairs(): List<Pair<String, String>> =
-        _uiState.value.messages
+        _uiState.value.activePath()
             .map { it.role to it.content }
             .filter { it.first == "user" || it.first == "assistant" }
 
@@ -391,12 +467,14 @@ class ChatViewModel : ViewModel() {
         toolSteps: List<ToolStep> = emptyList()
     ) {
         updateState {
-            it.copy(
-                messages = it.messages + ChatMsg(
-                    "assistant", text, isError, System.currentTimeMillis(),
-                    null, imageBase64, imageUrl, toolCalls, cards, filePath, toolSteps
-                )
+            val parent = pendingReplyParent ?: it.activeLeafId
+            val msg = ChatMsg(
+                "assistant", text, isError, System.currentTimeMillis(),
+                imageBase64 = imageBase64, imageUrl = imageUrl, toolCalls = toolCalls,
+                cards = cards, filePath = filePath, toolSteps = toolSteps,
+                parentId = parent
             )
+            it.copy(messages = it.messages + msg, activeLeafId = msg.id)
         }
     }
 
@@ -450,10 +528,13 @@ class ChatViewModel : ViewModel() {
                 messages = emptyList(),
                 currentSession = ChatHistoryManager.newSession(),
                 inputText = "",
-                pendingImageUriString = null,
+                pendingImageUris = emptyList(),
                 isLoading = false,
                 loadingStatus = "",
                 toolProgressCards = emptyList(),
+                activeLeafId = null,
+                branchAnchorId = null,
+                graphMode = false,
                 showHistory = false
             )
         }
@@ -474,14 +555,20 @@ class ChatViewModel : ViewModel() {
         updateState { it.copy(inputText = text) }
     }
 
-    /** 设置待发送图片(Uri 字符串) */
-    fun setPendingImage(uriString: String?) {
-        updateState { it.copy(pendingImageUriString = uriString) }
+    /** 追加待发送图片(去重,最多 9 张) */
+    fun addPendingImages(uriStrings: List<String>) {
+        if (uriStrings.isEmpty()) return
+        updateState { it.copy(pendingImageUris = (it.pendingImageUris + uriStrings).distinct().take(9)) }
     }
 
-    /** 清除待发送图片 */
-    fun clearPendingImage() {
-        updateState { it.copy(pendingImageUriString = null) }
+    /** 移除第 index 张待发送图片 */
+    fun removePendingImageAt(index: Int) {
+        updateState { it.copy(pendingImageUris = it.pendingImageUris.filterIndexed { i, _ -> i != index }) }
+    }
+
+    /** 清除全部待发送图片 */
+    fun clearPendingImages() {
+        updateState { it.copy(pendingImageUris = emptyList()) }
     }
 
     // ════════════════════════════════════════════════
@@ -501,6 +588,9 @@ class ChatViewModel : ViewModel() {
             it.copy(
                 messages = session.messages,
                 currentSession = session,
+                activeLeafId = session.activeLeafId ?: session.messages.lastOrNull()?.id,
+                branchAnchorId = null,
+                graphMode = false,
                 showHistory = false
             )
         }
@@ -515,7 +605,11 @@ class ChatViewModel : ViewModel() {
     /** 保存当前会话(标题取首条用户消息前 20 字) */
     fun saveCurrentSession(context: Context) {
         val state = _uiState.value
-        if (state.messages.isEmpty()) return
+        if (state.messages.isEmpty()) {
+            // 会话被清空(如删光所有消息):从存储删除,避免旧内容复活
+            ChatHistoryManager.deleteSession(context, state.currentSession.id)
+            return
+        }
         val title = if (state.currentSession.title == "新对话" &&
             state.messages.any { it.role == "user" }
         ) {
@@ -526,7 +620,8 @@ class ChatViewModel : ViewModel() {
         val updated = state.currentSession.copy(
             messages = state.messages,
             title = title,
-            updateTime = System.currentTimeMillis()
+            updateTime = System.currentTimeMillis(),
+            activeLeafId = state.activeLeafId
         )
         updateState { it.copy(currentSession = updated) }
         ChatHistoryManager.saveSession(context, updated)
@@ -554,12 +649,33 @@ data class ChatUiState(
     val loadingStatus: String = "",
     val modelIndex: Int = 0,
     val streamingText: String = "",
-    val pendingImageUriString: String? = null,
+    val pendingImageUris: List<String> = emptyList(),
     val showHistory: Boolean = false,
     val currentSession: ChatSession = ChatHistoryManager.newSession(),
     val historyList: List<ChatSession> = emptyList(),
     /** Agents 模式下,工具执行过程实时产出的结果卡片(余额/成绩等),显示在加载指示器下方 */
     val toolProgressCards: List<ActionCard> = emptyList(),
     /** 当前发送过程中实时累积的工具调用步骤(用于链式思考容器展示) */
-    val currentToolSteps: List<ToolStep> = emptyList()
-)
+    val currentToolSteps: List<ToolStep> = emptyList(),
+    /** 当前聚焦的叶子消息 id(分支对话);null 表示取最后一条 */
+    val activeLeafId: String? = null,
+    /** 下一次发送将挂到此消息下(开分支);null 表示挂到激活叶子 */
+    val branchAnchorId: String? = null,
+    /** 是否处于知识图谱视图 */
+    val graphMode: Boolean = false
+) {
+    /** 当前激活路径:从激活叶子沿 parentId 上溯到根,反转为根→叶 */
+    fun activePath(): List<ChatMsg> {
+        if (messages.isEmpty()) return emptyList()
+        val byId = messages.associateBy { it.id }
+        val leaf = byId[activeLeafId] ?: messages.last()
+        val chain = ArrayList<ChatMsg>()
+        val seen = HashSet<String>()
+        var cur: ChatMsg? = leaf
+        while (cur != null && seen.add(cur.id)) {
+            chain.add(cur)
+            cur = cur.parentId?.let { byId[it] }
+        }
+        return chain.asReversed()
+    }
+}

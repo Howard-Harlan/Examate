@@ -80,4 +80,9 @@ object MyConfig {
         }
         prefs.edit().putString(KEY_PROVIDERS, arr.toString()).apply()
     }
+
+    /** 返回具备指定能力([capability])且可用(可见、有 Key)的模型列表 */
+    @JvmStatic
+    fun providersFor(context: Context, capability: String): List<ModelProvider> =
+        loadProviders(context).filter { it.visible && it.apiKey.isNotEmpty() && it.hasCapability(capability) }
 }

@@ -5,6 +5,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import go.examate.hyp.config.PrefsManager
 import go.examate.hyp.ui.components.LiquidGlassContainer
 import go.examate.hyp.ui.screens.QiushiScreen
 import go.examate.hyp.ui.screens.SettingsScreen
@@ -16,30 +18,27 @@ fun MainScreen(
     accessibilityGranted: Boolean,
     batteryGranted: Boolean,
     shizukuGranted: Boolean,
-    forbidCapture: Boolean,
-    edgeAttach: Boolean,
-    transparentFloat: Boolean,
-    multiAiVerify: Boolean,
-    providerCount: Int,
     onLaunchClick: () -> Unit,
     onScreenshotClick: () -> Unit,
     onChatClick: () -> Unit,
     onLanChatClick: () -> Unit,
     onCampusServiceClick: () -> Unit,
     onWaterCardClick: () -> Unit,
+    onScheduleClick: () -> Unit,
+    onDownloaderClick: () -> Unit,
+    onReadingClick: () -> Unit,
+    onMusicClick: () -> Unit,
+    onNotesClick: () -> Unit,
     onUserSettingsClick: () -> Unit,
-    onShizukuClick: () -> Unit,
     onApiConfigClick: () -> Unit,
     onAgentSettingsClick: () -> Unit,
     onAboutClick: () -> Unit,
     onSearchSettingsClick: () -> Unit,
-    onBatteryOptClick: () -> Unit,
-    onForbidCaptureChanged: (Boolean) -> Unit,
-    onEdgeAttachChanged: (Boolean) -> Unit,
-    onTransparentFloatChanged: (Boolean) -> Unit,
-    onMultiAiVerifyChanged: (Boolean) -> Unit
+    onSystemSettingsClick: () -> Unit
 ) {
-    var selectedTab by remember { mutableIntStateOf(0) }
+    val context = LocalContext.current
+    val defaultTab = remember { PrefsManager.getInstance(context).defaultHomeTab }
+    var selectedTab by remember { mutableIntStateOf(defaultTab) }
 
     LiquidGlassContainer(
         selectedTab = selectedTab,
@@ -58,26 +57,20 @@ fun MainScreen(
             1 -> QiushiScreen(
                 onLanChatClick = onLanChatClick,
                 onCampusServiceClick = onCampusServiceClick,
-                onWaterCardClick = onWaterCardClick
+                onWaterCardClick = onWaterCardClick,
+                onScheduleClick = onScheduleClick,
+                onDownloaderClick = onDownloaderClick,
+                onReadingClick = onReadingClick,
+                onMusicClick = onMusicClick,
+                onNotesClick = onNotesClick
             )
             2 -> SettingsScreen(
-                shizukuGranted = shizukuGranted,
-                forbidCapture = forbidCapture,
-                edgeAttach = edgeAttach,
-                transparentFloat = transparentFloat,
-                multiAiVerify = multiAiVerify,
-                providerCount = providerCount,
                 onUserSettingsClick = onUserSettingsClick,
-                onShizukuClick = onShizukuClick,
                 onApiConfigClick = onApiConfigClick,
                 onAgentSettingsClick = onAgentSettingsClick,
                 onAboutClick = onAboutClick,
                 onSearchSettingsClick = onSearchSettingsClick,
-                onBatteryOptClick = onBatteryOptClick,
-                onForbidCaptureChanged = onForbidCaptureChanged,
-                onEdgeAttachChanged = onEdgeAttachChanged,
-                onTransparentFloatChanged = onTransparentFloatChanged,
-                onMultiAiVerifyChanged = onMultiAiVerifyChanged
+                onSystemSettingsClick = onSystemSettingsClick
             )
         }
     }
@@ -92,55 +85,45 @@ fun MainScreenRoot(
     accessibilityGranted: Boolean,
     batteryGranted: Boolean,
     shizukuGranted: Boolean,
-    forbidCapture: Boolean,
-    edgeAttach: Boolean,
-    transparentFloat: Boolean,
-    multiAiVerify: Boolean,
-    providerCount: Int,
     onLaunchClick: () -> Unit,
     onScreenshotClick: () -> Unit,
     onChatClick: () -> Unit,
     onLanChatClick: () -> Unit,
     onCampusServiceClick: () -> Unit,
     onWaterCardClick: () -> Unit,
+    onScheduleClick: () -> Unit,
+    onDownloaderClick: () -> Unit,
+    onReadingClick: () -> Unit,
+    onMusicClick: () -> Unit,
+    onNotesClick: () -> Unit,
     onUserSettingsClick: () -> Unit,
-    onShizukuClick: () -> Unit,
     onApiConfigClick: () -> Unit,
     onAgentSettingsClick: () -> Unit,
     onAboutClick: () -> Unit,
     onSearchSettingsClick: () -> Unit,
-    onBatteryOptClick: () -> Unit,
-    onForbidCaptureChanged: (Boolean) -> Unit,
-    onEdgeAttachChanged: (Boolean) -> Unit,
-    onTransparentFloatChanged: (Boolean) -> Unit,
-    onMultiAiVerifyChanged: (Boolean) -> Unit
+    onSystemSettingsClick: () -> Unit
 ) {
     MainScreen(
         overlayGranted = overlayGranted,
         accessibilityGranted = accessibilityGranted,
         batteryGranted = batteryGranted,
         shizukuGranted = shizukuGranted,
-        forbidCapture = forbidCapture,
-        edgeAttach = edgeAttach,
-        transparentFloat = transparentFloat,
-        multiAiVerify = multiAiVerify,
-        providerCount = providerCount,
         onLaunchClick = onLaunchClick,
         onScreenshotClick = onScreenshotClick,
         onChatClick = onChatClick,
         onLanChatClick = onLanChatClick,
         onCampusServiceClick = onCampusServiceClick,
         onWaterCardClick = onWaterCardClick,
+        onScheduleClick = onScheduleClick,
+        onDownloaderClick = onDownloaderClick,
+        onReadingClick = onReadingClick,
+        onMusicClick = onMusicClick,
+        onNotesClick = onNotesClick,
         onUserSettingsClick = onUserSettingsClick,
-        onShizukuClick = onShizukuClick,
         onApiConfigClick = onApiConfigClick,
         onAgentSettingsClick = onAgentSettingsClick,
         onAboutClick = onAboutClick,
         onSearchSettingsClick = onSearchSettingsClick,
-        onBatteryOptClick = onBatteryOptClick,
-        onForbidCaptureChanged = onForbidCaptureChanged,
-        onEdgeAttachChanged = onEdgeAttachChanged,
-        onTransparentFloatChanged = onTransparentFloatChanged,
-        onMultiAiVerifyChanged = onMultiAiVerifyChanged
+        onSystemSettingsClick = onSystemSettingsClick
     )
 }

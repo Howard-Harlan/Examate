@@ -5,8 +5,10 @@ import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
@@ -36,6 +38,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
@@ -43,18 +46,24 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalDensity
+import go.examate.hyp.ui.anim.Motion
+import kotlinx.coroutines.delay
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -69,14 +78,17 @@ import com.kyant.shapes.Capsule
 import go.examate.hyp.config.MyConfig
 import go.examate.hyp.config.PrefsManager
 import go.examate.hyp.ui.chat.ActionCardView
+import go.examate.hyp.ui.chat.ConversationGraph
 import go.examate.hyp.ui.chat.DynamicInputBar
 import go.examate.hyp.ui.chat.HistoryPanel
 import go.examate.hyp.ui.chat.MessageBubble
+import go.examate.hyp.ui.chat.MessageBranchFooter
 import go.examate.hyp.ui.chat.ModelSelector
 import go.examate.hyp.ui.chat.ToolStepsTimeline
 import go.examate.hyp.ui.components.LiquidGlassBackground
 import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.components.LocalGlassBackdrop
+import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.BgPrimary
 import go.examate.hyp.ui.theme.ExamateTheme
 import go.examate.hyp.ui.theme.TextHint
@@ -95,6 +107,7 @@ class ChatActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         setContent {
             ExamateTheme {
                 LiquidGlassBackground {
@@ -109,7 +122,7 @@ class ChatActivity : ComponentActivity() {
 private fun ChatScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val vm: ChatViewModel = viewModel()
-    val ui by vm.uiState.collectAsState()
+    val ui by vm.uiState.collectAsStateWithLifecycle()
     val providers = remember { MyConfig.loadProviders(context) }
     val listState = rememberLazyListState()
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
@@ -119,8 +132,31 @@ private fun ChatScreen(onBack: () -> Unit) {
         { source: String -> vm.updateInputText("关于这段内容:\n${source.take(800)}\n\n") }
     }
 
-    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        vm.setPendingImage(uri?.toString())
+    // 图谱开启时:系统返回键关闭图谱面板,而非退出页面
+    BackHandler(enabled = ui.graphMode) { vm.closeGraph() }
+
+    val galleryPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+        if (uris.isNotEmpty()) vm.addPendingImages(uris.map { it.toString() })
+    }
+    var cameraUriStr by rememberSaveable { mutableStateOf<String?>(null) }
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        if (ok) cameraUriStr?.let { vm.addPendingImages(listOf(it)) }
+    }
+    val onTakePhoto = {
+        val file = java.io.File(context.cacheDir, "cam_${System.currentTimeMillis()}.jpg")
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        cameraUriStr = uri.toString()
+        cameraLauncher.launch(uri)
+    }
+    // 文件附件:拷入工作区,并在输入框提示 AI 用 read_file 读取
+    val chatFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val rel = go.examate.hyp.agent.FileTools.importToWorkspace(context, uri)
+            if (rel != null) {
+                go.examate.hyp.util.ToastUtil.show(context, "已上传到工作区: $rel")
+                vm.updateInputText((ui.inputText.trimEnd() + "\n[已上传文件到工作区: $rel,请用 read_file 读取]").trim())
+            } else go.examate.hyp.util.ToastUtil.show(context, "文件上传失败")
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -141,7 +177,7 @@ private fun ChatScreen(onBack: () -> Unit) {
         listState.scrollToItem(0)
     }
 
-    LaunchedEffect(ui.messages.size) {
+    LaunchedEffect(ui.messages.size, ui.activeLeafId) {
         vm.saveCurrentSession(context)
     }
 
@@ -151,7 +187,34 @@ private fun ChatScreen(onBack: () -> Unit) {
             .background(BgPrimary)
             .imePadding()
     ) {
+        // ═══ 聊天背景图(用户可在 Agent 设置中配置;为空时使用默认纯色) ═══
+        val bgPath = remember { PrefsManager.getInstance(context).chatBackgroundPath }
+        if (!bgPath.isBlank() && java.io.File(bgPath).exists()) {
+            val bitmap = remember(bgPath) {
+                runCatching {
+                    // 先读尺寸,按屏幕宽度计算采样率,避免大图 OOM
+                    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    android.graphics.BitmapFactory.decodeFile(bgPath, bounds)
+                    val reqW = context.resources.displayMetrics.widthPixels
+                    var sample = 1
+                    while (bounds.outWidth / sample / 2 >= reqW) sample *= 2
+                    val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+                    android.graphics.BitmapFactory.decodeFile(bgPath, opts)
+                }.getOrNull()
+            }
+            if (bitmap != null) {
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.graphics.painter.BitmapPainter(bitmap.asImageBitmap()),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                )
+            }
+        }
+
         // ═══ 消息列表(reverseLayout:消息从底部开始,新消息自动出现在底部) ═══
+        // 已入场动画的消息 id(在列表层记忆,滚动回来不重播入场动画)
+        val animatedIds = remember { mutableSetOf<String>() }
         LazyColumn(
             Modifier
                 .fillMaxSize()
@@ -171,8 +234,10 @@ private fun ChatScreen(onBack: () -> Unit) {
                 // ★ 底部:流式文本 或 加载指示器
                 if (ui.streamingText.isNotEmpty()) {
                     item(key = "streaming") {
+                        // 流式打字光标:每 ~530ms 闪烁一次
+                        val blink by produceState(true) { while (true) { delay(530); value = !value } }
                         MessageBubble(
-                            ChatMsg("assistant", ui.streamingText, false, System.currentTimeMillis()),
+                            ChatMsg("assistant", ui.streamingText + if (blink) "  ▍" else "", false, System.currentTimeMillis()),
                             timeFmt, context, onQuickFollowUp = onQuickFollowUp,
                             isStreaming = true
                         )
@@ -200,17 +265,61 @@ private fun ChatScreen(onBack: () -> Unit) {
                 ui.toolProgressCards.forEachIndexed { index, card ->
                     item(key = "card_$index") { ActionCardView(card) }
                 }
-                // ★ 消息列表(reversed:最新消息在底部 = reversed 列表的第一个)
-                itemsIndexed(ui.messages.reversed(), key = { _, it -> it.id }) { index, message ->
+                // ★ 消息列表:渲染当前激活路径(reversed:最新在底部)
+                val path = ui.activePath()
+                val activePathIds = path.mapTo(HashSet()) { it.id }
+                itemsIndexed(path.reversed(), key = { _, it -> it.id }) { index, message ->
                     // 仅最后一条消息(且非加载/流式状态)显示操作行
                     val isLast = index == 0
-                    MessageBubble(
-                        message, timeFmt, context,
-                        onQuickFollowUp = onQuickFollowUp,
-                        onRegenerate = { vm.regenerate(message.id, providers, context) },
-                        onDelete = { vm.deleteMessage(message.id) },
-                        showActions = isLast && !ui.isLoading && ui.streamingText.isEmpty()
-                    )
+                    // 入场动画:仅消息首次出现时播淡入+上滑;滚动回来不重播
+                    val playEntrance = remember(message.id) { animatedIds.add(message.id) }
+                    val appear = remember(message.id) { Animatable(if (playEntrance) 0f else 1f) }
+                    val slidePx = with(LocalDensity.current) { 10.dp.toPx() }
+                    LaunchedEffect(message.id) {
+                        if (playEntrance) appear.animateTo(1f, tween(Motion.NORMAL, easing = Motion.Easing))
+                    }
+                    // animateItem:切换分支/非破坏式重生导致激活路径变化时平滑位移
+                    Column(
+                        Modifier
+                            .animateItem()
+                            .graphicsLayer {
+                                alpha = appear.value
+                                translationY = (1f - appear.value) * slidePx
+                            }
+                    ) {
+                        MessageBubble(
+                            message, timeFmt, context,
+                            onQuickFollowUp = onQuickFollowUp,
+                            onRegenerate = { vm.regenerate(message.id, providers, context) },
+                            onDelete = { vm.deleteMessage(message.id) },
+                            onBranch = { vm.startBranchFrom(message.id) },
+                            onSaveToNote = { content ->
+                                val ctx = context
+                                kotlin.concurrent.thread {
+                                    val notesDir = java.io.File(ctx.filesDir, "notes").apply { mkdirs() }
+                                    val file = java.io.File(notesDir, "saved_${System.currentTimeMillis()}.md")
+                                    file.writeText(content)
+                                    go.examate.hyp.util.ToastUtil.show(ctx, "已保存到笔记: ${file.name}")
+                                }
+                            },
+                            onQiushi = { content ->
+                                val intent = android.content.Intent(context, go.examate.hyp.service.UnifiedFloatingService::class.java)
+                                intent.putExtra("mode", "qiushi")
+                                intent.putExtra("qiushi_content", content)
+                                context.startService(intent)
+                            },
+                            showActions = isLast && !ui.isLoading && ui.streamingText.isEmpty()
+                        )
+                        // 分支页脚:分支切换器 + 追问(开分支)。生成中隐藏,避免中途改动树结构
+                        if (!ui.isLoading && ui.streamingText.isEmpty()) {
+                            MessageBranchFooter(
+                                message = message,
+                                allMessages = ui.messages,
+                                activePathIds = activePathIds,
+                                onSwitch = { forward -> vm.switchBranch(message.id, forward) }
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -229,7 +338,8 @@ private fun ChatScreen(onBack: () -> Unit) {
                 contentDescription = "返回",
                 onClick = onBack,
                 modifier = Modifier.size(40.dp),
-                surfaceAlpha = 0.75f
+                surfaceAlpha = 0.42f,
+                ambientHighlight = true
             )
             Spacer(Modifier.width(6.dp))
             // 模型选择(液态玻璃胶囊包裹)
@@ -240,8 +350,8 @@ private fun ChatScreen(onBack: () -> Unit) {
                             backdrop = backdrop,
                             shape = { Capsule() },
                             effects = { vibrancy(); blur(12f) },
-                            highlight = { Highlight.Plain },
-                            onDrawSurface = { drawRect(Color.White.copy(0.75f)) }
+                            highlight = { Highlight.Ambient },
+                            onDrawSurface = { drawRect(Color.White.copy(0.48f)) }
                         )
                     } else {
                         Modifier.clip(RoundedCornerShape(20.dp)).background(Color.White.copy(0.88f))
@@ -255,13 +365,24 @@ private fun ChatScreen(onBack: () -> Unit) {
                 )
             }
             Spacer(Modifier.weight(1f))
+            // 分支图谱按钮 — 液态玻璃胶囊
+            LiquidGlassIconButton(
+                icon = Icons.Filled.AccountTree,
+                contentDescription = "分支图谱",
+                onClick = { vm.toggleGraphMode() },
+                modifier = Modifier.size(40.dp),
+                surfaceAlpha = 0.42f,
+                ambientHighlight = true
+            )
+            Spacer(Modifier.width(6.dp))
             // 历史按钮 — 液态玻璃胶囊
             LiquidGlassIconButton(
                 icon = Icons.Filled.Menu,
                 contentDescription = "历史",
                 onClick = { vm.loadHistory(context) },
                 modifier = Modifier.size(40.dp),
-                surfaceAlpha = 0.75f
+                surfaceAlpha = 0.42f,
+                ambientHighlight = true
             )
             Spacer(Modifier.width(6.dp))
             // 设置按钮 — 液态玻璃胶囊
@@ -272,29 +393,42 @@ private fun ChatScreen(onBack: () -> Unit) {
                     context.startActivity(android.content.Intent(context, AgentSettingsActivity::class.java))
                 },
                 modifier = Modifier.size(40.dp),
-                surfaceAlpha = 0.75f
+                surfaceAlpha = 0.42f,
+                ambientHighlight = true
             )
         }
 
-        // ═══ 底部输入栏 ═══
-        Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 6.dp)) {
-            DynamicInputBar(
-                text = ui.inputText,
-                onTextChange = { vm.updateInputText(it) },
-                hasImage = ui.pendingImageUriString != null,
-                imageUriString = ui.pendingImageUriString,
-                onPickImage = { imagePicker.launch("image/*") },
-                onClearImage = { vm.clearPendingImage() },
-                canSend = (ui.inputText.isNotBlank() || ui.pendingImageUriString != null) && !ui.isLoading && providers.isNotEmpty(),
-                isLoading = ui.isLoading,
-                onSend = {
-                    val text = ui.inputText.trim()
-                    if (text.isEmpty() && ui.pendingImageUriString == null) return@DynamicInputBar
-                    val uri = ui.pendingImageUriString?.let { Uri.parse(it) }
-                    vm.send(text, uri, providers, context)
-                },
-                onStop = { vm.stopSend() }
-            )
+        // ═══ 底部输入栏(开分支时上方显示提示横幅) ═══
+        Column(Modifier.align(Alignment.BottomCenter)) {
+            if (ui.branchAnchorId != null) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("⊃ 正在从此处开分支提问", color = AccentBlue, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                    Text("取消", color = TextHint, fontSize = 12.sp,
+                        modifier = Modifier.clickable { vm.cancelBranch() }.padding(horizontal = 8.dp, vertical = 2.dp))
+                }
+            }
+            Box(Modifier.padding(bottom = 6.dp)) {
+                DynamicInputBar(
+                    text = ui.inputText,
+                    onTextChange = { vm.updateInputText(it) },
+                    imageUris = ui.pendingImageUris,
+                    onPickGallery = { galleryPicker.launch("image/*") },
+                    onTakePhoto = onTakePhoto,
+                    onPickFile = { chatFilePicker.launch(arrayOf("*/*")) },
+                    onRemoveImageAt = { vm.removePendingImageAt(it) },
+                    canSend = (ui.inputText.isNotBlank() || ui.pendingImageUris.isNotEmpty()) && !ui.isLoading && providers.isNotEmpty(),
+                    isLoading = ui.isLoading,
+                    onSend = {
+                        val text = ui.inputText.trim()
+                        if (text.isEmpty() && ui.pendingImageUris.isEmpty()) return@DynamicInputBar
+                        vm.send(text, ui.pendingImageUris.map { Uri.parse(it) }, providers, context)
+                    },
+                    onStop = { vm.stopSend() }
+                )
+            }
         }
     }
 
@@ -311,6 +445,20 @@ private fun ChatScreen(onBack: () -> Unit) {
             onSessionClick = { session -> vm.selectSession(session) },
             onDelete = { id -> vm.deleteSession(context, id) },
             onDismiss = { vm.dismissHistory() }
+        )
+    }
+
+    // ═══ 知识图谱视图(全屏覆盖):点击节点聚焦回线性视图 ═══
+    AnimatedVisibility(
+        visible = ui.graphMode,
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        ConversationGraph(
+            messages = ui.messages,
+            activePathIds = ui.activePath().mapTo(HashSet()) { it.id },
+            onNodeClick = { vm.focusNode(it) },
+            onClose = { vm.closeGraph() }
         )
     }
 }

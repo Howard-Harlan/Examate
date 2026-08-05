@@ -86,11 +86,14 @@ object MemoryManager {
         val memories = loadAll(context)
         if (memories.isEmpty()) return ""
 
+        // 渐进瘦身:最多注入最近 15 条,单条超 100 字截断,控制每轮输入 token
+        val recent = memories.takeLast(15)
         val sb = StringBuilder()
         sb.append("\n\n## 长期记忆\n")
         sb.append("以下是关于用户的重要信息,请在对话中参考:\n\n")
-        memories.forEach { m ->
-            sb.append("- [${m.category}] ${m.content}\n")
+        recent.forEach { m ->
+            val c = if (m.content.length > 100) m.content.take(100) + "…" else m.content
+            sb.append("- [${m.category}] $c\n")
         }
         return sb.toString()
     }

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 返回:上一页从左侧回滑 + 淡入 -->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:interpolator="@android:anim/decelerate_interpolator">
+    <translate
+        android:duration="@integer/motion_page"
+        android:fromXDelta="-20%p"
+        android:toXDelta="0" />
+    <alpha
+        android:duration="@integer/motion_page"
+        android:fromAlpha="0.85"
+        android:toAlpha="1.0" />
+</set>

@@ -1,5 +1,6 @@
 package go.examate.hyp.entity
 
+import org.json.JSONArray
 import org.json.JSONObject
 
 data class ModelProvider @JvmOverloads constructor(
@@ -14,8 +15,13 @@ data class ModelProvider @JvmOverloads constructor(
     var endpointType: String = inferEndpointType(requestUrl),
     var label: String = "",
     var barColor: String = "",
-    var visible: Boolean = true
+    var visible: Boolean = true,
+    /** 模型能力标签:chat/vision/image_gen/video_gen,用于多模态按需路由 */
+    var capabilities: Set<String> = setOf(CAP_CHAT)
 ) {
+    /** 是否具备某项能力 */
+    fun hasCapability(cap: String): Boolean = capabilities.contains(cap)
+
     init {
         if (endpointType.isEmpty()) {
             this.endpointType = inferEndpointType(requestUrl)
@@ -36,10 +42,17 @@ data class ModelProvider @JvmOverloads constructor(
         json.put("label", label)
         json.put("barColor", barColor)
         json.put("visible", visible)
+        json.put("capabilities", JSONArray(capabilities.toList()))
         return json
     }
 
     companion object {
+        /** 模型能力标签常量 */
+        const val CAP_CHAT = "chat"
+        const val CAP_VISION = "vision"
+        const val CAP_IMAGE_GEN = "image_gen"
+        const val CAP_VIDEO_GEN = "video_gen"
+
         /** 根据 URL 推断 endpoint 类型:responses / chat */
         @JvmStatic
         fun inferEndpointType(url: String?): String {
@@ -99,8 +112,16 @@ data class ModelProvider @JvmOverloads constructor(
                 endpointType,
                 json.optString("label", ""),
                 json.optString("barColor", ""),
-                json.optBoolean("visible", true)
+                json.optBoolean("visible", true),
+                parseCapabilities(json)
             )
+        }
+
+        /** 解析能力标签数组;缺失或为空时默认仅聊天(向后兼容旧配置) */
+        private fun parseCapabilities(json: JSONObject): Set<String> {
+            val arr = json.optJSONArray("capabilities") ?: return setOf(CAP_CHAT)
+            val set = (0 until arr.length()).map { arr.optString(it) }.filter { it.isNotEmpty() }.toSet()
+            return if (set.isEmpty()) setOf(CAP_CHAT) else set
         }
     }
 }

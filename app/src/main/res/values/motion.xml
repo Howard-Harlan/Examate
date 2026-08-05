@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 页面转场动效时长(与 ui/anim/Motion.kt 的 NORMAL/SLOW 呼应) -->
+    <integer name="motion_page">280</integer>
+</resources>
