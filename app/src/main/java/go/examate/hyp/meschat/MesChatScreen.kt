@@ -1,12 +1,45 @@
 package go.examate.hyp.meschat
 
+import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.MediaPlayer
+import android.media.MediaRecorder
+import android.os.Build
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import androidx.compose.material.icons.filled.Pause
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import java.io.File
+import kotlinx.coroutines.delay
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,9 +77,12 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -57,6 +93,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -69,6 +106,7 @@ import go.examate.hyp.ui.theme.AccentPeach
 import go.examate.hyp.ui.theme.AccentPurple
 import go.examate.hyp.ui.theme.BgPrimary
 import go.examate.hyp.ui.theme.Danger
+import go.examate.hyp.ui.theme.DialogBg
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.Success
 import go.examate.hyp.ui.theme.TextHint
@@ -92,18 +130,22 @@ import java.util.Locale
  * @param onInputChange 输入框文本变更
  * @param onSendText 发送文本
  * @param onPickImage 选择图片
- * @param onRecordVoice 录制语音
+ * @param onRecordVoice 录制语音(保留参数;录音逻辑已内置,点击语音按钮由本页直接处理)
  * @param onPickFile 选择文件
- * @param onPlayVoice 播放语音
- * @param onOpenImage 查看大图
- * @param onOpenFile 打开文件
+ * @param onPlayVoice 播放语音(保留参数;播放逻辑已内置 MediaPlayer)
+ * @param onOpenImage 查看大图(保留参数;点击暂时以 Toast 提示)
+ * @param onOpenFile 打开文件(保留参数;打开逻辑已内置 FileProvider + Intent)
+ * @param onSendVoice 录音结束并发送:语音字节数组 + 时长(秒)
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MesChatScreen(
     conversation: ChatConversation,
     messages: List<MesMessage>,
     transportStatus: TransportStatus,
     inputText: String,
+    currentMode: ChatMode,
+    onSwitchMode: (ChatMode) -> Unit,
     onBack: () -> Unit,
     onInputChange: (String) -> Unit,
     onSendText: () -> Unit,
@@ -112,11 +154,79 @@ fun MesChatScreen(
     onPickFile: () -> Unit,
     onPlayVoice: (MesMessage) -> Unit,
     onOpenImage: (MesMessage) -> Unit,
-    onOpenFile: (MesMessage) -> Unit
+    onOpenFile: (MesMessage) -> Unit,
+    onSendVoice: (ByteArray, Int) -> Unit
 ) {
     val listState = rememberLazyListState()
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     var showAttachPanel by remember { mutableStateOf(false) }
+    var showModeSheet by remember { mutableStateOf(false) }
+
+    // ═══ 语音录制状态 ═══
+    val context = LocalContext.current
+    val voiceRec = remember { VoiceRecorderHolder() }
+    var isRecording by remember { mutableStateOf(false) }
+    var recordSeconds by remember { mutableStateOf(0) }
+
+    // 录音权限请求
+    val recordPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            if (voiceRec.start(context)) {
+                isRecording = true
+                recordSeconds = 0
+            } else {
+                Toast.makeText(context, "录音启动失败", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            Toast.makeText(context, "需要麦克风权限以录制语音", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** 开始录音:已授权则直接录,否则请求权限 */
+    fun startRecording() {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            if (voiceRec.start(context)) {
+                isRecording = true
+                recordSeconds = 0
+            } else {
+                Toast.makeText(context, "录音启动失败", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            recordPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    /** 停止录音并发送(或取消) */
+    fun stopRecording(send: Boolean) {
+        isRecording = false
+        val result = voiceRec.stop()
+        if (send && result != null) {
+            onSendVoice(result.first, result.second)
+        }
+    }
+
+    // 录音计时 + 60 秒上限自动停止
+    LaunchedEffect(isRecording) {
+        if (isRecording) {
+            while (isRecording && recordSeconds < 60) {
+                recordSeconds = ((System.currentTimeMillis() - voiceRec.startTimeMs) / 1000).toInt()
+                if (recordSeconds >= 60) {
+                    stopRecording(send = true)
+                    break
+                }
+                delay(200)
+            }
+        }
+    }
+
+    // 离开页面时释放录音资源
+    DisposableEffect(Unit) {
+        onDispose { voiceRec.release() }
+    }
 
     // 新消息到达时滚动到底部
     LaunchedEffect(messages.size) {
@@ -133,13 +243,14 @@ fun MesChatScreen(
         // ═══ 顶栏 ═══
         ChatTopBar(
             conversation = conversation,
-            transportStatus = transportStatus,
-            onBack = onBack
+            currentMode = currentMode,
+            onBack = onBack,
+            onSwitchModeClick = { showModeSheet = true }
         )
 
         // ═══ 消息列表 ═══
         if (messages.isEmpty()) {
-            EmptyConversationState(conversation)
+            EmptyConversationState(conversation, Modifier.weight(1f))
         } else {
             LazyColumn(
                 Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp),
@@ -160,36 +271,78 @@ fun MesChatScreen(
             }
         }
 
-        // ═══ 附件面板(展开式) ═══
+        // ═══ 录音中:用录音状态条替换附件面板与输入栏(互斥过渡) ═══
         AnimatedVisibility(
-            visible = showAttachPanel,
+            visible = isRecording,
             enter = fadeIn() + expandVertically(),
             exit = fadeOut() + shrinkVertically()
         ) {
-            AttachPanel(
-                onPickImage = {
-                    showAttachPanel = false
-                    onPickImage()
-                },
-                onRecordVoice = {
-                    showAttachPanel = false
-                    onRecordVoice()
-                },
-                onPickFile = {
-                    showAttachPanel = false
-                    onPickFile()
-                }
+            RecordingBar(
+                seconds = recordSeconds,
+                onStop = { stopRecording(send = true) },
+                onCancel = { stopRecording(send = false) }
             )
         }
+        AnimatedVisibility(
+            visible = !isRecording,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically()
+        ) {
+            Column {
+                // ═══ 附件面板(展开式) ═══
+                AnimatedVisibility(
+                    visible = showAttachPanel,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically()
+                ) {
+                    AttachPanel(
+                        onPickImage = {
+                            showAttachPanel = false
+                            onPickImage()
+                        },
+                        onRecordVoice = {
+                            showAttachPanel = false
+                            startRecording()
+                        },
+                        onPickFile = {
+                            showAttachPanel = false
+                            onPickFile()
+                        }
+                    )
+                }
 
-        // ═══ 输入栏 ═══
-        ChatInputBar(
-            inputText = inputText,
-            onInputChange = onInputChange,
-            onSend = onSendText,
-            onToggleAttach = { showAttachPanel = !showAttachPanel },
-            attachExpanded = showAttachPanel
-        )
+                // ═══ 输入栏 ═══
+                ChatInputBar(
+                    inputText = inputText,
+                    onInputChange = onInputChange,
+                    onSend = onSendText,
+                    onToggleAttach = { showAttachPanel = !showAttachPanel },
+                    attachExpanded = showAttachPanel
+                )
+            }
+        }
+    }
+
+    // ═══ 聊天方式切换面板 ═══
+    if (showModeSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showModeSheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = DialogBg
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp)
+            ) {
+                Text("聊天方式", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.height(4.dp))
+                Text("切换后当前会话将使用新的传输通道", color = TextHint, fontSize = 12.sp)
+                Spacer(Modifier.height(16.dp))
+                ChatModeSelector(currentMode = currentMode, onSwitchMode = { mode ->
+                    onSwitchMode(mode)
+                    showModeSheet = false
+                })
+            }
+        }
     }
 }
 
@@ -200,8 +353,9 @@ fun MesChatScreen(
 @Composable
 private fun ChatTopBar(
     conversation: ChatConversation,
-    transportStatus: TransportStatus,
-    onBack: () -> Unit
+    currentMode: ChatMode,
+    onBack: () -> Unit,
+    onSwitchModeClick: () -> Unit
 ) {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
@@ -238,11 +392,30 @@ private fun ChatTopBar(
             }
             Text(subtitle, color = TextHint, fontSize = 11.sp, maxLines = 1)
         }
-        // 传输状态指示(私聊显示对端通道,频道显示聚合状态)
-        if (conversation.isChannel) {
-            TransportMiniIndicator(transportStatus)
-        } else {
-            TransportDot(conversation.transport)
+        // 聊天方式切换入口(胶囊,显示当前模式名)
+        ChatModeChip(currentMode = currentMode, onClick = onSwitchModeClick)
+    }
+}
+
+/** 顶栏聊天方式胶囊:显示当前模式图标 + 名称,点击打开切换面板 */
+@Composable
+private fun ChatModeChip(currentMode: ChatMode, onClick: () -> Unit) {
+    val icon = when (currentMode) {
+        ChatMode.LOCAL -> Icons.Filled.Wifi
+        ChatMode.BLE -> Icons.Filled.Bluetooth
+        ChatMode.WIFI_AWARE -> Icons.Filled.Wifi
+        ChatMode.CLOUD -> Icons.Filled.CloudOff
+    }
+    FrostedGlassCard(modifier = Modifier.padding(0.dp)) {
+        Row(
+            Modifier.clip(RoundedCornerShape(12.dp)).clickable { onClick() }
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Icon(icon, contentDescription = null, tint = Primary, modifier = Modifier.size(13.dp))
+            Text(currentMode.displayName, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            Text("›", color = TextHint, fontSize = 14.sp)
         }
     }
 }
@@ -382,30 +555,49 @@ private fun TextBubble(msg: MesMessage) {
 
 @Composable
 private fun ImageBubble(msg: MesMessage, onOpenImage: (MesMessage) -> Unit) {
+    val context = LocalContext.current
     val shape = if (msg.isMine) {
         RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp)
     } else {
         RoundedCornerShape(18.dp, 18.dp, 18.dp, 4.dp)
     }
+    val path = msg.imagePath
     Box(
         Modifier
-            .size(width = 180.dp, height = 180.dp)
+            .size(width = 200.dp, height = 200.dp)
             .clip(shape)
             .background(Color.White.copy(0.6f))
-            .clickable { onOpenImage(msg) },
+            .clickable {
+                // 暂时仅 Toast 提示"点击查看",后续可由 onOpenImage 接入大图查看页
+                Toast.makeText(context, "点击查看", Toast.LENGTH_SHORT).show()
+            },
         contentAlignment = Alignment.Center
     ) {
-        // 占位图:实际接入时用 AsyncImage 加载 imagePath
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Filled.Image, contentDescription = null, tint = TextHint, modifier = Modifier.size(36.dp))
-            Spacer(Modifier.height(4.dp))
-            Text("图片", color = TextHint, fontSize = 11.sp)
+        if (path != null) {
+            // 用 Coil 加载本地图片文件
+            AsyncImage(
+                model = ImageRequest.Builder(context)
+                    .data(File(path))
+                    .crossfade(true)
+                    .build(),
+                contentDescription = "图片消息",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            // 无路径时显示占位
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Filled.Image, contentDescription = null, tint = TextHint, modifier = Modifier.size(36.dp))
+                Spacer(Modifier.height(4.dp))
+                Text("图片", color = TextHint, fontSize = 11.sp)
+            }
         }
     }
 }
 
 @Composable
 private fun VoiceBubble(msg: MesMessage, onPlayVoice: (MesMessage) -> Unit) {
+    val context = LocalContext.current
     val bubbleColor = if (msg.isMine) AccentBlue.copy(0.85f) else Color.White.copy(0.75f)
     val textColor = if (msg.isMine) Color.White else TextPrimary
     val shape = if (msg.isMine) {
@@ -413,23 +605,96 @@ private fun VoiceBubble(msg: MesMessage, onPlayVoice: (MesMessage) -> Unit) {
     } else {
         RoundedCornerShape(18.dp, 18.dp, 18.dp, 4.dp)
     }
+
+    // 播放状态:用 rememberSaveable 保存,避免重组/旋转时丢失
+    var isPlaying by rememberSaveable(msg.id) { mutableStateOf(false) }
+    var progress by rememberSaveable(msg.id) { mutableStateOf(0f) }
+    // MediaPlayer 不持有 Saveable,用 remember 跟随消息 id
+    var mediaPlayer by remember(msg.id) { mutableStateOf<MediaPlayer?>(null) }
+    val path = msg.voicePath
+
+    // 退出组合时释放播放器
+    DisposableEffect(msg.id) {
+        onDispose {
+            mediaPlayer?.let { mp ->
+                try { mp.release() } catch (_: Exception) {}
+            }
+        }
+    }
+
+    // 播放进度轮询(播放中)
+    if (isPlaying) {
+        LaunchedEffect(msg.id) {
+            while (isPlaying) {
+                val mp = mediaPlayer
+                if (mp != null) {
+                    val dur = mp.duration.coerceAtLeast(1)
+                    progress = mp.currentPosition.toFloat() / dur
+                    if (!mp.isPlaying) {
+                        // 自然播放结束
+                        isPlaying = false
+                        progress = 0f
+                        break
+                    }
+                }
+                delay(100)
+            }
+        }
+    }
+
     Row(
         Modifier
             .clip(shape)
             .background(bubbleColor)
-            .clickable { onPlayVoice(msg) }
+            .clickable {
+                val mp = mediaPlayer
+                if (mp != null && isPlaying) {
+                    // 暂停
+                    mp.pause()
+                    isPlaying = false
+                } else if (mp != null) {
+                    // 继续
+                    mp.start()
+                    isPlaying = true
+                } else if (path != null) {
+                    // 首次播放
+                    try {
+                        val player = MediaPlayer()
+                        player.setDataSource(path)
+                        player.prepare()
+                        player.setOnCompletionListener {
+                            isPlaying = false
+                            progress = 0f
+                        }
+                        mediaPlayer = player
+                        player.start()
+                        isPlaying = true
+                    } catch (e: Exception) {
+                        Toast.makeText(context, "语音播放失败", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    Toast.makeText(context, "语音文件不可用", Toast.LENGTH_SHORT).show()
+                }
+            }
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(Icons.Filled.PlayArrow, contentDescription = "播放", tint = textColor, modifier = Modifier.size(20.dp))
+        Icon(
+            if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+            contentDescription = if (isPlaying) "暂停" else "播放",
+            tint = textColor,
+            modifier = Modifier.size(20.dp)
+        )
         Spacer(Modifier.width(8.dp))
-        // 简易波形条
+        // 简易波形条:播放时按进度高亮
+        val bars = 5
         Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            repeat(5) { i ->
+            repeat(bars) { i ->
+                val active = isPlaying && (i.toFloat() / bars) <= progress
                 Box(
                     Modifier
                         .size(width = 2.dp, height = (8 + (i % 3) * 4).dp)
-                        .background(textColor.copy(0.6f))
+                        .background(if (active) textColor else textColor.copy(0.4f))
                 )
             }
         }
@@ -440,6 +705,7 @@ private fun VoiceBubble(msg: MesMessage, onPlayVoice: (MesMessage) -> Unit) {
 
 @Composable
 private fun FileBubble(msg: MesMessage, onOpenFile: (MesMessage) -> Unit) {
+    val context = LocalContext.current
     val bubbleColor = if (msg.isMine) AccentBlue.copy(0.85f) else Color.White.copy(0.75f)
     val textColor = if (msg.isMine) Color.White else TextPrimary
     val subColor = if (msg.isMine) Color.White.copy(0.75f) else TextHint
@@ -449,7 +715,7 @@ private fun FileBubble(msg: MesMessage, onOpenFile: (MesMessage) -> Unit) {
             .width(220.dp)
             .clip(shape)
             .background(bubbleColor)
-            .clickable { onOpenFile(msg) }
+            .clickable { openLocalFile(context, msg) }
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -565,7 +831,12 @@ private fun ChatInputBar(
         Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 附件按钮
+        // 附件按钮:+ 旋转为 ×(参考 DynamicInputBar 的旋转模式)
+        val attachRotation by animateFloatAsState(
+            if (attachExpanded) 45f else 0f,
+            spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+            label = "attachRot"
+        )
         Box(
             Modifier.size(40.dp).clip(CircleShape)
                 .background(Primary.copy(0.06f))
@@ -573,10 +844,10 @@ private fun ChatInputBar(
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                if (attachExpanded) Icons.Filled.Close else Icons.Filled.Add,
+                Icons.Filled.Add,
                 contentDescription = "附件",
                 tint = Primary,
-                modifier = Modifier.size(22.dp)
+                modifier = Modifier.size(22.dp).graphicsLayer { rotationZ = attachRotation }
             )
         }
         Spacer(Modifier.width(8.dp))
@@ -597,11 +868,15 @@ private fun ChatInputBar(
             )
         )
         Spacer(Modifier.width(8.dp))
-        // 发送按钮
+        // 发送按钮:禁用↔可用颜色平滑过渡
         val canSend = inputText.isNotBlank()
+        val sendColor by animateColorAsState(
+            if (canSend) AccentBlue else AccentBlue.copy(0.35f),
+            tween(200), label = "sendColor"
+        )
         Box(
             Modifier.size(40.dp).clip(CircleShape)
-                .background(if (canSend) AccentBlue else AccentBlue.copy(0.35f))
+                .background(sendColor)
                 .clickable(enabled = canSend) { onSend() },
             contentAlignment = Alignment.Center
         ) {
@@ -620,8 +895,8 @@ private fun ChatInputBar(
 // ════════════════════════════════════════
 
 @Composable
-private fun EmptyConversationState(conv: ChatConversation) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+private fun EmptyConversationState(conv: ChatConversation, modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 if (conv.isChannel) "#" else "✉",
@@ -650,6 +925,7 @@ private fun EmptyConversationState(conv: ChatConversation) {
 // ════════════════════════════════════════
 
 /** 根据发送者昵称生成稳定的颜色,便于频道中区分不同人 */
+@Composable
 private fun senderColor(name: String): Color {
     val colors = listOf(AccentBlue, AccentPurple, AccentMint, AccentPeach, Success)
     val hash = if (name.isEmpty()) 0 else name.hashCode()
@@ -667,4 +943,219 @@ private fun formatFileSize(bytes: Long): String {
         unit++
     }
     return String.format(Locale.getDefault(), "%.1f %s", size, units[unit])
+}
+
+// ════════════════════════════════════════
+//  语音录制
+// ════════════════════════════════════════
+
+/**
+ * 语音录制状态持有者:封装 MediaRecorder 与临时文件,避免在 Compose 状态委托上直接持有。
+ * 录音写入 [Context.cacheDir] 临时文件(FileProvider 已映射 cache-path)。
+ */
+private class VoiceRecorderHolder {
+    var mediaRecorder: MediaRecorder? = null
+    var file: File? = null
+    var startTimeMs: Long = 0L
+
+    /** 开始录音,成功返回 true */
+    fun start(context: Context): Boolean {
+        // 先清理上一次残留
+        release()
+        return try {
+            val outFile = File(context.cacheDir, "mes_voice_${System.currentTimeMillis()}.m4a")
+            val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                MediaRecorder(context)
+            } else {
+                @Suppress("DEPRECATION")
+                MediaRecorder()
+            }
+            recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
+            recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            recorder.setAudioEncodingBitRate(128000)
+            recorder.setAudioSamplingRate(44100)
+            recorder.setOutputFile(outFile.absolutePath)
+            recorder.prepare()
+            recorder.start()
+            mediaRecorder = recorder
+            file = outFile
+            startTimeMs = System.currentTimeMillis()
+            true
+        } catch (e: Exception) {
+            try { mediaRecorder?.release() } catch (_: Exception) {}
+            mediaRecorder = null
+            file?.delete()
+            file = null
+            false
+        }
+    }
+
+    /**
+     * 停止录音,返回 (字节数组, 时长秒) ;录音太短或失败返回 null。
+     * 调用方负责消费字节数据;临时文件会被删除。
+     */
+    fun stop(): Pair<ByteArray, Int>? {
+        val rec = mediaRecorder
+        val f = file
+        val duration = ((System.currentTimeMillis() - startTimeMs) / 1000).toInt().coerceAtLeast(0)
+        try { rec?.stop() } catch (_: Exception) {
+            // 录音过短会抛异常,忽略
+        }
+        try { rec?.release() } catch (_: Exception) {}
+        mediaRecorder = null
+        var result: Pair<ByteArray, Int>? = null
+        if (f != null && f.exists() && duration > 0) {
+            try {
+                val bytes = f.readBytes()
+                if (bytes.isNotEmpty()) result = bytes to duration
+            } catch (_: Exception) {}
+        }
+        f?.delete()
+        file = null
+        return result
+    }
+
+    /** 释放资源(离开页面时调用) */
+    fun release() {
+        try { mediaRecorder?.stop() } catch (_: Exception) {}
+        try { mediaRecorder?.release() } catch (_: Exception) {}
+        mediaRecorder = null
+        file?.delete()
+        file = null
+    }
+}
+
+/** 格式化录音计时显示:秒数 -> "5\"" 或 "1:05" */
+private fun formatRecordTime(seconds: Int): String {
+    val m = seconds / 60
+    val s = seconds % 60
+    return if (m > 0) String.format(Locale.getDefault(), "%d:%02d", m, s) else "${s}\""
+}
+
+/**
+ * 录音中状态条:红色闪烁圆点 + 时长 + 取消/停止按钮。
+ */
+@Composable
+private fun RecordingBar(
+    seconds: Int,
+    onStop: () -> Unit,
+    onCancel: () -> Unit
+) {
+    // 红色圆点闪烁动画
+    val transition = rememberInfiniteTransition(label = "recDot")
+    val dotAlpha by transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.25f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(600),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "recDotAlpha"
+    )
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier.size(10.dp).clip(CircleShape).background(Danger.copy(alpha = dotAlpha))
+        )
+        Spacer(Modifier.width(8.dp))
+        Text("录音中", color = Danger, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.width(8.dp))
+        Text(formatRecordTime(seconds), color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.weight(1f))
+        // 取消
+        Box(
+            Modifier.size(40.dp).clip(CircleShape)
+                .background(Primary.copy(0.06f))
+                .clickable { onCancel() },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Filled.Close, contentDescription = "取消", tint = TextHint, modifier = Modifier.size(20.dp))
+        }
+        Spacer(Modifier.width(8.dp))
+        // 停止并发送
+        Box(
+            Modifier.size(40.dp).clip(CircleShape)
+                .background(AccentBlue)
+                .clickable { onStop() },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Filled.Check, contentDescription = "停止并发送", tint = Color.White, modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+// ════════════════════════════════════════
+//  文件打开
+// ════════════════════════════════════════
+
+/**
+ * 用 Intent.ACTION_VIEW 打开本地文件,通过 FileProvider 暴露 content URI。
+ * 文件需位于 FileProvider 配置的路径下(cache-path 已覆盖 cacheDir)。
+ */
+private fun openLocalFile(context: Context, msg: MesMessage) {
+    val path = msg.filePath
+    if (path.isNullOrEmpty()) {
+        Toast.makeText(context, "文件路径无效", Toast.LENGTH_SHORT).show()
+        return
+    }
+    val file = File(path)
+    if (!file.exists()) {
+        Toast.makeText(context, "文件不存在", Toast.LENGTH_SHORT).show()
+        return
+    }
+    try {
+        val authority = "${context.packageName}.fileprovider"
+        val uri = FileProvider.getUriForFile(context, authority, file)
+        val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, getMimeType(msg.fileName))
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val chooser = Intent.createChooser(viewIntent, "打开文件").apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(chooser)
+    } catch (e: Exception) {
+        Toast.makeText(context, "无法打开文件: ${e.message}", Toast.LENGTH_SHORT).show()
+    }
+}
+
+/** 根据文件名后缀推断 MIME 类型,未知扩展名返回通配类型 */
+private fun getMimeType(fileName: String?): String {
+    val name = fileName ?: return "*/*"
+    val ext = name.substringAfterLast('.', "").lowercase(Locale.getDefault())
+    return when (ext) {
+        "txt" -> "text/plain"
+        "pdf" -> "application/pdf"
+        "doc" -> "application/msword"
+        "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        "xls" -> "application/vnd.ms-excel"
+        "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        "ppt" -> "application/vnd.ms-powerpoint"
+        "pptx" -> "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        "zip" -> "application/zip"
+        "rar" -> "application/x-rar-compressed"
+        "7z" -> "application/x-7z-compressed"
+        "mp3" -> "audio/mpeg"
+        "m4a" -> "audio/mp4"
+        "wav" -> "audio/wav"
+        "ogg" -> "audio/ogg"
+        "flac" -> "audio/flac"
+        "mp4" -> "video/mp4"
+        "mkv" -> "video/x-matroska"
+        "avi" -> "video/x-msvideo"
+        "jpg", "jpeg" -> "image/jpeg"
+        "png" -> "image/png"
+        "gif" -> "image/gif"
+        "bmp" -> "image/bmp"
+        "webp" -> "image/webp"
+        "json" -> "application/json"
+        "xml" -> "application/xml"
+        "html", "htm" -> "text/html"
+        "csv" -> "text/csv"
+        "md" -> "text/markdown"
+        else -> "*/*"
+    }
 }

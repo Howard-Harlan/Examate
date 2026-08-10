@@ -60,6 +60,15 @@ android {
         compose true
         buildConfig true
     }
+    packaging {
+        resources {
+            excludes += [
+                'META-INF/versions/9/OSGI-INF/MANIFEST.MF',
+                'META-INF/INDEX.LIST',
+                'META-INF/io.netty.versions.properties'
+            ]
+        }
+    }
 }
 
 dependencies {
@@ -71,6 +80,9 @@ dependencies {
     implementation libs.appcompat
     implementation libs.material
     implementation libs.constraintlayout
+
+    // androidx.webkit: WebViewCompat.addDocumentStartJavaScript 等官方 WebView 增强能力
+    implementation libs.webkit
 
     // backdrop 液态玻璃库(实验性,仅安卓 13+ 启用)
     implementation libs.backdrop
@@ -112,6 +124,9 @@ dependencies {
 
     // 微信 SDK(水卡充值拉起微信支付)
     implementation libs.wechat.sdk
+
+    // BouncyCastle(Nostr secp256k1 Schnorr 签名)
+    implementation libs.bouncycastle
 
     testImplementation libs.junit
     androidTestImplementation libs.ext.junit

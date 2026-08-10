@@ -11,6 +11,7 @@ import java.util.Date
 enum class TransportType(val label: String) {
     BLE("蓝牙"),
     WIFI_AWARE("Wi-Fi Aware"),
+    UDP("局域网"),
     NOSTR("Nostr"),
     NONE("未连接")
 }
@@ -56,7 +57,8 @@ data class MesMessage(
     val voicePath: String? = null,       // 语音消息的本地路径
     val voiceDuration: Int = 0,           // 语音时长(秒)
     val fileName: String? = null,         // 文件消息的文件名
-    val fileSize: Long = 0                // 文件大小(字节)
+    val fileSize: Long = 0,               // 文件大小(字节)
+    val filePath: String? = null          // 文件消息的本地路径
 )
 
 /**
@@ -80,6 +82,7 @@ data class ChatConversation(
 data class TransportStatus(
     val ble: Boolean = false,
     val wifiAware: Boolean = false,
+    val udp: Boolean = false,
     val nostr: Boolean = false,
     val peerCount: Int = 0
 ) {
@@ -87,8 +90,23 @@ data class TransportStatus(
         get() = buildList {
             if (ble) add(TransportType.BLE)
             if (wifiAware) add(TransportType.WIFI_AWARE)
+            if (udp) add(TransportType.UDP)
             if (nostr) add(TransportType.NOSTR)
         }
-    val isAnyActive get() = ble || wifiAware || nostr
+    val isAnyActive get() = ble || wifiAware || udp || nostr
     val primaryTransport get() = activeTransports.firstOrNull() ?: TransportType.NONE
+}
+
+/**
+ * 聊天方式(用户手动选择)。
+ * - LOCAL: 局域网 UDP,无需运行时权限,默认
+ * - BLE: 蓝牙 Mesh,需要蓝牙/位置权限,无需同一网络
+ * - WIFI_AWARE: Wi-Fi Aware,需要位置权限,带宽高可传大文件
+ * - CLOUD: Nostr 云端中继,仅需网络,可跨网络通信
+ */
+enum class ChatMode(val displayName: String, val desc: String) {
+    LOCAL("局域网", "UDP 广播,同一 Wi-Fi 下通信"),
+    BLE("蓝牙", "BLE Mesh,无需同一网络"),
+    WIFI_AWARE("Wi-Fi Aware", "高带宽,可传大文件"),
+    CLOUD("云端", "Nostr relay 中继,跨网络通信")
 }

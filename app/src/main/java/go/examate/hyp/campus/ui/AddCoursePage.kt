@@ -47,6 +47,7 @@ import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.theme.Error
 import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.ScheduleCellBg
@@ -358,7 +359,7 @@ fun AddCoursePage(
                     androidx.compose.ui.window.Dialog(onDismissRequest = { showDeleteConfirm = false }) {
                         Column(
                             Modifier.width(260.dp).clip(RoundedCornerShape(20.dp))
-                                .background(Color.White).padding(20.dp),
+                                .background(CardBg).padding(20.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text("删除课程", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
@@ -420,7 +421,7 @@ private fun AddTimeSlotDialog(
     Dialog(onDismissRequest = onDismiss) {
         Column(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
-                .background(Color.White).padding(20.dp)
+                .background(CardBg).padding(20.dp)
         ) {
             Text("添加时间段", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(16.dp))

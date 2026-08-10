@@ -34,6 +34,7 @@ import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.theme.Error
 import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.ChipBg
 import go.examate.hyp.ui.theme.Success
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.ScheduleGradientEnd
@@ -165,7 +166,7 @@ private fun ModuleScoreCard(name: String, score: String) {
                     .fillMaxWidth()
                     .height(4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(Color(0xFFE5E7EB))
+                    .background(ChipBg)
             ) {
                 Box(
                     Modifier

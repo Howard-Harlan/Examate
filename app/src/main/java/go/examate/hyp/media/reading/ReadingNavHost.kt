@@ -70,6 +70,7 @@ import go.examate.hyp.media.reader.TextProvider
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.theme.AccentBlue
+import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.Danger
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.ScheduleCellBg
@@ -529,7 +530,7 @@ private fun BookSourceCard(
     onSelectToggle: () -> Unit
 ) {
     val hasJs = remember(source.bookSourceUrl) { BookSourceParser.containsJs(source) }
-    val cardBg by animateColorAsState(if (isSelected) Primary.copy(0.10f) else Color.White, tween(180), label = "srcCardBg")
+    val cardBg by animateColorAsState(if (isSelected) Primary.copy(0.10f) else CardBg, tween(180), label = "srcCardBg")
     FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
         Row(
             Modifier.fillMaxWidth().background(cardBg)
@@ -587,7 +588,7 @@ private fun BookSourceCard(
                     contentAlignment = Alignment.Center
                 ) {
                     Box(
-                        Modifier.size(22.dp).clip(RoundedCornerShape(6.dp)).background(Color.White)
+                        Modifier.size(22.dp).clip(RoundedCornerShape(6.dp)).background(CardBg)
                             .border(2.dp, borderColor, RoundedCornerShape(6.dp)),
                         contentAlignment = Alignment.Center
                     ) {
@@ -671,7 +672,7 @@ private fun BookSourceEditDialog(
                     val checkAlpha by animateFloatAsState(if (enabledState) 1f else 0f, tween(180), label = "edAlpha")
                     val borderColor by animateColorAsState(if (enabledState) grayCheck else Color(0xFFD1D5DB), tween(300), label = "edBorder")
                     Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
-                        Box(Modifier.size(20.dp).clip(RoundedCornerShape(5.dp)).background(Color.White).border(2.dp, borderColor, RoundedCornerShape(5.dp)), contentAlignment = Alignment.Center) {
+                        Box(Modifier.size(20.dp).clip(RoundedCornerShape(5.dp)).background(CardBg).border(2.dp, borderColor, RoundedCornerShape(5.dp)), contentAlignment = Alignment.Center) {
                             Box(Modifier.matchParentSize().graphicsLayer { scaleX = fillScale; scaleY = fillScale }.clip(RoundedCornerShape(3.dp)).background(Brush.linearGradient(listOf(grayCheck, grayDark))))
                             Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(13.dp).graphicsLayer { scaleX = checkScale; scaleY = checkScale; alpha = checkAlpha })
                         }

@@ -57,6 +57,9 @@ import go.examate.hyp.music.lx.LxSourceStore
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassToggle
 import go.examate.hyp.ui.theme.AccentBlue
+import go.examate.hyp.ui.theme.CardBg
+import go.examate.hyp.ui.theme.ChipBg
+import go.examate.hyp.ui.theme.DialogBg
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
@@ -275,7 +278,7 @@ private fun TodoCheckbox(checked: Boolean, onClick: () -> Unit) {
         Box(
             Modifier.size(22.dp)
                 .clip(RoundedCornerShape(6.dp))
-                .background(Color.White)
+                .background(CardBg)
                 .border(2.dp, borderColor, RoundedCornerShape(6.dp)),
             contentAlignment = Alignment.Center
         ) {
@@ -406,7 +409,7 @@ private fun ConfirmDialog(
         Column(
             Modifier.fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
-                .background(Color.White)
+                .background(DialogBg)
                 .padding(20.dp)
         ) {
             Text(title, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
@@ -416,7 +419,7 @@ private fun ConfirmDialog(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(
                     Modifier.weight(1f).height(40.dp).clip(RoundedCornerShape(20.dp))
-                        .background(Color(0xFFF0F0F2)).clickable { onDismiss() },
+                        .background(ChipBg).clickable { onDismiss() },
                     contentAlignment = Alignment.Center
                 ) { Text("取消", color = TextSecondary, fontSize = 14.sp) }
                 Box(

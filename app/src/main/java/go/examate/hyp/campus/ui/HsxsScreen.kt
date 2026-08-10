@@ -63,6 +63,8 @@ import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.CardBg
+import go.examate.hyp.ui.theme.InputBg
 import go.examate.hyp.ui.theme.SurfaceVariant
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
@@ -224,7 +226,7 @@ private fun LostDetailView(id: String, repo: CampusRepository, prefs: PrefsManag
 
             // ── 图片区域(如果有图) ──
             if (hasImages) {
-                Box(Modifier.fillMaxWidth().heightIn(max = 360.dp).background(Color(0xFFF5F5F5))) {
+                Box(Modifier.fillMaxWidth().heightIn(max = 360.dp).background(InputBg)) {
                     AsyncImage(model = fixImgUrl(imagesArr.optString(currentImg)), contentDescription = null,
                         modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp), contentScale = ContentScale.FillWidth)
                     // 图片指示器
@@ -361,7 +363,7 @@ private fun PublishLostDialog(repo: CampusRepository, prefs: PrefsManager,
     }
 
     Dialog(onDismissRequest = { if (!submitting) onDone() }) {
-        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Color.White)) {
+        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(CardBg)) {
             Text("发布失物招领", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.padding(start = 20.dp, top = 20.dp, bottom = 4.dp))
             Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp)) {
@@ -375,7 +377,7 @@ private fun PublishLostDialog(repo: CampusRepository, prefs: PrefsManager,
                     listOf("1" to "失物", "2" to "招领").forEach { (v, l) ->
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { type = v }) {
                             Box(Modifier.size(18.dp).clip(CircleShape).background(if (type == v) Primary else SurfaceVariant), contentAlignment = Alignment.Center) {
-                                if (type == v) Box(Modifier.size(8.dp).clip(CircleShape).background(Color.White))
+                                if (type == v) Box(Modifier.size(8.dp).clip(CircleShape).background(CardBg))
                             }
                             Spacer(Modifier.width(6.dp))
                             Text(l, fontSize = 13.sp, color = TextPrimary)
@@ -409,7 +411,7 @@ private fun PublishLostDialog(repo: CampusRepository, prefs: PrefsManager,
                 if (result.isNotEmpty()) { Spacer(Modifier.height(8.dp)); Text(result, color = if (result.contains("成功")) HsxsSuccess else HsxsError, fontSize = 12.sp) }
                 Spacer(Modifier.height(8.dp))
             }
-            Row(Modifier.fillMaxWidth().background(Color(0xFFF8F9FA)).padding(horizontal = 20.dp, vertical = 10.dp),
+            Row(Modifier.fillMaxWidth().background(InputBg).padding(horizontal = 20.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                 Text("取消", color = TextSecondary, fontSize = 14.sp,
                     modifier = Modifier.clickable { if (!submitting) onDone() }.padding(horizontal = 12.dp, vertical = 8.dp))
@@ -577,7 +579,7 @@ private fun SurveyDetailView(id: String, repo: CampusRepository, prefs: PrefsMan
                                         .background(if (selected) Primary else SurfaceVariant)
                                         .clickable { answers = answers.toMutableMap().also { it[qId] = key.toIntOrNull() ?: key } },
                                         contentAlignment = Alignment.Center
-                                    ) { if (selected) Box(Modifier.size(8.dp).clip(CircleShape).background(Color.White)) }
+                                    ) { if (selected) Box(Modifier.size(8.dp).clip(CircleShape).background(CardBg)) }
                                     Spacer(Modifier.width(6.dp))
                                     Text(label, fontSize = 13.sp)
                                 }

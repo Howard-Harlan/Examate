@@ -63,6 +63,7 @@ import go.examate.hyp.config.PrefsManager
 import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.AccentMint
 import go.examate.hyp.ui.theme.ExamateTheme
+import go.examate.hyp.ui.theme.InputBg
 import go.examate.hyp.ui.theme.Success
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
@@ -279,7 +280,7 @@ private fun MesChatFloatingWindow(
                 Modifier
                     .fillMaxWidth()
                     .height(44.dp)
-                    .background(Color(0xFFF5F5F7))
+                    .background(InputBg)
                     .pointerInput(Unit) {
                         detectDragGestures { change, drag ->
                             change.consume()

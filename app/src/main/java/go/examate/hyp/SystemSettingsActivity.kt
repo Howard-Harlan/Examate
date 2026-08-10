@@ -54,9 +54,11 @@ import go.examate.hyp.ui.components.PlainDialog
 import go.examate.hyp.ui.components.PlainDialogButtons
 import go.examate.hyp.ui.components.PlainDialogContent
 import go.examate.hyp.ui.components.PlainDialogTitle
+import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.Danger
 import go.examate.hyp.ui.theme.ExamateTheme
 import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.Success
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.util.CacheCleaner
@@ -120,6 +122,10 @@ private fun SystemSettingsScreen(permissionHelper: PermissionHelper, onBack: () 
     var showHomePicker by remember { mutableStateOf(false) }
     var defaultTab by remember { mutableIntStateOf(prefs.defaultHomeTab) }
 
+    // 主题模式
+    var showThemePicker by remember { mutableStateOf(false) }
+    var themeMode by remember { mutableIntStateOf(prefs.themeMode) }
+
     // 清除缓存
     var showClearDialog by remember { mutableStateOf(false) }
     var cacheSize by remember { mutableStateOf<Long?>(null) }
@@ -171,7 +177,7 @@ private fun SystemSettingsScreen(permissionHelper: PermissionHelper, onBack: () 
                                 Spacer(Modifier.weight(1f))
                                 Text(
                                     text = if (shizukuGranted) "已授权" else "未授权",
-                                    color = if (shizukuGranted) Color(0xFF34C759) else Danger,
+                                    color = if (shizukuGranted) Success else Danger,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Medium
                                 )
@@ -189,6 +195,33 @@ private fun SystemSettingsScreen(permissionHelper: PermissionHelper, onBack: () 
 
                 // ── 常规 ──
                 item { SectionHeader("常规") }
+                item {
+                    FrostedGlassCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showThemePicker = true }
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("深色模式", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    when (themeMode) {
+                                        1 -> "浅色"
+                                        2 -> "深色"
+                                        else -> "跟随系统"
+                                    },
+                                    color = TextHint,
+                                    fontSize = 11.sp
+                                )
+                            }
+                            Text("›", color = TextHint, fontSize = 20.sp)
+                        }
+                    }
+                }
                 item {
                     LiquidGlassButton(
                         text = "首页设置",
@@ -245,7 +278,7 @@ private fun SystemSettingsScreen(permissionHelper: PermissionHelper, onBack: () 
                 Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(20.dp))
-                    .background(Color.White)
+                    .background(CardBg)
                     .padding(vertical = 8.dp)
             ) {
                 Text(
@@ -277,7 +310,46 @@ private fun SystemSettingsScreen(permissionHelper: PermissionHelper, onBack: () 
         }
     }
 
-    // 清除缓存确认弹窗
+    // 主题模式弹窗
+    if (showThemePicker) {
+        Dialog(onDismissRequest = { showThemePicker = false }) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(CardBg)
+                    .padding(vertical = 8.dp)
+            ) {
+                Text(
+                    "深色模式",
+                    color = TextHint,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
+                )
+                listOf(0 to "跟随系统", 1 to "浅色", 2 to "深色").forEach { (mode, label) ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                prefs.themeMode = mode
+                                themeMode = mode
+                                showThemePicker = false
+                                // 重建 Activity 使新主题立即生效
+                                (context as? android.app.Activity)?.recreate()
+                            }
+                            .padding(horizontal = 20.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(label, color = TextPrimary, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                        if (mode == themeMode) {
+                            Text("✓", color = Primary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                }
+            }
+        }
+    }
     if (showClearDialog) {
         PlainDialog(onDismissRequest = { showClearDialog = false }) {
             PlainDialogTitle("清除缓存")

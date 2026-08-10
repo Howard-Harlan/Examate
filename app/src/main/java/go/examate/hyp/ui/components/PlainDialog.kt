@@ -24,6 +24,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import go.examate.hyp.ui.theme.AccentBlue
+import go.examate.hyp.ui.theme.ChipBg
+import go.examate.hyp.ui.theme.DialogBg
 
 /**
  * 浅白色对话框(克制风格,用于表单/确认等场景)
@@ -52,7 +54,7 @@ fun PlainDialog(
                     .padding(24.dp)
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(24.dp))
-                    .background(Color.White.copy(0.98f))
+                    .background(DialogBg)
                     .then(modifier)
             ) {
                 content()
@@ -135,7 +137,7 @@ private fun DialogButton(
     Box(
         Modifier
             .clip(RoundedCornerShape(10.dp))
-            .background(if (isAccent) AccentBlue else Color(0xFFE5E5EA))
+            .background(if (isAccent) AccentBlue else ChipBg)
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {

@@ -40,6 +40,8 @@ fun FrostedGlassCard(
     content: @Composable BoxScope.() -> Unit
 ) {
     val shape = RoundedCornerShape(cornerRadius)
+    // 在 @Composable 上下文读取颜色,供 drawBehind lambda 使用
+    val highlightColor = GlassHighlight
 
     Box(
         modifier = modifier
@@ -65,7 +67,7 @@ fun FrostedGlassCard(
                 drawRect(
                     brush = Brush.linearGradient(
                         colors = listOf(
-                            GlassHighlight.copy(alpha = 0.5f),
+                            highlightColor.copy(alpha = 0.5f),
                             Color.Transparent
                         ),
                         start = Offset(0f, 0f),

@@ -303,7 +303,7 @@ class ScheduleViewModel(app: Application) : AndroidViewModel(app) {
         val ctx = getApplication<Application>()
         viewModelScope.launch(Dispatchers.IO) {
             ScheduleStorage.save(ctx, storageKey, entries, todos)
-            // 课表/代办变化后刷新桌面小组件,保持与 App 内一致
+            // 课表/待办变化后刷新桌面小组件,保持与 App 内一致
             go.examate.hyp.widget.ScheduleWidgetProvider.refreshAll(ctx)
         }
     }
@@ -398,6 +398,12 @@ fun ScheduleScreen(onBack: () -> Unit) {
     ) { _ ->
         ScheduleStorage.loadTimeSchedule(context)
         currentMeta = ScheduleStorage.getCurrentScheduleMeta(context)
+        vm.reloadFromStorage()
+    }
+    // 待办页返回(可能增删了待办,需重新加载)
+    val todoLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { _ ->
         vm.reloadFromStorage()
     }
 
@@ -604,7 +610,7 @@ fun ScheduleScreen(onBack: () -> Unit) {
                     }
                 )
             } else {
-                // ── 日视图:当天课程 + 代办 ──
+                // ── 日视图:当天课程 + 待办 ──
                 DayScheduleView(
                     date = dayViewDate,
                     entries = state.entries,
@@ -616,6 +622,9 @@ fun ScheduleScreen(onBack: () -> Unit) {
                     onCourseClick = { entry ->
                         // 编辑现有课程:统一走 AddCoursePage
                         editTarget = entry; initialSlot = null; showAddCoursePage = true
+                    },
+                    onOpenAllTodos = {
+                        todoLauncher.launch(Intent(context, go.examate.hyp.TodoActivity::class.java))
                     },
                     modifier = Modifier.weight(1f)
                 )

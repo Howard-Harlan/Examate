@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import go.examate.hyp.config.PrefsManager
 import go.examate.hyp.ui.theme.AccentBlue
+import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.Danger
 import go.examate.hyp.ui.theme.SurfaceVariant
 import go.examate.hyp.ui.theme.TextHint
@@ -253,7 +254,7 @@ private fun BirthdayPickerDialog(
         Column(
             Modifier.fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
-                .background(androidx.compose.ui.graphics.Color.White)
+                .background(CardBg)
                 .padding(20.dp)
         ) {
             Text("选择生日", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
@@ -377,7 +378,7 @@ private fun ConfirmDialog(
         Column(
             Modifier.fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
-                .background(androidx.compose.ui.graphics.Color.White)
+                .background(CardBg)
                 .padding(20.dp)
         ) {
             Text(title, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)

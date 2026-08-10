@@ -38,6 +38,8 @@ fun LiquidGlassCard(
     content: @Composable BoxScope.() -> Unit
 ) {
     val shape = RoundedCornerShape(cornerRadius)
+    // 在 @Composable 上下文读取颜色,供 drawBehind lambda 使用
+    val highlightColor = GlassHighlight
 
     Box(
         modifier = modifier
@@ -64,8 +66,8 @@ fun LiquidGlassCard(
                 drawRect(
                     brush = Brush.linearGradient(
                         colors = listOf(
-                            GlassHighlight.copy(alpha = 0.6f),
-                            GlassHighlight.copy(alpha = 0.2f),
+                            highlightColor.copy(alpha = 0.6f),
+                            highlightColor.copy(alpha = 0.2f),
                             Color.Transparent
                         ),
                         start = Offset(0f, 0f),

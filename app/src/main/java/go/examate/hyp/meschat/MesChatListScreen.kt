@@ -1,9 +1,15 @@
 package go.examate.hyp.meschat
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,10 +32,13 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.WifiTethering
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
@@ -44,6 +53,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -59,7 +69,9 @@ import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.AccentMint
 import go.examate.hyp.ui.theme.AccentPurple
 import go.examate.hyp.ui.theme.BgPrimary
+import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.Danger
+import go.examate.hyp.ui.theme.DialogBg
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.Success
 import go.examate.hyp.ui.theme.TextHint
@@ -95,6 +107,8 @@ fun MesChatListScreen(
     transportStatus: TransportStatus,
     peers: List<MeshPeer>,
     myName: String,
+    currentMode: ChatMode,
+    onSwitchMode: (ChatMode) -> Unit,
     onBack: () -> Unit,
     onOpenConversation: (ChatConversation) -> Unit,
     onJoinChannel: () -> Unit,
@@ -188,12 +202,14 @@ fun MesChatListScreen(
         ModalBottomSheet(
             onDismissRequest = { showPeerSheet = false },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-            containerColor = Color.White
+            containerColor = DialogBg
         ) {
             MeshPeerPanelContent(
                 peers = peers,
                 myName = myName,
                 transportStatus = transportStatus,
+                currentMode = currentMode,
+                onSwitchMode = onSwitchMode,
                 onChatWith = { peer ->
                     showPeerSheet = false
                     onStartPrivateChat(peer)
@@ -209,17 +225,21 @@ fun MesChatListScreen(
 
 @Composable
 private fun TransportStatusChip(status: TransportStatus, onClick: () -> Unit) {
-    // 任务B.7:准确反映实际启动的传输通道(而非是否有 peer 在线)
+    // 准确反映实际启动的传输通道(而非是否有 peer 在线)
+    val activeCount = listOf(status.ble, status.wifiAware, status.udp, status.nostr).count { it }
     val color = when {
-        status.ble && status.wifiAware -> Success   // 双通道:绿
-        status.ble || status.wifiAware -> AccentMint // 单通道:薄荷
-        status.nostr -> AccentBlue                   // 仅 Nostr:蓝
-        else -> TextHint                              // 不可用:灰
+        activeCount >= 2 -> Success           // 多通道:绿
+        activeCount == 1 -> AccentMint         // 单通道:薄荷
+        else -> TextHint                       // 不可用:灰
     }
     val label = when {
+        activeCount >= 3 -> "多通道"
         status.ble && status.wifiAware -> "双通道"
+        status.ble && status.udp -> "双通道"
+        status.wifiAware && status.udp -> "双通道"
         status.ble -> "蓝牙"
         status.wifiAware -> "Wi-Fi"
+        status.udp -> "局域网"
         status.nostr -> "Nostr"
         else -> "离线"
     }
@@ -277,9 +297,20 @@ private fun ConversationRow(
     timeFmt: SimpleDateFormat,
     onClick: () -> Unit
 ) {
-    FrostedGlassCard(Modifier.fillMaxWidth()) {
+    // 按压回弹反馈
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(
+        if (pressed) 0.97f else 1f,
+        spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "convPress"
+    )
+    FrostedGlassCard(
+        Modifier.fillMaxWidth().graphicsLayer { scaleX = pressScale; scaleY = pressScale }
+    ) {
         Row(
-            Modifier.fillMaxWidth().clickable { onClick() }
+            Modifier.fillMaxWidth()
+                .clickable(interactionSource = interaction, indication = null) { onClick() }
                 .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -366,7 +397,7 @@ private fun ConversationAvatar(conv: ChatConversation) {
         if (!conv.isChannel && conv.transport != TransportType.NONE) {
             Box(
                 Modifier.size(12.dp).clip(CircleShape)
-                    .background(Color.White).padding(2.dp)
+                    .background(CardBg).padding(2.dp)
             ) {
                 Box(Modifier.fillMaxSize().clip(CircleShape).background(transportColor))
             }
@@ -439,13 +470,20 @@ private fun MeshPeerPanelContent(
     peers: List<MeshPeer>,
     myName: String,
     transportStatus: TransportStatus,
+    currentMode: ChatMode,
+    onSwitchMode: (ChatMode) -> Unit,
     onChatWith: (MeshPeer) -> Unit
 ) {
-    // 任务B.7:在节点面板副标题展示当前传输通道运行状态
+    // 在节点面板副标题展示当前传输通道运行状态
+    val activeCount = listOf(transportStatus.ble, transportStatus.wifiAware, transportStatus.udp, transportStatus.nostr).count { it }
     val channelStatusText = when {
-        transportStatus.ble && transportStatus.wifiAware -> "双通道运行中"
+        activeCount >= 3 -> "多通道运行中"
+        transportStatus.ble && transportStatus.wifiAware -> "蓝牙 + Wi-Fi Aware"
+        transportStatus.ble && transportStatus.udp -> "蓝牙 + 局域网"
+        transportStatus.wifiAware && transportStatus.udp -> "Wi-Fi Aware + 局域网"
         transportStatus.ble -> "仅蓝牙通道"
         transportStatus.wifiAware -> "仅 Wi-Fi Aware 通道"
+        transportStatus.udp -> "仅局域网通道"
         transportStatus.nostr -> "仅 Nostr 通道"
         else -> "无可用通道"
     }
@@ -463,6 +501,12 @@ private fun MeshPeerPanelContent(
             color = TextHint, fontSize = 12.sp
         )
         Spacer(Modifier.height(16.dp))
+
+        // ═══ 聊天方式选择器(单选) ═══
+        Text("聊天方式", color = TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.height(8.dp))
+        ChatModeSelector(currentMode = currentMode, onSwitchMode = onSwitchMode)
+        Spacer(Modifier.height(12.dp))
 
         if (peers.isEmpty()) {
             Box(Modifier.fillMaxWidth().padding(vertical = 32.dp), contentAlignment = Alignment.Center) {
@@ -482,6 +526,7 @@ private fun PeerRow(peer: MeshPeer, onClick: () -> Unit) {
     val transportColor = when (peer.transport) {
         TransportType.BLE -> Success
         TransportType.WIFI_AWARE -> AccentMint
+        TransportType.UDP -> AccentBlue
         TransportType.NOSTR -> AccentBlue
         else -> TextHint
     }
@@ -502,7 +547,7 @@ private fun PeerRow(peer: MeshPeer, onClick: () -> Unit) {
                     color = AccentBlue, fontSize = 15.sp, fontWeight = FontWeight.Medium
                 )
             }
-            Box(Modifier.size(11.dp).clip(CircleShape).background(Color.White).padding(2.dp)) {
+            Box(Modifier.size(11.dp).clip(CircleShape).background(CardBg).padding(2.dp)) {
                 Box(Modifier.fillMaxSize().clip(CircleShape).background(transportColor))
             }
         }
@@ -533,7 +578,24 @@ private fun TransportIcons(status: TransportStatus) {
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         TransportIcon(Icons.Filled.Bluetooth, active = status.ble)
         TransportIcon(Icons.Filled.Wifi, active = status.wifiAware)
+        TransportLabel("LAN", active = status.udp)
         TransportIcon(Icons.Filled.CloudOff, active = status.nostr)
+    }
+}
+
+/** UDP 局域网通道标签(core 图标包无合适图标,用文本标签替代) */
+@Composable
+private fun TransportLabel(text: String, active: Boolean) {
+    val tint by animateColorAsState(
+        targetValue = if (active) Success else TextHint.copy(0.3f),
+        animationSpec = tween(300), label = "transport_label"
+    )
+    Box(
+        Modifier.size(30.dp).clip(CircleShape)
+            .background(if (active) Success.copy(0.1f) else Color.Transparent),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(text, color = tint, fontSize = 9.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -549,5 +611,71 @@ private fun TransportIcon(icon: androidx.compose.ui.graphics.vector.ImageVector,
         contentAlignment = Alignment.Center
     ) {
         Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp))
+    }
+}
+
+/**
+ * 聊天方式选择器:局域网 / 蓝牙 / Wi-Fi Aware / 云端,单选。
+ */
+@Composable
+internal fun ChatModeSelector(
+    currentMode: ChatMode,
+    onSwitchMode: (ChatMode) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ChatMode.entries.forEach { mode ->
+            val selected = currentMode == mode
+            FrostedGlassCard(
+                modifier = Modifier.fillMaxWidth().clickable { onSwitchMode(mode) }
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val icon = when (mode) {
+                        ChatMode.LOCAL -> Icons.Filled.Wifi
+                        ChatMode.BLE -> Icons.Filled.Bluetooth
+                        ChatMode.WIFI_AWARE -> Icons.Filled.WifiTethering
+                        ChatMode.CLOUD -> Icons.Filled.Public
+                    }
+                    val iconTint by animateColorAsState(
+                        if (selected) Primary else TextHint, tween(200), label = "modeIcon"
+                    )
+                    Icon(
+                        icon,
+                        contentDescription = null,
+                        tint = iconTint,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(mode.displayName, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        Text(mode.desc, color = TextHint, fontSize = 11.sp)
+                    }
+                    // 选中标记:背景/边框颜色平滑过渡
+                    val dotBg by animateColorAsState(
+                        if (selected) Primary else Color.Transparent, tween(200), label = "modeDotBg"
+                    )
+                    val dotBorder by animateColorAsState(
+                        if (selected) Primary else TextHint.copy(0.3f), tween(200), label = "modeDotBorder"
+                    )
+                    Box(
+                        Modifier.size(20.dp).clip(CircleShape)
+                            .background(dotBg)
+                            .border(2.dp, dotBorder, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (selected) {
+                            Icon(
+                                Icons.Filled.Check,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }

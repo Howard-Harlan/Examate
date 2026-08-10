@@ -34,6 +34,7 @@ import go.examate.hyp.campus.model.ScheduleStorage
 import go.examate.hyp.campus.model.ScheduleTodo
 import go.examate.hyp.campus.model.getSemesterStart
 import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.InputBg
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextSecondary
 import java.time.LocalDate
@@ -215,7 +216,7 @@ private fun DayColumn(
                         .fillMaxWidth()
                         .padding(1.dp)
                         .clip(RoundedCornerShape(4.dp))
-                        .background(Color(0xFFF5F5F7))
+                        .background(InputBg)
                         .clickable { onEmptyCellClick(p) }
                 )
                 period++

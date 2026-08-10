@@ -62,6 +62,7 @@ import go.examate.hyp.campus.ui.CampusServiceViewModel
 import go.examate.hyp.campus.ui.EcardScreen
 import go.examate.hyp.campus.ui.HsxsScreen
 import go.examate.hyp.campus.ui.SzsScreen
+import go.examate.hyp.campus.ui.SzsScoreScreen
 import go.examate.hyp.campus.ui.ClassContactScreen
 import go.examate.hyp.campus.ui.JwxtScreen
 import go.examate.hyp.campus.ui.LoginState
@@ -75,6 +76,8 @@ import go.examate.hyp.ui.components.LiquidGlassBackground
 import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.theme.BgPrimary
+import go.examate.hyp.ui.theme.CardBg
+import go.examate.hyp.ui.theme.Divider
 import go.examate.hyp.ui.theme.Error
 import go.examate.hyp.ui.theme.ErrorBg
 import go.examate.hyp.ui.theme.ExamateTheme
@@ -121,6 +124,10 @@ class CampusServiceActivity : ComponentActivity() {
             "sc" -> CampusRoute.Sc
             "hsxs" -> CampusRoute.Hsxs
             "szs" -> CampusRoute.Szs
+            "szs_score" -> CampusRoute.SzsScore
+            "szs_eval" -> CampusRoute.SzsEvaluating
+            "holiday" -> CampusRoute.HolidayLeave
+            "stay" -> CampusRoute.StayInSchool
             "quick" -> CampusRoute.QuickService
             "contact" -> CampusRoute.ClassContact
             else -> CampusRoute.Home
@@ -178,7 +185,14 @@ private fun CampusServiceRoot(onBack: () -> Unit, initialRoute: CampusRoute = Ca
             return
         }
         is CampusRoute.Szs -> {
-            SzsScreen(onBack = { viewModel.setRoute(CampusRoute.Home) })
+            SzsScreen(
+                onBack = { viewModel.setRoute(CampusRoute.Home) },
+                onScore = { viewModel.setRoute(CampusRoute.SzsScore) }
+            )
+            return
+        }
+        is CampusRoute.SzsScore -> {
+            SzsScoreScreen(onBack = { viewModel.setRoute(CampusRoute.Szs) })
             return
         }
         is CampusRoute.QuickService -> {
@@ -387,7 +401,7 @@ private fun CampusServiceRoot(onBack: () -> Unit, initialRoute: CampusRoute = Ca
                         Spacer(Modifier.height(12.dp))
                         FeatureEntryCard(
                             title = "智慧思政",
-                            subtitle = "综合测评成绩明细",
+                            subtitle = "综测成绩 / 综测测评 / 离返校 / 留校登记",
                             onClick = { viewModel.setRoute(CampusRoute.Szs) }
                         )
                         Spacer(Modifier.height(12.dp))
@@ -470,7 +484,7 @@ internal fun SchoolPickerDialog(
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
-                .background(Color.White)
+                .background(CardBg)
                 .padding(vertical = 8.dp)
         ) {
             Text(
@@ -523,9 +537,9 @@ internal fun SchoolPickerDialog(
 @Composable
 private fun RememberCheckbox(checked: Boolean) {
     // 灰色主题对勾(与书源管理启用开关风格一致,适应主题)
-    val grayCheck = Color(0xFF6B7280)
-    val grayDark = Color(0xFF4B5563)
-    val borderGray = Color(0xFFD1D5DB)
+    val grayCheck = TextSecondary
+    val grayDark = TextPrimary
+    val borderGray = Divider
 
     // 灰渐变填充:选中 overshoot 弹入,取消缩回
     val fillScale by animateFloatAsState(
@@ -550,7 +564,7 @@ private fun RememberCheckbox(checked: Boolean) {
         Box(
             Modifier.size(22.dp)
                 .clip(RoundedCornerShape(6.dp))
-                .background(Color.White)
+                .background(CardBg)
                 .border(2.dp, borderColor, RoundedCornerShape(6.dp)),
             contentAlignment = Alignment.Center
         ) {

@@ -14,7 +14,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -27,6 +26,7 @@ import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
+import go.examate.hyp.ui.theme.CardBg
 
 // ════════════════════════════════════════
 //  导入方式选择弹窗
@@ -41,7 +41,7 @@ internal fun ImportMethodDialog(
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Column(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Color.White).padding(20.dp)
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(CardBg).padding(20.dp)
         ) {
             Text("导入课表", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(16.dp))
@@ -93,7 +93,7 @@ internal fun AddCellDialog(
         // 卡片变窄:不用 fillMaxWidth,用固定宽度 220dp,视觉更聚焦
         Column(
             Modifier.width(220.dp).clip(RoundedCornerShape(20.dp))
-                .background(Color.White).padding(20.dp),
+                .background(CardBg).padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // 文案:"星期一 第1节",避免"第一第1节"这种重复表述

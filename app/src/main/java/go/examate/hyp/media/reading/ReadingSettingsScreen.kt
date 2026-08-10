@@ -54,6 +54,7 @@ import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.components.LiquidGlassToggle
 import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.Danger
+import go.examate.hyp.ui.theme.DialogBg
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.SurfaceVariant
 import go.examate.hyp.ui.theme.TextHint
@@ -383,7 +384,7 @@ private fun CssStyleEditor(
         onDismissRequest = onDismiss,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        containerColor = Color.White,
+        containerColor = DialogBg,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("自定义 CSS 样式", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium,

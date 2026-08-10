@@ -52,6 +52,7 @@ import go.examate.hyp.ui.components.PlainDialogButtons
 import go.examate.hyp.ui.components.PlainDialogContent
 import go.examate.hyp.ui.components.PlainDialogTitle
 import go.examate.hyp.ui.theme.BgPrimary
+import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.ExamateTheme
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
@@ -270,7 +271,7 @@ private fun TipStackCard() {
             tint = Color.White.copy(alpha = 1f)
         ) {
             Column(
-                Modifier.fillMaxSize().background(Color.White).padding(18.dp),
+                Modifier.fillMaxSize().background(CardBg).padding(18.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Text(tip.title, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)

@@ -50,6 +50,7 @@ import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.components.LiquidGlassToggle
 import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.ScheduleCellBg
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
@@ -137,7 +138,7 @@ internal fun ScheduleManageTab(onEditSchedule: (String) -> Unit) {
                             androidx.compose.ui.window.Dialog(onDismissRequest = { showDeleteConfirm = false }) {
                                 Column(
                                     Modifier.width(260.dp).clip(RoundedCornerShape(20.dp))
-                                        .background(Color.White).padding(20.dp),
+                                        .background(CardBg).padding(20.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                     Text("删除课表", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
@@ -194,7 +195,7 @@ internal fun ScheduleManageTab(onEditSchedule: (String) -> Unit) {
         androidx.compose.ui.window.Dialog(onDismissRequest = { showAddDialog = false }) {
             Column(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
-                    .background(Color.White).padding(20.dp)
+                    .background(CardBg).padding(20.dp)
             ) {
                 Text("新建课表", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(12.dp))
@@ -488,7 +489,7 @@ internal fun ScheduleEditPage(metaId: String, onBack: () -> Unit) {
         androidx.compose.ui.window.Dialog(onDismissRequest = { showRenameDialog = false }) {
             Column(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
-                    .background(Color.White).padding(20.dp)
+                    .background(CardBg).padding(20.dp)
             ) {
                 Text("重命名课表", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(12.dp))

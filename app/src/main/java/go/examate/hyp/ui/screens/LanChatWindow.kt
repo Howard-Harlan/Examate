@@ -42,6 +42,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import go.examate.hyp.ui.theme.AccentBlue
+import go.examate.hyp.ui.theme.InputBg
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.ScheduleCellBg
 import go.examate.hyp.ui.theme.TextSecondary
@@ -102,7 +103,7 @@ fun LanChatWindow(
                 Modifier
                     .fillMaxWidth()
                     .height(44.dp)
-                    .background(Color(0xFFF5F5F7))
+                    .background(InputBg)
                     .pointerInput(Unit) {
                         detectDragGestures { change, drag ->
                             change.consume()
@@ -132,7 +133,7 @@ fun LanChatWindow(
                     Icon(
                         Icons.Filled.Close,
                         contentDescription = "关闭",
-                        tint = Color(0xFF6B7280),
+                        tint = TextSecondary,
                         modifier = Modifier.size(18.dp)
                     )
                 }

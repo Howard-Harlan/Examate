@@ -36,6 +36,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import go.examate.hyp.campus.model.DEFAULT_TOTAL_WEEKS
 import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.CardBg
+import go.examate.hyp.ui.theme.InputBg
 import go.examate.hyp.ui.theme.ScheduleCellBg
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
@@ -156,7 +158,7 @@ fun NumberSelect(label: String, value: Int, range: IntRange, onChange: (Int) -> 
     if (showGrid) {
         Dialog(onDismissRequest = { showGrid = false }) {
             Column(
-                Modifier.clip(RoundedCornerShape(16.dp)).background(Color.White).padding(16.dp)
+                Modifier.clip(RoundedCornerShape(16.dp)).background(CardBg).padding(16.dp)
             ) {
                 Text(label, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.height(10.dp))
@@ -219,7 +221,7 @@ internal fun WeekPickerDialog(
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
-                .background(Color.White)
+                .background(CardBg)
                 .padding(16.dp)
         ) {
             Text("选择周次", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
@@ -246,7 +248,7 @@ internal fun WeekPickerDialog(
                                     .weight(1f)
                                     .height(52.dp)
                                     .clip(RoundedCornerShape(10.dp))
-                                    .background(if (isCurrent) Primary else Color(0xFFF5F5F7))
+                                    .background(if (isCurrent) Primary else InputBg)
                                     .clickable { onSelect(w) },
                                 contentAlignment = Alignment.Center
                             ) {

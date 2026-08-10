@@ -211,8 +211,16 @@ sealed class CampusRoute {
     data class Ecard(val tab: String? = null) : CampusRoute()
     object Sc : CampusRoute()
     object Hsxs : CampusRoute()
-    /** 智慧思政:综合测评成绩明细 */
+    /** 智慧思政:功能列表(综测成绩/离返校/留校登记) */
     object Szs : CampusRoute()
+    /** 智慧思政 → 综合测评成绩明细(jgf 系统) */
+    object SzsScore : CampusRoute()
+    /** 智慧思政 → 综测测评(hbsz-h5 系统) */
+    object SzsEvaluating : CampusRoute()
+    /** 智慧思政 → 离返校登记 */
+    object HolidayLeave : CampusRoute()
+    /** 智慧思政 → 寒暑假留校登记 */
+    object StayInSchool : CampusRoute()
     /** 快捷服务:无需登录的轻量功能聚合页(校历等) */
     object QuickService : CampusRoute()
     /** 班级通讯录:需要登录智慧门户 */

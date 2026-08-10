@@ -34,6 +34,12 @@ class MesChatController(
         private const val TAG = "MesChatController"
         /** 默认频道:进入 Mesh 聊天即加入的附近群聊 */
         private const val DEFAULT_CHANNEL = "附近"
+        /** 分片大小(字节):每片 JSON 的 chunk 部分最大字节数,控制在 UDP 4096 限制内 */
+        private const val FRAGMENT_SIZE = 2048
+        /** 分片组超时清理(60秒未收齐的分片组丢弃) */
+        private const val FRAGMENT_TIMEOUT_MS = 60_000L
+        /** 每个会话最大保留消息数(防止内存无限增长) */
+        private const val MAX_MESSAGES_PER_CONVERSATION = 500
 
         @Volatile
         private var instance: MesChatController? = null
@@ -105,8 +111,42 @@ class MesChatController(
         }
     }
 
+    // UDP 局域网回调
+    private val udpCallback = object : BleMeshTransport.Callback {
+        override fun onPeerConnected(peerId: String, nickname: String) {
+            onPeerConnectedInternal(peerId, nickname, TransportType.UDP)
+        }
+        override fun onPeerDisconnected(peerId: String) {
+            onPeerDisconnectedInternal(peerId, TransportType.UDP)
+        }
+        override fun onDataReceived(json: String, fromPeerId: String) {
+            onDataReceivedInternal(json, fromPeerId)
+        }
+        override fun onError(error: String) {
+            Log.w(TAG, "UDP error: $error")
+        }
+    }
+
+    // Nostr 云端回调
+    private val nostrCallback = object : BleMeshTransport.Callback {
+        override fun onPeerConnected(peerId: String, nickname: String) {
+            onPeerConnectedInternal(peerId, nickname, TransportType.NOSTR)
+        }
+        override fun onPeerDisconnected(peerId: String) {
+            onPeerDisconnectedInternal(peerId, TransportType.NOSTR)
+        }
+        override fun onDataReceived(json: String, fromPeerId: String) {
+            onDataReceivedInternal(json, fromPeerId)
+        }
+        override fun onError(error: String) {
+            Log.w(TAG, "Nostr error: $error")
+        }
+    }
+
     private val bleTransport = BleMeshTransport(context, bleCallback)
     private val wifiTransport = WifiAwareTransport(context, bleTransport.myPeerId, wifiCallback)
+    private val udpTransport = UdpLanTransport(context, bleTransport.myPeerId, udpCallback)
+    private val nostrTransport = NostrTransport(context, nostrCallback)
     val myPeerId: String get() = bleTransport.myPeerId
 
     /** peerId -> 活跃传输通道集合(一个 peer 可能同时通过 BLE 和 Wi-Fi Aware 连接) */
@@ -117,10 +157,13 @@ class MesChatController(
         peerNicknames[peerId] = nickname
         val set = peerTransportMap.getOrPut(peerId) { mutableSetOf() }
         set.add(transport)
-        // peer 显示的传输通道:优先 Wi-Fi Aware(带宽大),其次 BLE
-        val displayTransport = if (TransportType.WIFI_AWARE in set) TransportType.WIFI_AWARE
-            else if (TransportType.BLE in set) TransportType.BLE
-            else TransportType.NONE
+        // peer 显示的传输通道:优先 UDP(同 Wi-Fi 带宽最大延迟最低),其次 Wi-Fi Aware,最后 BLE
+        val displayTransport = when {
+            TransportType.UDP in set -> TransportType.UDP
+            TransportType.WIFI_AWARE in set -> TransportType.WIFI_AWARE
+            TransportType.BLE in set -> TransportType.BLE
+            else -> TransportType.NONE
+        }
         val peer = MeshPeer(
             peerId = peerId,
             nickname = nickname,
@@ -140,9 +183,12 @@ class MesChatController(
         set.remove(transport)
         if (set.isNotEmpty()) {
             // 仍有其他通道连接,只更新显示的传输通道
-            val displayTransport = if (TransportType.WIFI_AWARE in set) TransportType.WIFI_AWARE
-                else if (TransportType.BLE in set) TransportType.BLE
-                else TransportType.NONE
+            val displayTransport = when {
+                TransportType.UDP in set -> TransportType.UDP
+                TransportType.WIFI_AWARE in set -> TransportType.WIFI_AWARE
+                TransportType.BLE in set -> TransportType.BLE
+                else -> TransportType.NONE
+            }
             peers.forEachIndexed { idx, peer ->
                 if (peer.peerId == peerId) {
                     peers[idx] = peer.copy(transport = displayTransport)
@@ -171,11 +217,47 @@ class MesChatController(
             when (type) {
                 "announce" -> handleAnnounce(obj, fromPeerId)
                 "leave" -> handleLeave(obj, fromPeerId)
+                "fragment" -> handleFragment(obj, fromPeerId)
                 else -> handleChatMessage(obj, fromPeerId)
             }
         } catch (e: Exception) {
             Log.e(TAG, "onDataReceived parse error", e)
         }
+    }
+
+    /**
+     * 处理分片消息:收集分片,收齐后拼接为完整 JSON 并递归处理。
+     * 每次收到分片时顺带清理超时未收齐的分片组,防止内存泄漏。
+     */
+    private fun handleFragment(obj: JSONObject, fromPeerId: String) {
+        val fragId = obj.optString("fragId")
+        val total = obj.optInt("total")
+        val index = obj.optInt("index")
+        val chunk = obj.optString("chunk")
+        if (fragId.isBlank() || total <= 0 || index < 0 || index >= total) return
+
+        // 顺带清理超时分片(每次收分片时执行,无需独立定时器)
+        cleanupFragmentBuffers()
+
+        val buffer = fragmentBuffers.getOrPut(fragId) { FragmentBuffer(total) }
+        synchronized(buffer) {
+            if (buffer.chunks[index] == null) {
+                buffer.chunks[index] = chunk
+                buffer.received++
+            }
+            if (buffer.received < total) return
+
+            // 所有分片收齐,拼接完整 JSON
+            fragmentBuffers.remove(fragId)
+            val completeJson = buffer.chunks.filterNotNull().joinToString("")
+            onDataReceivedInternal(completeJson, fromPeerId)
+        }
+    }
+
+    /** 清理超时未收齐的分片组(在 heartbeat 或定期任务中调用) */
+    private fun cleanupFragmentBuffers() {
+        val now = System.currentTimeMillis()
+        fragmentBuffers.entries.removeAll { now - it.value.firstReceived > FRAGMENT_TIMEOUT_MS }
     }
 
     // ═══ Compose 可观察状态 ═══
@@ -193,10 +275,17 @@ class MesChatController(
     val transportStatus = mutableStateOf(TransportStatus(ble = true))
 
     /** BLE 通道是否已成功启动(独立于 peer 是否在线,用于自动降级判断与状态展示) */
+    private val nostrStarted = mutableStateOf(false)
     private val bleStarted = mutableStateOf(false)
 
     /** Wi-Fi Aware 通道是否已成功启动 */
     private val wifiStarted = mutableStateOf(false)
+
+    /** UDP 局域网通道是否已成功启动 */
+    private val udpStarted = mutableStateOf(false)
+
+    /** 当前聊天方式(用户手动选择),默认局域网 */
+    val currentMode = mutableStateOf(ChatMode.LOCAL)
 
     /** 已连接的 Mesh 节点 */
     val peers = mutableStateListOf<MeshPeer>()
@@ -214,6 +303,23 @@ class MesChatController(
     /** peerId -> nickname 映射 */
     private val peerNicknames = mutableMapOf<String, String>()
 
+    // ═══ 分片重组缓冲区 ═══
+    private data class FragmentBuffer(
+        val total: Int,
+        val chunks: Array<String?> = arrayOfNulls(total),
+        var received: Int = 0,
+        val firstReceived: Long = System.currentTimeMillis()
+    ) {
+        override fun equals(other: Any?) = this === other
+        override fun hashCode() = System.identityHashCode(this)
+    }
+    private val fragmentBuffers = java.util.concurrent.ConcurrentHashMap<String, FragmentBuffer>()
+
+    /** 分片发送用的共享线程池(避免每次新建 Thread) */
+    private val fragmentExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "meschat-fragment-sender").apply { isDaemon = true }
+    }
+
     // ════════════════════════════════════════
     //  生命周期
     // ════════════════════════════════════════
@@ -221,38 +327,119 @@ class MesChatController(
     /**
      * 启动传输层。
      *
-     * 自动降级策略(任务B):
-     * - 分别检查 BLE / Wi-Fi Aware 可用性,各自独立启动,互不影响
-     * - 任一通道预检失败都不弹错误(由 transport 层静默返回 false)
-     * - 仅当两个通道都启动失败时,才向用户提示"蓝牙和 Wi-Fi 均不可用"
-     * - 不再自动打开附近会话,默认显示会话列表页(由 UI 自行决定打开哪个会话)
+     * 默认仅启动 UDP 局域网通道(无需任何运行时权限,避免审核风险),
+     * BLE 与 Wi-Fi Aware 作为可选增强传输,由用户在节点面板主动开启
+     * ([enableExtraTransports]),开启时才请求蓝牙/位置权限。
      */
     fun start() {
         // 加入默认频道(用于接收该频道的广播消息),但不自动打开会话
         joinChannel(DEFAULT_CHANNEL)
 
-        // 自动降级:分别尝试启动 BLE 与 Wi-Fi Aware,预检失败不报错
-        val bleOk = bleTransport.start()
-        bleStarted.value = bleOk
-        Log.i(TAG, "BLE transport started=$bleOk")
+        // 默认仅启动 UDP(仅需 INTERNET/网络状态等普通权限)
+        val udpOk = udpTransport.start()
+        udpStarted.value = udpOk
+        Log.i(TAG, "UDP transport started=$udpOk")
 
-        val wifiOk = wifiTransport.start()
-        wifiStarted.value = wifiOk
-        Log.i(TAG, "Wi-Fi Aware transport started=$wifiOk")
-
-        if (!bleOk && !wifiOk) {
-            // 两个通道都不可用,给用户明确提示
-            errorEvent.value = "蓝牙与 Wi-Fi 均不可用,无法收发附近消息。请开启蓝牙或 Wi-Fi 后重试"
+        if (!udpOk) {
+            errorEvent.value = "局域网通道不可用,请确认已连接 Wi-Fi"
         }
 
         updateTransportStatus()
     }
 
+    /**
+     * 切换聊天方式:先关闭所有传输,再启动目标方式对应的传输。
+     *
+     * - LOCAL: 仅 UDP
+     * - BLE: 仅 BLE Mesh(需要蓝牙/位置权限,调用方先申请)
+     * - WIFI_AWARE: 仅 Wi-Fi Aware(需要位置权限,调用方先申请)
+     * - CLOUD: Nostr relay
+     *
+     * @param mode 目标聊天方式
+     * @return 是否成功启动
+     */
+    fun switchChatMode(mode: ChatMode): Boolean {
+        // 先关闭所有传输
+        bleTransport.stop()
+        wifiTransport.stop()
+        nostrTransport.stop()
+        udpTransport.stop()
+        bleStarted.value = false
+        wifiStarted.value = false
+        nostrStarted.value = false
+        udpStarted.value = false
+
+        // 清理所有 peer(切换方式后旧的 peer 不再可达)
+        peers.clear()
+        peerNicknames.clear()
+        peerTransportMap.clear()
+        // 清理分片缓冲
+        fragmentBuffers.clear()
+
+        val ok = when (mode) {
+            ChatMode.LOCAL -> {
+                val udpOk = udpTransport.start()
+                udpStarted.value = udpOk
+                if (!udpOk) errorEvent.value = "局域网通道不可用,请确认已连接 Wi-Fi"
+                udpOk
+            }
+            ChatMode.BLE -> {
+                val bleOk = bleTransport.start()
+                bleStarted.value = bleOk
+                if (!bleOk) errorEvent.value = "蓝牙不可用,请检查蓝牙是否开启"
+                bleOk
+            }
+            ChatMode.WIFI_AWARE -> {
+                val wifiOk = wifiTransport.start()
+                wifiStarted.value = wifiOk
+                if (!wifiOk) errorEvent.value = "Wi-Fi Aware 不可用,请检查 Wi-Fi 是否开启"
+                wifiOk
+            }
+            ChatMode.CLOUD -> {
+                val nostrOk = nostrTransport.start()
+                nostrStarted.value = nostrOk
+                if (nostrOk) {
+                    synchronized(joinedChannels) {
+                        joinedChannels.forEach { nostrTransport.joinChannel(it) }
+                    }
+                } else {
+                    errorEvent.value = "云端通道启动失败,请检查网络连接"
+                }
+                nostrOk
+            }
+        }
+
+        currentMode.value = mode
+        Log.i(TAG, "switchChatMode → $mode, success=$ok")
+        updateTransportStatus()
+        return ok
+    }
+
+    /**
+     * 当前模式下允许发送的最大文件大小(字节)。
+     * - LOCAL(UDP): 2MB(分片传输)
+     * - BLE: 2MB(BLE 带宽有限但分片可传)
+     * - WIFI_AWARE: 20MB(Wi-Fi Aware 带宽高,可传大文件)
+     * - CLOUD(Nostr): 50KB(relay 事件大小限制)
+     */
+    val maxFileSizeBytes: Int get() = when (currentMode.value) {
+        ChatMode.LOCAL -> 2 * 1024 * 1024
+        ChatMode.BLE -> 2 * 1024 * 1024
+        ChatMode.WIFI_AWARE -> 20 * 1024 * 1024
+        ChatMode.CLOUD -> 50 * 1024
+    }
+
     fun stop() {
         bleTransport.stop()
         wifiTransport.stop()
+        udpTransport.stop()
+        nostrTransport.stop()
         bleStarted.value = false
         wifiStarted.value = false
+        udpStarted.value = false
+        nostrStarted.value = false
+        fragmentExecutor.shutdownNow()
+        fragmentBuffers.clear()
         updateTransportStatus()
     }
 
@@ -293,6 +480,46 @@ class MesChatController(
         val msgType = runCatching { MesMessageType.valueOf(typeStr) }
             .getOrDefault(MesMessageType.TEXT)
 
+        // 解析附件数据(base64 → 保存临时文件)
+        var imagePath: String? = null
+        var voicePath: String? = null
+        var voiceDuration = 0
+        var fileName: String? = null
+        var fileSize: Long = 0
+        var filePath: String? = null
+
+        when (msgType) {
+            MesMessageType.IMAGE -> {
+                val imageData = obj.optString("imageData", "")
+                if (imageData.isNotEmpty()) {
+                    val bytes = android.util.Base64.decode(imageData, android.util.Base64.NO_WRAP)
+                    imagePath = saveTempFile(bytes, "img", "jpg")
+                    Log.d(TAG, "Received image: ${bytes.size}B saved to $imagePath")
+                }
+            }
+            MesMessageType.VOICE -> {
+                val voiceData = obj.optString("voiceData", "")
+                voiceDuration = obj.optInt("voiceDuration", 0)
+                if (voiceData.isNotEmpty()) {
+                    val bytes = android.util.Base64.decode(voiceData, android.util.Base64.NO_WRAP)
+                    voicePath = saveTempFile(bytes, "voice", "m4a")
+                    Log.d(TAG, "Received voice: ${bytes.size}B, ${voiceDuration}s saved to $voicePath")
+                }
+            }
+            MesMessageType.FILE -> {
+                fileName = obj.optString("fileName", "未知文件")
+                fileSize = obj.optLong("fileSize", 0)
+                val fileData = obj.optString("fileData", "")
+                if (fileData.isNotEmpty()) {
+                    val ext = fileName!!.substringAfterLast('.', "bin")
+                    val bytes = android.util.Base64.decode(fileData, android.util.Base64.NO_WRAP)
+                    filePath = saveTempFile(bytes, "file", ext)
+                    Log.d(TAG, "Received file: $fileName ${bytes.size}B")
+                }
+            }
+            else -> {}
+        }
+
         val msg = MesMessage(
             id = msgId,
             sender = sender,
@@ -305,6 +532,12 @@ class MesChatController(
             originalSender = originalSender,
             channel = channel,
             isPrivate = isPrivate,
+            imagePath = imagePath,
+            voicePath = voicePath,
+            voiceDuration = voiceDuration,
+            fileName = fileName,
+            fileSize = fileSize,
+            filePath = filePath,
             deliveryState = DeliveryState.DELIVERED
         )
 
@@ -397,18 +630,21 @@ class MesChatController(
 
         // 发送
         if (isChannel) {
-            // 频道广播:双通道同时发送,覆盖更多 peer
+            // 频道广播:三通道同时发送,覆盖更多 peer
             bleTransport.sendMessage(json, targetPeerId = null)
             wifiTransport.sendMessage(json, targetPeerId = null)
+            udpTransport.sendMessage(json, targetPeerId = null)
         } else {
-            // 私聊单播:走对端所在通道;若未知则双通道都发
+            // 私聊单播:走对端所在通道;若未知则三通道都发
             val set = peerTransportMap[targetPeerId]
             if (set == null || set.isEmpty()) {
                 bleTransport.sendMessage(json, targetPeerId = targetPeerId)
                 wifiTransport.sendMessage(json, targetPeerId = targetPeerId)
+                udpTransport.sendMessage(json, targetPeerId = targetPeerId)
             } else {
                 if (TransportType.BLE in set) bleTransport.sendMessage(json, targetPeerId = targetPeerId)
                 if (TransportType.WIFI_AWARE in set) wifiTransport.sendMessage(json, targetPeerId = targetPeerId)
+                if (TransportType.UDP in set) udpTransport.sendMessage(json, targetPeerId = targetPeerId)
             }
         }
 
@@ -424,8 +660,229 @@ class MesChatController(
             put("nickname", myNickname)
             put("channels", org.json.JSONArray(joinedChannels.toList()))
         }.toString()
-        bleTransport.sendMessage(json, targetPeerId)
-        wifiTransport.sendMessage(json, targetPeerId)
+        if (bleStarted.value) bleTransport.sendMessage(json, targetPeerId)
+        if (wifiStarted.value) wifiTransport.sendMessage(json, targetPeerId)
+        if (udpStarted.value) udpTransport.sendMessage(json, targetPeerId)
+        if (nostrStarted.value) nostrTransport.sendMessage(json, targetPeerId)
+    }
+
+    // ════════════════════════════════════════
+    //  分片传输 + 附件发送
+    // ════════════════════════════════════════
+
+    /** 向所有已启动的传输通道发送(私聊走对端通道) */
+    private fun sendToAllTransports(json: String, targetPeerId: String?) {
+        if (targetPeerId == null) {
+            // 频道广播:所有已启动的通道都发
+            if (bleStarted.value) bleTransport.sendMessage(json, null)
+            if (wifiStarted.value) wifiTransport.sendMessage(json, null)
+            if (udpStarted.value) udpTransport.sendMessage(json, null)
+            if (nostrStarted.value) nostrTransport.sendMessage(json, null)
+        } else {
+            val set = peerTransportMap[targetPeerId]
+            if (set.isNullOrEmpty()) {
+                // 未知对端通道,所有通道都发
+                if (bleStarted.value) bleTransport.sendMessage(json, targetPeerId)
+                if (wifiStarted.value) wifiTransport.sendMessage(json, targetPeerId)
+                if (udpStarted.value) udpTransport.sendMessage(json, targetPeerId)
+                if (nostrStarted.value) nostrTransport.sendMessage(json, targetPeerId)
+            } else {
+                if (TransportType.BLE in set) bleTransport.sendMessage(json, targetPeerId)
+                if (TransportType.WIFI_AWARE in set) wifiTransport.sendMessage(json, targetPeerId)
+                if (TransportType.UDP in set) udpTransport.sendMessage(json, targetPeerId)
+                if (TransportType.NOSTR in set) nostrTransport.sendMessage(json, targetPeerId)
+            }
+        }
+    }
+
+    /**
+     * 分片发送大消息(图片/语音/文件的 base64 数据)。
+     * 小消息(≤ FRAGMENT_SIZE)直接发送,大消息自动分片。
+     * 分片间加 20ms 延迟避免 UDP 拥塞。
+     */
+    fun sendFragmented(json: String, targetPeerId: String?) {
+        val data = json.toByteArray(Charsets.UTF_8)
+        if (data.size <= FRAGMENT_SIZE) {
+            sendToAllTransports(json, targetPeerId)
+            return
+        }
+        val total = (data.size + FRAGMENT_SIZE - 1) / FRAGMENT_SIZE
+        val fragId = UUID.randomUUID().toString()
+        Log.i(TAG, "sendFragmented: ${data.size}B → $total fragments, fragId=$fragId")
+        fragmentExecutor.execute {
+            for (i in 0 until total) {
+                val start = i * FRAGMENT_SIZE
+                val end = minOf(start + FRAGMENT_SIZE, data.size)
+                val chunk = String(data, start, end - start, Charsets.UTF_8)
+                val fragJson = JSONObject().apply {
+                    put("_type", "fragment")
+                    put("fragId", fragId)
+                    put("total", total)
+                    put("index", i)
+                    put("chunk", chunk)
+                }.toString()
+                sendToAllTransports(fragJson, targetPeerId)
+                if (i < total - 1) {
+                    try { Thread.sleep(20) } catch (_: InterruptedException) { break }
+                }
+            }
+        }
+    }
+
+    /**
+     * 发送图片消息。
+     * @param imageBytes 图片字节数据(已压缩)
+     */
+    fun sendImage(imageBytes: ByteArray) {
+        val convId = currentConversationId.value ?: return
+        val conv = conversations.find { it.id == convId } ?: return
+        val isChannel = conv.isChannel
+        val channel = if (isChannel) convId.removePrefix("#") else null
+        val targetPeerId = if (!isChannel) convId else null
+
+        val localPath = saveTempFile(imageBytes, "img", "jpg")
+        val base64 = android.util.Base64.encodeToString(imageBytes, android.util.Base64.NO_WRAP)
+
+        val msg = MesMessage(
+            id = UUID.randomUUID().toString(),
+            sender = myNickname,
+            senderPeerId = myPeerId,
+            content = "[图片]",
+            type = MesMessageType.IMAGE,
+            timestamp = System.currentTimeMillis(),
+            isMine = true,
+            channel = channel,
+            isPrivate = !isChannel,
+            imagePath = localPath,
+            deliveryState = DeliveryState.SENDING
+        )
+
+        val json = JSONObject().apply {
+            put("id", msg.id)
+            put("sender", msg.sender)
+            put("senderPeerId", msg.senderPeerId)
+            put("content", msg.content)
+            put("type", msg.type.name)
+            put("timestamp", msg.timestamp)
+            channel?.let { put("channel", it) }
+            put("isPrivate", msg.isPrivate)
+            targetPeerId?.let { put("recipientPeerId", it) }
+            put("imageData", base64)
+        }.toString()
+
+        sendFragmented(json, targetPeerId)
+        addMessageToConversation(convId, msg)
+        updateConversationPreview(convId, "[图片]", msg.timestamp, isChannel)
+    }
+
+    /**
+     * 发送语音消息。
+     * @param voiceBytes 语音文件字节数据
+     * @param durationSec 语音时长(秒)
+     */
+    fun sendVoice(voiceBytes: ByteArray, durationSec: Int) {
+        val convId = currentConversationId.value ?: return
+        val conv = conversations.find { it.id == convId } ?: return
+        val isChannel = conv.isChannel
+        val channel = if (isChannel) convId.removePrefix("#") else null
+        val targetPeerId = if (!isChannel) convId else null
+
+        val localPath = saveTempFile(voiceBytes, "voice", "m4a")
+        val base64 = android.util.Base64.encodeToString(voiceBytes, android.util.Base64.NO_WRAP)
+
+        val msg = MesMessage(
+            id = UUID.randomUUID().toString(),
+            sender = myNickname,
+            senderPeerId = myPeerId,
+            content = "[语音]",
+            type = MesMessageType.VOICE,
+            timestamp = System.currentTimeMillis(),
+            isMine = true,
+            channel = channel,
+            isPrivate = !isChannel,
+            voicePath = localPath,
+            voiceDuration = durationSec,
+            deliveryState = DeliveryState.SENDING
+        )
+
+        val json = JSONObject().apply {
+            put("id", msg.id)
+            put("sender", msg.sender)
+            put("senderPeerId", msg.senderPeerId)
+            put("content", msg.content)
+            put("type", msg.type.name)
+            put("timestamp", msg.timestamp)
+            channel?.let { put("channel", it) }
+            put("isPrivate", msg.isPrivate)
+            targetPeerId?.let { put("recipientPeerId", it) }
+            put("voiceData", base64)
+            put("voiceDuration", durationSec)
+        }.toString()
+
+        sendFragmented(json, targetPeerId)
+        addMessageToConversation(convId, msg)
+        updateConversationPreview(convId, "[语音]", msg.timestamp, isChannel)
+    }
+
+    /**
+     * 发送文件消息。
+     * @param fileName 文件名
+     * @param fileBytes 文件字节数据
+     */
+    fun sendFile(fileName: String, fileBytes: ByteArray) {
+        val convId = currentConversationId.value ?: return
+        val conv = conversations.find { it.id == convId } ?: return
+        val isChannel = conv.isChannel
+        val channel = if (isChannel) convId.removePrefix("#") else null
+        val targetPeerId = if (!isChannel) convId else null
+
+        val ext = fileName.substringAfterLast('.', "bin")
+        val localPath = saveTempFile(fileBytes, "file", ext)
+        val base64 = android.util.Base64.encodeToString(fileBytes, android.util.Base64.NO_WRAP)
+
+        val msg = MesMessage(
+            id = UUID.randomUUID().toString(),
+            sender = myNickname,
+            senderPeerId = myPeerId,
+            content = "[文件] $fileName",
+            type = MesMessageType.FILE,
+            timestamp = System.currentTimeMillis(),
+            isMine = true,
+            channel = channel,
+            isPrivate = !isChannel,
+            fileName = fileName,
+            fileSize = fileBytes.size.toLong(),
+            filePath = localPath,
+            deliveryState = DeliveryState.SENDING
+        )
+
+        val json = JSONObject().apply {
+            put("id", msg.id)
+            put("sender", msg.sender)
+            put("senderPeerId", msg.senderPeerId)
+            put("content", msg.content)
+            put("type", msg.type.name)
+            put("timestamp", msg.timestamp)
+            channel?.let { put("channel", it) }
+            put("isPrivate", msg.isPrivate)
+            targetPeerId?.let { put("recipientPeerId", it) }
+            put("fileName", fileName)
+            put("fileSize", fileBytes.size.toLong())
+            put("fileData", base64)
+        }.toString()
+
+        sendFragmented(json, targetPeerId)
+        addMessageToConversation(convId, msg)
+        updateConversationPreview(convId, "[文件] $fileName", msg.timestamp, isChannel)
+    }
+
+    /** 保存附件到临时文件,返回绝对路径 */
+    private fun saveTempFile(bytes: ByteArray, prefix: String, ext: String): String {
+        val dir = java.io.File(context.cacheDir, "meschat_attachments")
+        if (!dir.exists()) dir.mkdirs()
+        val file = java.io.File(dir, "${prefix}_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(8)}.$ext")
+        file.writeBytes(bytes)
+        return file.absolutePath
     }
 
     // ════════════════════════════════════════
@@ -512,6 +969,7 @@ class MesChatController(
                 }.toString()
                 bleTransport.sendMessage(json, if (isChannel) null else convId)
                 wifiTransport.sendMessage(json, if (isChannel) null else convId)
+                udpTransport.sendMessage(json, if (isChannel) null else convId)
                 addMessageToConversation(convId, msg)
                 return true
             }
@@ -558,6 +1016,8 @@ class MesChatController(
             messagesByConversation.add(convId to mutableListOf())
         }
         joinedChannels.add(channel)
+        // Nostr 云端订阅该频道
+        if (nostrStarted.value) nostrTransport.joinChannel(channel)
     }
 
     /** 离开频道 */
@@ -566,6 +1026,7 @@ class MesChatController(
         conversations.removeAll { it.id == convId }
         messagesByConversation.removeAll { it.first == convId }
         joinedChannels.remove(channel)
+        if (nostrStarted.value) nostrTransport.leaveChannel(channel)
         if (currentConversationId.value == convId) {
             currentConversationId.value = null
         }
@@ -624,6 +1085,7 @@ class MesChatController(
         }.toString()
         bleTransport.sendMessage(json, targetPeerId)
         wifiTransport.sendMessage(json, targetPeerId)
+        udpTransport.sendMessage(json, targetPeerId)
         addMessageToConversation(targetPeerId, msg)
         updateConversationPreview(targetPeerId, content, msg.timestamp, false)
     }
@@ -637,6 +1099,10 @@ class MesChatController(
         val pair = messagesByConversation.find { it.first == convId }
         if (pair != null) {
             pair.second.add(msg)
+            // 超出上限时裁剪旧消息(防止内存无限增长)
+            if (pair.second.size > MAX_MESSAGES_PER_CONVERSATION) {
+                pair.second.subList(0, pair.second.size - MAX_MESSAGES_PER_CONVERSATION).clear()
+            }
             // 触发 Compose 重组:替换 list 引用
             val idx = messagesByConversation.indexOf(pair)
             messagesByConversation[idx] = convId to pair.second.toMutableList()
@@ -680,7 +1146,8 @@ class MesChatController(
         transportStatus.value = TransportStatus(
             ble = bleStarted.value,
             wifiAware = wifiStarted.value,
-            nostr = false,
+            udp = udpStarted.value,
+            nostr = nostrStarted.value,
             peerCount = peers.size
         )
     }
@@ -760,6 +1227,7 @@ class MesChatController(
         // 频道广播:走所有已启动的通道
         bleTransport.sendMessage(json, targetPeerId = null)
         wifiTransport.sendMessage(json, targetPeerId = null)
+        udpTransport.sendMessage(json, targetPeerId = null)
 
         addMessageToConversation(convId, msg)
         updateConversationPreview(convId, text, msg.timestamp, true)

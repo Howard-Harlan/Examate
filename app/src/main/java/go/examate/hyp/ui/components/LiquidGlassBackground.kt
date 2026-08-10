@@ -24,13 +24,14 @@ fun LiquidGlassBackground(
     content: @Composable () -> Unit
 ) {
     val bgBackdrop = rememberLayerBackdrop()
+    val bgColor = BgPrimary  // 在 @Composable 上下文读取,传入 drawBehind
     Box(modifier.fillMaxSize()) {
         // 背景层,被 bgBackdrop 捕获
         Box(
             Modifier
                 .fillMaxSize()
                 .drawBehind {
-                    drawRect(BgPrimary)
+                    drawRect(bgColor)
                     drawRect(
                         Brush.verticalGradient(
                             0f to Color.White.copy(0.04f),

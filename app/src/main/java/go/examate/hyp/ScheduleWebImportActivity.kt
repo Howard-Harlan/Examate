@@ -290,9 +290,10 @@ private fun WebImportScreen(
                                 (context as ScheduleWebImportActivity).AndroidBridge(),
                                 "AndroidBridge"
                             )
-                            loadUrl(url)
                             webViewRef = this
                             (context as ScheduleWebImportActivity).webView = this
+                            // 先挂载到窗口后再加载(与 B站登录路径一致,避免未 attach 时加载导致不渲染)
+                            post { if (url.isNotEmpty()) loadUrl(url) }
                         }
                     },
                     modifier = Modifier.fillMaxSize()

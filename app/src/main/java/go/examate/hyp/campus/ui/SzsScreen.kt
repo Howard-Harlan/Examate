@@ -1,6 +1,7 @@
 package go.examate.hyp.campus.ui
 
-import androidx.compose.foundation.background
+import android.content.Intent
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -27,6 +29,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import go.examate.hyp.WebViewActivity
 import go.examate.hyp.campus.CampusException
 import go.examate.hyp.campus.CampusRepository
 import go.examate.hyp.campus.model.SzsScoreItem
@@ -37,17 +40,125 @@ import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
+import go.examate.hyp.util.ToastUtil
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 智慧思政页面 — 综合测评成绩明细。
+ * 智慧思政页面 — 功能列表入口。
  *
- * 从 jgf.chnu.edu.cn/hbsf-zhsz-plat/ChangeScore/List 获取成绩数据,原生列表展示。
+ * 子功能:
+ * 1. 综合测评成绩明细(jgf 系统,已验证可用)
+ * 2. 综测测评(hbsz-h5 系统,对应 oshall/hbsz-h5/evaluating)
+ * 3. 离返校登记(hbsz-h5,对应 ?path=holidayLeave)
+ * 4. 寒暑假留校登记(hbsz-h5,对应 ?path=stayInSchool)
+ */
+@Composable
+fun SzsScreen(
+    onBack: () -> Unit,
+    onScore: () -> Unit,
+    onEvaluating: () -> Unit = {},
+    onHolidayLeave: () -> Unit = {},
+    onStayInSchool: () -> Unit = {}
+) {
+    val context = LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var loadingToken by remember { androidx.compose.runtime.mutableStateOf(false) }
+
+    /** 打开 hbsz-h5 页面:先获取 JWT token,再通过 WebView 打开(双保险认证) */
+    fun openHbszPage(url: String, title: String) {
+        val repo = CampusRepository.getInstance()
+        if (!repo.isLoggedIn) {
+            ToastUtil.show(context, "请先登录校园服务")
+            return
+        }
+        if (loadingToken) return
+        loadingToken = true
+        scope.launch {
+            // 获取 JWT token(智慧思政 H5 基于 Jeecg-Boot,需要 X-Access-Token)
+            val token = repo.getHbszToken()
+            // 同时注入 CAS cookie(双保险:cookie 用于 CAS SSO 跳转,token 用于 H5 API 调用)
+            repo.injectCookiesToWebView()
+            loadingToken = false
+            // 直接打开目标 H5 URL(不走 CAS service 中转,避免重定向链断裂)
+            // token 已通过 WebView 注入到 localStorage,H5 前端可直接读取
+            context.startActivity(Intent(context, WebViewActivity::class.java).apply {
+                putExtra(WebViewActivity.EXTRA_URL, url)
+                putExtra(WebViewActivity.EXTRA_TITLE, title)
+                if (!token.isNullOrEmpty()) {
+                    putExtra(WebViewActivity.EXTRA_INJECT_TOKEN, token)
+                    putExtra(WebViewActivity.EXTRA_INJECT_HOST, "oshall.chnu.edu.cn")
+                }
+            })
+        }
+    }
+
+    CampusPageScaffold(title = "智慧思政", onBack = onBack) {
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            SzsFeatureCard(
+                title = "综合测评成绩",
+                subtitle = "德育 / 专业 / 体育等成绩明细",
+                onClick = onScore
+            )
+            SzsFeatureCard(
+                title = "综测测评",
+                subtitle = "综测批次及得分查询",
+                onClick = {
+                    openHbszPage("https://oshall.chnu.edu.cn/hbsz-h5/evaluating", "综测测评")
+                }
+            )
+            SzsFeatureCard(
+                title = "离返校登记",
+                subtitle = "假期离校 / 返校登记记录",
+                onClick = {
+                    openHbszPage("https://oshall.chnu.edu.cn/hbsz-h5?path=holidayLeave", "离返校登记")
+                }
+            )
+            SzsFeatureCard(
+                title = "寒暑假留校登记",
+                subtitle = "留校申请及审批记录",
+                onClick = {
+                    openHbszPage("https://oshall.chnu.edu.cn/hbsz-h5?path=stayInSchool", "留校登记")
+                }
+            )
+        }
+    }
+}
+
+/** 智慧思政功能入口卡片 */
+@Composable
+private fun SzsFeatureCard(title: String, subtitle: String, onClick: () -> Unit) {
+    FrostedGlassCard(modifier = Modifier.fillMaxWidth().clickable { onClick() }) {
+        Row(
+            Modifier.fillMaxWidth().padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(title, color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                if (subtitle.isNotEmpty()) {
+                    Spacer(Modifier.height(3.dp))
+                    Text(subtitle, color = TextHint, fontSize = 12.sp)
+                }
+            }
+            Text("›", color = TextHint, fontSize = 22.sp, fontWeight = FontWeight.Light)
+        }
+    }
+}
+
+// ════════════════════════════════════════
+//  综合测评成绩明细(jgf 系统,原有实现)
+// ════════════════════════════════════════
+
+/**
+ * 综合测评成绩明细页面(jgf 系统)。
  * 数据包含:德育/专业/体育成绩,劳动教育,体质等多项指标。
  */
 @Composable
-fun SzsScreen(onBack: () -> Unit) {
+fun SzsScoreScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val prefs = remember { PrefsManager.getInstance(context) }
     val repo = remember { CampusRepository.getInstance() }
@@ -70,7 +181,7 @@ fun SzsScreen(onBack: () -> Unit) {
         loading = false
     }
 
-    CampusPageScaffold(title = "智慧思政", onBack = onBack) {
+    CampusPageScaffold(title = "综合测评成绩", onBack = onBack) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             if (loading) {
                 LoadingBlock("正在查询综合测评成绩...")
@@ -137,3 +248,8 @@ private fun ScoreCell(label: String, value: String, modifier: Modifier = Modifie
         Text(label, color = TextSecondary, fontSize = 11.sp)
     }
 }
+
+// ════════════════════════════════════════
+//  综测测评/离返校/留校登记 — 改用 WebView 打开(注入 CAS cookie 实现 SSO)
+//  原 native 实现已移除,避免 API 路径猜测导致的登录失败问题
+// ════════════════════════════════════════

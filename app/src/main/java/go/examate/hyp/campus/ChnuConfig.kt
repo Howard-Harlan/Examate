@@ -28,6 +28,10 @@ object ChnuConfig {
     const val SZS_BASE_URL = "http://jgf.chnu.edu.cn"
     /** 智慧校园门户(oshall) — 班级通讯录等 API */
     const val ZHXY_API_BASE = "https://oshall.chnu.edu.cn/apiZhxy"
+    /** 智慧思政 H5 应用(oshall/hbsz-h5) — 综测测评/离返校/留校登记 */
+    const val HBSZ_H5_BASE = "https://oshall.chnu.edu.cn/hbsz-h5"
+    /** hbsz-h5 后端 API(Jeecg-Boot 框架,与 oshall 同套 CAS 认证) */
+    const val HBSZ_API_BASE = "https://oshall.chnu.edu.cn/apiZhxy/hbsz"
     const val TIMEOUT_SECONDS = 20L
 
     /** 默认 User-Agent(Chrome) */
@@ -84,6 +88,20 @@ class SimpleCookieJar : CookieJar {
             val now = System.currentTimeMillis()
             return list.filter { it.expiresAt >= now }
         }
+    }
+
+    /** 获取指定 host 的所有未过期 cookie(供 WebView 注入 CAS 登录态) */
+    fun getCookiesForHost(host: String): List<Cookie> {
+        val list = cookies[host] ?: return emptyList()
+        synchronized(list) {
+            val now = System.currentTimeMillis()
+            return list.filter { it.expiresAt >= now }
+        }
+    }
+
+    /** 获取所有未过期 cookie */
+    fun getAllCookies(): List<Cookie> {
+        return cookies.keys.flatMap { getCookiesForHost(it) }
     }
 }
 

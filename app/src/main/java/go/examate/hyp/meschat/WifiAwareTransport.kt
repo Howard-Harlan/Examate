@@ -83,7 +83,7 @@ class WifiAwareTransport(
     private val reassemblyTimeoutMs = 30_000L
 
     /** 单线程发送执行器,保证消息按序提交 */
-    private val sendExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+    private var sendExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
         Thread(r, "WifiAwareTransport-sender").apply { isDaemon = true }
     }
 
@@ -123,6 +123,12 @@ class WifiAwareTransport(
         if (!hasPermissions()) return false
         if (awareManager == null) return false
         if (!awareManager.isAvailable) return false
+        // 重建发送执行器(上次 stop 可能已 shutdown)
+        if (sendExecutor.isShutdown) {
+            sendExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+                Thread(r, "WifiAwareTransport-sender").apply { isDaemon = true }
+            }
+        }
         isRunning = true
         attach()
         heartbeatHandler.postDelayed(heartbeatRunnable, HEARTBEAT_INTERVAL_MS)

@@ -35,6 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Icon
@@ -44,6 +45,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -75,6 +77,8 @@ import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.CardBg
+import go.examate.hyp.ui.theme.ChipBg
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.ScheduleCellBg
@@ -84,22 +88,22 @@ import java.time.LocalTime
 import java.time.format.TextStyle as JavaTextStyle
 
 // ════════════════════════════════════════
-//  日视图:某一天的课程 + 代办
+//  日视图:某一天的课程 + 待办
 // ════════════════════════════════════════
 
 /**
- * 日视图:显示某一天的课程和代办事项
+ * 日视图:显示某一天的课程和待办事项
  *
  * - 日期导航已移至主页面顶栏(<> 加减按钮)
  * - 课程区:当天所有课程(按节次顺序),已结束的置灰
- * - 代办区:当天所有代办,可勾选完成;空状态时点击提示卡片即可添加
+ * - 待办区:当天所有待办,可勾选完成;空状态时点击提示卡片即可添加
  *
  * @param date 显示的日期
  * @param entries 当前课表所有课程(内部按日期/周次过滤)
- * @param todos 当前课表所有代办(内部按日期过滤)
- * @param onAddTodo 添加代办回调
- * @param onToggleTodo 切换代办完成状态
- * @param onDeleteTodo 删除代办
+ * @param todos 当前课表所有待办(内部按日期过滤)
+ * @param onAddTodo 添加待办回调
+ * @param onToggleTodo 切换待办完成状态
+ * @param onDeleteTodo 删除待办
  * @param onCourseClick 点击课程(进入编辑)
  */
 @Composable
@@ -112,6 +116,7 @@ internal fun DayScheduleView(
     onToggleTodo: (String) -> Unit,
     onDeleteTodo: (String) -> Unit,
     onCourseClick: (ScheduleEntry) -> Unit,
+    onOpenAllTodos: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val today = LocalDate.now()
@@ -132,13 +137,13 @@ internal fun DayScheduleView(
             .sortedBy { it.startSection }
     }
 
-    // 当天的代办(按时间排序,无时间的排在最后)
+    // 当天的待办(按时间排序,无时间的排在最后)
     val dayTodos = remember(todos, date) {
         todos.filter { it.date == date.toString() }
             .sortedWith(compareBy<ScheduleTodo> { it.done }.thenBy { it.time.ifBlank { "99:99" } })
     }
 
-    // 添加代办弹窗
+    // 添加待办弹窗
     var showAddTodoDialog by remember { mutableStateOf(false) }
     var newTodoTitle by remember { mutableStateOf("") }
     // 时间用 TextFieldValue 以便控制光标位置(避免格式化后输入顺序错乱)
@@ -231,9 +236,9 @@ internal fun DayScheduleView(
 
             Spacer(Modifier.height(16.dp))
 
-            // ── 代办区 ──
+            // ── 待办区 ──
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("代办事项", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                Text("待办事项", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium,
                     modifier = Modifier.weight(1f))
                 // 完成进度:已完成数随勾选实时变化
                 val doneCount = dayTodos.count { it.done }
@@ -243,10 +248,27 @@ internal fun DayScheduleView(
                     fontSize = 11.sp
                 )
                 Spacer(Modifier.width(6.dp))
-                // 添加代办按钮(移至提示位置,替代原右下角悬浮按钮)
+                // 全部待办入口(跳转独立管理页)
+                Row(
+                    Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { onOpenAllTodos() }
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("全部", color = Primary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = Primary,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+                Spacer(Modifier.width(4.dp))
+                // 添加待办按钮
                 LiquidGlassIconButton(
                     icon = Icons.Filled.Add,
-                    contentDescription = "添加代办",
+                    contentDescription = "添加待办",
                     onClick = {
                         newTodoTitle = ""; newTodoTime = TextFieldValue("")
                         showAddTodoDialog = true
@@ -270,14 +292,14 @@ internal fun DayScheduleView(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text("+ ", color = Primary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                        Text("添加代办", color = Primary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                        Text("添加待办", color = Primary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                     }
                 }
             } else {
                 dayTodos.forEach { todo ->
                     // key 保证列表重排(完成后排到底部)时动画正确关联到对应条目
                     key(todo.id) {
-                        // 新增/删除代办时的淡入淡出 + 展开收起动画
+                        // 新增/删除待办时的淡入淡出 + 展开收起动画
                         AnimatedVisibility(
                             visible = true,
                             enter = fadeIn(tween(250)) + expandVertically(tween(250)),
@@ -298,22 +320,23 @@ internal fun DayScheduleView(
         }
     }
 
-    // 添加代办弹窗
+    // 添加待办弹窗(借鉴 Cresto:标题 + 时间 + 优先级 + 关联节次)
+    var newTodoPriority by remember { mutableIntStateOf(0) }
     if (showAddTodoDialog) {
         Dialog(onDismissRequest = { showAddTodoDialog = false }) {
             Column(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
-                    .background(Color.White).padding(20.dp)
+                    .background(CardBg).padding(20.dp)
             ) {
                 Text(
-                    "添加代办 · ${date.monthValue}月${date.dayOfMonth}日",
+                    "添加待办 · ${date.monthValue}月${date.dayOfMonth}日",
                     color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold
                 )
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
                     value = newTodoTitle,
                     onValueChange = { newTodoTitle = it },
-                    label = { Text("代办内容", color = TextHint, fontSize = 12.sp) },
+                    label = { Text("待办内容", color = TextHint, fontSize = 12.sp) },
                     singleLine = true,
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -338,7 +361,7 @@ internal fun DayScheduleView(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth()
                 )
-                // 快捷选择节次:点击即把时间设为该节课的上课时间,便于"在某个时间段添加代办"
+                // 快捷选择节次:点击即把时间设为该节课的上课时间,便于"在某个时间段添加待办"
                 if (dayCourses.isNotEmpty()) {
                     Spacer(Modifier.height(10.dp))
                     Text("关联节次(可选)", color = TextHint, fontSize = 12.sp)
@@ -354,7 +377,7 @@ internal fun DayScheduleView(
                                 Box(
                                     Modifier
                                         .clip(RoundedCornerShape(8.dp))
-                                        .background(if (selected) Primary else Color(0xFFEEF2FF))
+                                        .background(if (selected) Primary else ChipBg)
                                         .clickable { newTodoTime = TextFieldValue(startT, TextRange(startT.length)) }
                                         .padding(horizontal = 10.dp, vertical = 6.dp)
                                 ) {
@@ -365,6 +388,42 @@ internal fun DayScheduleView(
                                     )
                                 }
                             }
+                        }
+                    }
+                }
+                // 优先级选择(借鉴 Cresto):无/低/中/高
+                Spacer(Modifier.height(12.dp))
+                Text("优先级", color = TextHint, fontSize = 12.sp)
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    val opts = listOf(0 to "无", 1 to "低", 2 to "中", 3 to "高")
+                    val colors = listOf(
+                        Color(0xFF9CA3AF), Color(0xFF60A5FA),
+                        Color(0xFFFBBF24), Color(0xFFEF4444)
+                    )
+                    opts.forEach { (p, label) ->
+                        val sel = newTodoPriority == p
+                        Row(
+                            Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (sel) colors[p].copy(0.12f) else Color.Transparent)
+                                .border(
+                                    1.dp,
+                                    if (sel) colors[p] else TextHint.copy(0.2f),
+                                    RoundedCornerShape(8.dp)
+                                )
+                                .clickable { newTodoPriority = p }
+                                .padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Box(Modifier.size(7.dp).clip(CircleShape).background(colors[p]))
+                            Text(
+                                label,
+                                color = if (sel) colors[p] else TextHint,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
                         }
                     }
                 }
@@ -382,10 +441,12 @@ internal fun DayScheduleView(
                                     id = "todo_${System.currentTimeMillis()}",
                                     title = newTodoTitle.trim(),
                                     date = date.toString(),
-                                    time = newTodoTime.text.trim()
+                                    time = newTodoTime.text.trim(),
+                                    priority = newTodoPriority
                                 ))
                             }
                             showAddTodoDialog = false
+                            newTodoPriority = 0
                         },
                         style = ButtonStyle.White, height = 40.dp,
                         modifier = Modifier.weight(1f)
@@ -397,7 +458,7 @@ internal fun DayScheduleView(
 }
 
 /**
- * 代办事项条目(带完成动画)
+ * 待办事项条目(带完成动画)
  *
  * 动画设计:
  * - 勾选圆圈:背景色渐变 + 勾号缩放弹出(spring 回弹)
@@ -505,7 +566,7 @@ private fun TaskCheckbox(checked: Boolean, onToggle: () -> Unit) {
             Modifier.size(22.dp)
                 .graphicsLayer { scaleX = pressScale; scaleY = pressScale }
                 .clip(RoundedCornerShape(6.dp))
-                .background(Color.White)
+                .background(CardBg)
                 .border(2.dp, borderColor, RoundedCornerShape(6.dp)),
             contentAlignment = Alignment.Center
         ) {

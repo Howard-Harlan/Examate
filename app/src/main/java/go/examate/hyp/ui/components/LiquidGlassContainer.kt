@@ -66,6 +66,9 @@ import com.kyant.shapes.Capsule
 import go.examate.hyp.R
 import go.examate.hyp.ui.components.glass.DampedDragAnimation
 import go.examate.hyp.ui.components.glass.InteractiveHighlight
+import go.examate.hyp.ui.theme.AccentBlue
+import go.examate.hyp.ui.theme.CardBg
+import go.examate.hyp.ui.theme.TextHint
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
@@ -94,9 +97,9 @@ fun LiquidGlassContainer(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
-    val accentColor = Color(0xFF0088FF)
-    val containerColor = Color(0xFFFAFAFA).copy(0.4f)
-    val unselectedColor = Color(0xFF9CA3AF)
+    val accentColor = AccentBlue
+    val containerColor = CardBg.copy(0.4f)
+    val unselectedColor = TextHint
     val tabsCount = 3
 
     val bgBackdrop = rememberLayerBackdrop()
@@ -149,8 +152,8 @@ private fun LiquidBottomTabs(
     modifier: Modifier = Modifier,
     content: @Composable RowScope.() -> Unit
 ) {
-    val accentColor = Color(0xFF0088FF)
-    val containerColor = Color(0xFFFAFAFA).copy(0.4f)
+    val accentColor = AccentBlue
+    val containerColor = CardBg.copy(0.4f)
 
     val tabsBackdrop = rememberLayerBackdrop()
 

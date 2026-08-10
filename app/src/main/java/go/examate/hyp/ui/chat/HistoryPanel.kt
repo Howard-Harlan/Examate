@@ -48,6 +48,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import go.examate.hyp.ui.theme.AccentBlue
+import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.util.ChatSession
@@ -84,7 +85,7 @@ fun HistoryPanel(
                 .fillMaxHeight(heightFraction.value)
                 .shadow(elevation = 12.dp, shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
                 .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
-                .background(Color.White)
+                .background(CardBg)
                 .clickable(
                     interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                     indication = null, onClick = {}

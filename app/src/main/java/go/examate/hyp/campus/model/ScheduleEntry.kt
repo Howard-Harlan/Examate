@@ -56,7 +56,9 @@ data class ScheduleTodo(
     val title: String,
     val date: String,
     val time: String = "",
-    val done: Boolean = false
+    val done: Boolean = false,
+    /** 优先级:0=无,1=低,2=中,3=高(影响排序与标识色) */
+    val priority: Int = 0
 )
 
 // ════════════════════════════════════════
@@ -282,6 +284,7 @@ object ScheduleStorage {
                         put("date", t.date)
                         put("time", t.time)
                         put("done", t.done)
+                        put("priority", t.priority)
                     })
                 }
             })
@@ -332,7 +335,8 @@ object ScheduleStorage {
                     title = o.optString("title"),
                     date = date,
                     time = o.optString("time"),
-                    done = o.optBoolean("done")
+                    done = o.optBoolean("done"),
+                    priority = o.optInt("priority", 0)
                 )
             }
         } catch (_: Exception) { emptyList() }

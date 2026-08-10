@@ -33,6 +33,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,7 +51,11 @@ import go.examate.hyp.downloader.DownloadCenter
 import go.examate.hyp.downloader.DownloadSettings
 import go.examate.hyp.downloader.DownloadStatus
 import go.examate.hyp.downloader.DownloadTask
+import go.examate.hyp.downloader.VideoParser
 import go.examate.hyp.downloader.formatBytes
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassBackground
@@ -61,8 +66,10 @@ import go.examate.hyp.ui.components.PlainDialogButtons
 import go.examate.hyp.ui.components.PlainDialogTitle
 import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.Danger
+import go.examate.hyp.ui.theme.Divider
 import go.examate.hyp.ui.theme.ExamateTheme
 import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.Success
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
@@ -180,7 +187,9 @@ private fun DownloaderRoot() {
 private fun UrlInputCard() {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
     var url by remember { mutableStateOf("") }
+    var parsing by remember { mutableStateOf(false) }
 
     FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(18.dp)) {
@@ -189,7 +198,7 @@ private fun UrlInputCard() {
             OutlinedTextField(
                 value = url,
                 onValueChange = { url = it },
-                placeholder = { Text("粘贴 HTTP/HTTPS 文件直链", fontSize = 14.sp) },
+                placeholder = { Text("粘贴直链 / 抖音 / 豆包等分享链接", fontSize = 14.sp) },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
                 singleLine = true,
@@ -210,19 +219,47 @@ private fun UrlInputCard() {
                 }
             )
             Spacer(Modifier.height(12.dp))
+
+            // 视频平台链接 → 自动解析无水印直链;普通直链 → 直接下载
+            val isPlatformLink = VideoParser.isVideoPlatformLink(url.trim())
             LiquidGlassButton(
-                text = "开始下载",
+                text = if (parsing) "解析中..." else if (isPlatformLink) "解析并下载" else "开始下载",
                 onClick = {
                     if (url.isBlank()) {
                         ToastUtil.show(context, "请先输入下载链接")
                         return@LiquidGlassButton
                     }
-                    val error = DownloadCenter.add(url)
-                    if (error != null) {
-                        ToastUtil.show(context, error)
+                    val trimmed = url.trim()
+                    if (VideoParser.isVideoPlatformLink(trimmed)) {
+                        // 视频平台链接:先解析再下载
+                        parsing = true
+                        scope.launch {
+                            try {
+                                val result = VideoParser.parse(trimmed)
+                                val error = DownloadCenter.add(result.videoUrl)
+                                if (error != null) {
+                                    ToastUtil.show(context, error)
+                                } else {
+                                    url = ""
+                                    val title = if (result.title.isNotEmpty()) result.title else "视频"
+                                    ToastUtil.show(context, "解析成功(${result.source}): $title\n已加入下载队列")
+                                }
+                            } catch (e: VideoParser.ParseException) {
+                                ToastUtil.show(context, "解析失败: ${e.message}")
+                            } catch (e: Exception) {
+                                ToastUtil.show(context, "解析失败: ${e.message}")
+                            }
+                            parsing = false
+                        }
                     } else {
-                        url = ""
-                        ToastUtil.show(context, "已加入下载队列")
+                        // 普通直链:直接下载
+                        val error = DownloadCenter.add(trimmed)
+                        if (error != null) {
+                            ToastUtil.show(context, error)
+                        } else {
+                            url = ""
+                            ToastUtil.show(context, "已加入下载队列")
+                        }
                     }
                 },
                 style = ButtonStyle.Primary,
@@ -283,7 +320,7 @@ private fun TaskCard(task: DownloadTask) {
                         .fillMaxWidth(fraction)
                         .height(6.dp)
                         .clip(RoundedCornerShape(3.dp))
-                        .background(if (task.status == DownloadStatus.DONE) Color(0xFF34C759) else AccentBlue)
+                        .background(if (task.status == DownloadStatus.DONE) Success else AccentBlue)
                 )
             }
 
@@ -353,12 +390,13 @@ private fun statusText(status: DownloadStatus): String = when (status) {
     DownloadStatus.DONE -> "已完成"
 }
 
+@Composable
 private fun statusColor(status: DownloadStatus): Color = when (status) {
     DownloadStatus.PENDING -> TextHint
     DownloadStatus.RUNNING -> AccentBlue
     DownloadStatus.PAUSED -> TextSecondary
     DownloadStatus.FAILED -> Danger
-    DownloadStatus.DONE -> Color(0xFF34C759)
+    DownloadStatus.DONE -> Success
 }
 
 private fun sizeText(task: DownloadTask): String {
@@ -434,7 +472,7 @@ private fun textFieldColors() = TextFieldDefaults.colors(
     focusedContainerColor = Color.White.copy(0.7f),
     unfocusedContainerColor = Color.White.copy(0.5f),
     focusedIndicatorColor = AccentBlue,
-    unfocusedIndicatorColor = Color(0xFFD1D5DB),
+    unfocusedIndicatorColor = Divider,
     focusedTextColor = TextPrimary,
     unfocusedTextColor = TextPrimary,
     cursorColor = AccentBlue,

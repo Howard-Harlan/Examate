@@ -50,6 +50,13 @@ class ChnuClient(
         .followSslRedirects(false)
         .build()
 
+    /** CookieJar 实例(供 WebView 注入 CAS 登录态) */
+    private val cookieJar: SimpleCookieJar =
+        (client.cookieJar as SimpleCookieJar)
+
+    /** 获取所有 cookie(供 WebView 注入 CAS 登录态) */
+    fun getAllCookies(): List<okhttp3.Cookie> = cookieJar.getAllCookies()
+
     /** CAS 登录状态 */
     @Volatile
     var loggedIn: Boolean = false
@@ -67,6 +74,8 @@ class ChnuClient(
     val szs = SzsClient()
     /** 智慧门户客户端(班级通讯录) */
     val zhxy = ZhxyClient()
+    /** 智慧思政 H5 客户端(综测测评/离返校/留校登记) */
+    val hbsz = HbszClient()
 
     // ==================== SSL 信任所有证书 ====================
 
@@ -594,5 +603,29 @@ class ChnuClient(
 
         /** 查询班级通讯录(学生电话列表) */
         fun getStudentPhoneList() = api.getStudentPhoneList()
+    }
+
+    // ════════════════════════════════════════════════
+    //  智慧思政 H5(oshall/hbsz-h5)客户端
+    //  综测测评 / 离返校登记 / 留校登记
+    //  CAS SSO → ticket → JWT token → 调用 /apiZhxy/hbsz/ API
+    // ════════════════════════════════════════════════
+    inner class HbszClient {
+        private val api = HbszApi(client, ::getServiceTicket)
+
+        val loggedIn: Boolean get() = api.loggedIn
+        /** JWT token(供 WebView 注入到请求 header) */
+        val token: String get() = api.tokenValue
+
+        fun login() = api.login()
+
+        /** 获取综测测评列表 */
+        fun getEvaluatingList() = api.getEvaluatingList()
+
+        /** 获取离返校登记记录 */
+        fun getHolidayLeaveList() = api.getHolidayLeaveList()
+
+        /** 获取留校登记记录 */
+        fun getStayInSchoolList() = api.getStayInSchoolList()
     }
 }

@@ -115,7 +115,7 @@ class BleMeshTransport(
      * 单线程发送执行器:BLE GATT 写操作必须严格串行(同一连接上并发 write 会返回 false 或丢数据),
      * 用单线程执行器保证所有出站分片按顺序提交。
      */
-    private val sendExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+    private var sendExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
         Thread(r, "BleMeshTransport-sender").apply { isDaemon = true }
     }
 
@@ -147,6 +147,12 @@ class BleMeshTransport(
         if (isRunning) return true
         if (!hasPermissions()) return false
         if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled) return false
+        // 重建发送执行器(上次 stop 可能已 shutdown)
+        if (sendExecutor.isShutdown) {
+            sendExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+                Thread(r, "BleMeshTransport-sender").apply { isDaemon = true }
+            }
+        }
         isRunning = true
         startGattServer()
         startAdvertising()

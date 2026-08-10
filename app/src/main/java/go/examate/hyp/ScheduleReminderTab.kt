@@ -44,6 +44,7 @@ import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.ScheduleCellBg
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
@@ -204,7 +205,7 @@ internal fun ReminderSettingsTab() {
         androidx.compose.ui.window.Dialog(onDismissRequest = { showStylePicker = false }) {
             Column(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
-                    .background(Color.White).padding(20.dp)
+                    .background(CardBg).padding(20.dp)
             ) {
                 Text("选择提醒方式", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(12.dp))

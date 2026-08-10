@@ -42,6 +42,7 @@ import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.theme.Error
 import go.examate.hyp.ui.theme.ErrorBg
 import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
@@ -215,7 +216,7 @@ fun <T> SingleChoiceDialog(
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
-                .background(Color.White)
+                .background(CardBg)
                 .padding(vertical = 8.dp)
         ) {
             Text(

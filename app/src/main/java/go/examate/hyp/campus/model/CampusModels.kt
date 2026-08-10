@@ -320,6 +320,45 @@ data class ClassContact(
 )
 
 // ════════════════════════════════════════════════
+//  智慧思政 H5(oshall/hbsz-h5) — 综测测评/离返校/留校登记
+// ════════════════════════════════════════════════
+
+/** 综测测评条目(对应 hbsz-h5/evaluating) */
+data class HbszEvaluatingItem(
+    val batchName: String,      // 测评批次
+    val studentName: String,    // 学生姓名
+    val className: String,      // 班级
+    val totalScore: String,     // 总分
+    val dyScore: String,        // 德育成绩
+    val zyScore: String,        // 专业成绩
+    val tyScore: String,        // 体育成绩
+    val status: String          // 状态
+)
+
+/** 离返校登记记录(对应 hbsz-h5?path=holidayLeave) */
+data class HolidayLeaveRecord(
+    val studentName: String,    // 学生姓名
+    val type: String,           // 类型(离校/返校)
+    val leaveDate: String,      // 离校日期
+    val returnDate: String,     // 返校日期
+    val destination: String,    // 目的地
+    val status: String,         // 审批状态
+    val remark: String          // 备注/原因
+)
+
+/** 寒暑假留校登记记录(对应 hbsz-h5?path=stayInSchool) */
+data class StayInSchoolRecord(
+    val studentName: String,    // 学生姓名
+    val semester: String,       // 学期/批次
+    val startDate: String,      // 留校开始日期
+    val endDate: String,        // 留校结束日期
+    val dormitory: String,      // 宿舍
+    val reason: String,         // 留校原因
+    val status: String,         // 审批状态
+    val remark: String          // 备注
+)
+
+// ════════════════════════════════════════════════
 //  淮师心声(Hsxs) — 失物招领 & 满意度调查
 //  API: https://hsxs.chnu.edu.cn/api/
 // ════════════════════════════════════════════════

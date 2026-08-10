@@ -227,13 +227,18 @@ class PrefsManager private constructor(context: Context) {
         get() = prefsConfig.getInt(KEY_DEFAULT_HOME_TAB, 0)
         set(value) = prefsConfig.edit().putInt(KEY_DEFAULT_HOME_TAB, value).apply()
 
+    /** 主题模式:0=跟随系统, 1=浅色, 2=深色 */
+    var themeMode: Int
+        get() = prefsConfig.getInt(KEY_THEME_MODE, 0)
+        set(value) = prefsConfig.edit().putInt(KEY_THEME_MODE, value).apply()
+
     /**
      * 课程表视图模式:持久化用户最后选择的视图,下次进入时恢复。
      * - "week" = 周视图(默认)
      * - "day"  = 日视图
      */
     var scheduleViewMode: String
-        get() = prefsConfig.getString(KEY_SCHEDULE_VIEW_MODE, "week") ?: "week"
+        get() = prefsConfig.getString(KEY_SCHEDULE_VIEW_MODE, "day") ?: "day"
         set(value) = prefsConfig.edit().putString(KEY_SCHEDULE_VIEW_MODE, value).apply()
 
     fun unregisterSettingsListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) {
@@ -281,6 +286,7 @@ class PrefsManager private constructor(context: Context) {
         const val KEY_USER_DISPLAY_FIELDS = "user_display_fields"
         const val KEY_FLOATING_MENU_ITEMS = "floating_menu_items"
         const val KEY_DEFAULT_HOME_TAB = "default_home_tab"
+        const val KEY_THEME_MODE = "theme_mode"
         const val KEY_SCHEDULE_VIEW_MODE = "schedule_view_mode"
         const val KEY_CHAT_FONT_PATH = "chat_font_path"
         const val KEY_CHAT_FONT_SIZE = "chat_font_size"

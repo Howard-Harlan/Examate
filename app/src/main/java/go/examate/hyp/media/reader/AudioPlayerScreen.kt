@@ -44,6 +44,7 @@ import go.examate.hyp.music.MusicController
 import go.examate.hyp.music.QueueItem
 import go.examate.hyp.music.ResolveResult
 import go.examate.hyp.ui.components.LiquidGlassIconButton
+import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
@@ -160,7 +161,7 @@ fun AudioPlayerScreen(
             // 上一章
             Box(
                 Modifier.size(52.dp).clip(RoundedCornerShape(26.dp))
-                    .background(Color.White).border(1.dp, Color(0xFFE0E0E0), RoundedCornerShape(26.dp))
+                    .background(CardBg).border(1.dp, Color(0xFFE0E0E0), RoundedCornerShape(26.dp))
                     .clickable { controller.prev() },
                 contentAlignment = Alignment.Center
             ) {
@@ -184,7 +185,7 @@ fun AudioPlayerScreen(
             // 下一章
             Box(
                 Modifier.size(52.dp).clip(RoundedCornerShape(26.dp))
-                    .background(Color.White).border(1.dp, Color(0xFFE0E0E0), RoundedCornerShape(26.dp))
+                    .background(CardBg).border(1.dp, Color(0xFFE0E0E0), RoundedCornerShape(26.dp))
                     .clickable { controller.next() },
                 contentAlignment = Alignment.Center
             ) {

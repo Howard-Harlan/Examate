@@ -91,7 +91,9 @@ import go.examate.hyp.ui.components.PlainDialogContent
 import go.examate.hyp.ui.components.PlainDialogButtons
 import go.examate.hyp.ui.components.PlainDialogTitle
 import go.examate.hyp.ui.theme.AccentBlue
+import go.examate.hyp.ui.theme.ChipBg
 import go.examate.hyp.ui.theme.Danger
+import go.examate.hyp.ui.theme.DialogBg
 import go.examate.hyp.ui.theme.ExamateTheme
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.SurfaceVariant
@@ -679,7 +681,7 @@ private fun CustomToolDialog(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color.White,
+        containerColor = DialogBg,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
     ) {
         Text(
@@ -782,7 +784,7 @@ private fun CustomToolDialog(
                 Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFFE5E5EA))
+                    .background(ChipBg)
                     .clickable { onDismiss() }
                     .padding(vertical = 10.dp),
                 contentAlignment = Alignment.Center

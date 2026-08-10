@@ -52,6 +52,8 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.Danger
+import go.examate.hyp.ui.theme.Divider
+import go.examate.hyp.ui.theme.InputBg
 import go.examate.hyp.ui.theme.Success
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
@@ -128,8 +130,8 @@ fun ToolStepsTimeline(
     var expanded by remember(steps.size) { mutableStateOf(false) }
     val canCollapse = steps.size > collapsedVisibleCount
     val visibleSteps = if (expanded || !canCollapse) steps else steps.takeLast(collapsedVisibleCount)
-    val lineColor = Color(0xFFE0E4EC)
-    val cardBg = Color(0xFFF7F8FA)
+    val lineColor = Divider
+    val cardBg = InputBg
 
     Column(
         modifier = modifier
@@ -270,7 +272,7 @@ private fun ToolStepRow(step: ToolStep, coverColor: Color) {
                 modifier = Modifier
                     .padding(start = 26.dp, top = 2.dp, bottom = 2.dp, end = 4.dp)
                     .clip(RoundedCornerShape(4.dp))
-                    .background(Color(0xFFEEEEEE))
+                    .background(Divider)
                     .padding(6.dp),
                 maxLines = 12,
                 overflow = TextOverflow.Ellipsis

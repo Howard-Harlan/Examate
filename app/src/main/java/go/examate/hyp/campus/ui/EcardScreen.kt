@@ -60,6 +60,7 @@ import go.examate.hyp.ui.theme.Divider as DividerColor
 import go.examate.hyp.ui.theme.Error
 import go.examate.hyp.ui.theme.ErrorBg
 import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.Success
 import go.examate.hyp.ui.theme.SuccessBg
 import go.examate.hyp.ui.theme.SurfaceVariant
@@ -430,7 +431,7 @@ private fun CustomCalendarDialog(
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
-                .background(Color.White)
+                .background(CardBg)
                 .padding(20.dp)
         ) {
             // 月份导航
@@ -817,7 +818,7 @@ private fun SearchableListDialog(
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
-                .background(Color.White)
+                .background(CardBg)
                 .padding(vertical = 8.dp)
         ) {
             Text(
@@ -902,7 +903,7 @@ private fun PayFormDialog(
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
-                .background(Color.White)
+                .background(CardBg)
                 .padding(20.dp)
         ) {
             Text(title, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)

@@ -36,6 +36,9 @@ import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.highlight.Highlight
 import com.kyant.shapes.RoundedRectangle
+import go.examate.hyp.ui.theme.AccentBlue
+import go.examate.hyp.ui.theme.CardBg
+import go.examate.hyp.ui.theme.Primary
 
 /**
  * 液态玻璃弹窗(参考 AndroidLiquidGlass-2.0.0 DialogContent)
@@ -51,8 +54,8 @@ fun LiquidGlassDialog(
     content: @Composable ColumnScope.() -> Unit
 ) {
     if (!visible) return
-    val dimColor = Color(0xFF29293A).copy(0.23f)
-    val containerColor = Color(0xFFFAFAFA).copy(0.6f)
+    val dimColor = Primary.copy(0.23f)
+    val containerColor = CardBg.copy(0.6f)
     val fallbackColor = Color.White.copy(0.92f)
     val backdrop = LocalGlassBackdrop.current
     val noRippleInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
@@ -155,7 +158,7 @@ fun GlassDialogContent(text: String) {
 fun GlassDialogButtons(
     buttons: List<Triple<String, Boolean, () -> Unit>>
 ) {
-    val accentColor = Color(0xFF0088FF)
+    val accentColor = AccentBlue
     val textColor = Color.Black
 
     Row(

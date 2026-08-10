@@ -43,6 +43,8 @@ import androidx.compose.ui.unit.sp
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.LiquidGlassButton
+import go.examate.hyp.ui.theme.BgPrimary
+import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.Danger
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
@@ -95,7 +97,7 @@ fun OnboardingScreen(
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    listOf(Color(0xFFEFF1F5), Color(0xFFE5E8EE))
+                    listOf(BgPrimary, CardBg)
                 )
             )
     ) {

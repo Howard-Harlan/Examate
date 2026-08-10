@@ -52,6 +52,7 @@ import go.examate.hyp.ui.components.PlainDialogTitle
 import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.AccentMint
 import go.examate.hyp.ui.theme.AccentPurple
+import go.examate.hyp.ui.theme.ChipBg
 import go.examate.hyp.ui.theme.Danger
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.TextHint
@@ -122,7 +123,7 @@ fun JoinChannelDialog(
             ) {
                 Box(
                     Modifier.size(22.dp).clip(CircleShape)
-                        .background(if (usePassword) AccentBlue else Color(0xFFE5E5EA))
+                        .background(if (usePassword) AccentBlue else ChipBg)
                         .clickable { usePassword = !usePassword },
                     contentAlignment = Alignment.Center
                 ) {

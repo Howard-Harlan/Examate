@@ -48,6 +48,7 @@ import go.examate.hyp.ui.components.LiquidGlassBackground
 import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.theme.AccentBlue
+import go.examate.hyp.ui.theme.Divider
 import go.examate.hyp.ui.theme.ExamateTheme
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.TextHint
@@ -258,7 +259,7 @@ private fun textFieldColors() = TextFieldDefaults.colors(
     focusedContainerColor = Color.White.copy(0.7f),
     unfocusedContainerColor = Color.White.copy(0.5f),
     focusedIndicatorColor = AccentBlue,
-    unfocusedIndicatorColor = Color(0xFFD1D5DB),
+    unfocusedIndicatorColor = Divider,
     focusedTextColor = TextPrimary,
     unfocusedTextColor = TextPrimary,
     cursorColor = AccentBlue,

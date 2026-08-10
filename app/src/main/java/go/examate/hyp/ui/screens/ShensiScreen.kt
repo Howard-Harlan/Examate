@@ -41,8 +41,10 @@ import go.examate.hyp.ui.components.PlainDialogContent
 import go.examate.hyp.ui.components.PlainDialogTitle
 import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.BgPrimary
+import go.examate.hyp.ui.theme.ChipBg
 import go.examate.hyp.ui.theme.Danger
 import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.Success
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 
@@ -200,7 +202,7 @@ private fun PermissionCard(
             Spacer(Modifier.weight(1f))
             Text(
                 text = if (unauthCount == 0) "全部已授权" else "$unauthCount 项未授权",
-                color = if (unauthCount == 0) Color(0xFF34C759) else Danger,
+                color = if (unauthCount == 0) Success else Danger,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium
             )
@@ -230,7 +232,7 @@ private fun PermissionCard(
 
 @Composable
 private fun PermissionDetailRow(item: PermissionItem) {
-    val green = Color(0xFF34C759)
+    val green = Success
     val red = Danger
     Column(Modifier.padding(horizontal = 24.dp, vertical = 6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -279,7 +281,7 @@ private fun LaunchDialogButton(
     Box(
         modifier
             .clip(RoundedCornerShape(10.dp))
-            .background(if (isAccent) AccentBlue else Color(0xFFE5E5EA))
+            .background(if (isAccent) AccentBlue else ChipBg)
             .clickable(onClick = onClick)
             .padding(vertical = 10.dp),
         contentAlignment = Alignment.Center

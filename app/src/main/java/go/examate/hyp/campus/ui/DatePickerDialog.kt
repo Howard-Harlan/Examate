@@ -31,6 +31,7 @@ import androidx.compose.ui.window.Dialog
 import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import java.time.LocalDate
@@ -64,7 +65,7 @@ fun DatePickerDialog(
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
-                .background(Color.White)
+                .background(CardBg)
                 .padding(20.dp)
         ) {
             // 月份导航

@@ -64,6 +64,8 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
+import go.examate.hyp.ui.theme.CardBg
+import go.examate.hyp.ui.theme.InputBg
 import go.examate.hyp.ui.theme.TextPrimary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -652,7 +654,7 @@ private fun RenderBox(
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
-            .background(Color(0xFFF7F8FA))
+            .background(InputBg)
             .padding(10.dp)
     ) {
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -675,7 +677,7 @@ private fun RenderBox(
                     .fillMaxWidth()
                     .heightIn(min = 320.dp, max = 720.dp)
                     .clip(RoundedCornerShape(14.dp))
-                    .background(Color.White)
+                    .background(CardBg)
                     .padding(14.dp)
             ) {
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -783,6 +785,8 @@ private fun TableView(headers: List<String>, rows: List<List<String>>, isStreami
     val measurer = androidx.compose.ui.text.rememberTextMeasurer()
     val density = LocalDensity.current
     val colCount = maxOf(headers.size, rows.maxOfOrNull { it.size } ?: 0)
+    // 在 @Composable 上下文读取颜色,供 remember lambda 使用
+    val tableTextColor = TextPrimary
     // 量出每列最大内容宽度并统一列宽 → 跨行对齐(修复"部分行偏移";列宽含内边距与余量)
     val colWidths = remember(headers, rows) {
         val style = androidx.compose.ui.text.TextStyle(fontSize = 12.sp)
@@ -791,7 +795,7 @@ private fun TableView(headers: List<String>, rows: List<List<String>>, isStreami
                 add(headers.getOrNull(c).orEmpty())
                 rows.forEach { add(it.getOrNull(c).orEmpty()) }
             }
-            val maxPx = cells.maxOf { measurer.measure(renderInline(it, TextPrimary), style = style).size.width }
+            val maxPx = cells.maxOf { measurer.measure(renderInline(it, tableTextColor), style = style).size.width }
             with(density) { maxPx.toDp() } + 24.dp
         }
     }
@@ -799,7 +803,7 @@ private fun TableView(headers: List<String>, rows: List<List<String>>, isStreami
         Modifier
             .horizontalScroll(scroll)
             .clip(RoundedCornerShape(8.dp))
-            .background(Color.White)
+            .background(CardBg)
     ) {
         if (headers.isNotEmpty()) {
             Row(Modifier.background(Color(0xFFEFF3FA)).padding(vertical = 7.dp)) {
@@ -814,7 +818,7 @@ private fun TableView(headers: List<String>, rows: List<List<String>>, isStreami
             HorizontalDivider(color = Color(0x11000000), thickness = 0.5.dp)
             Row(
                 Modifier
-                    .background(if (rIdx % 2 == 1) Color(0xFFF7F9FC) else Color.White)
+                    .background(if (rIdx % 2 == 1) InputBg else CardBg)
                     .padding(vertical = 7.dp)
             ) {
                 repeat(colCount) { index ->

@@ -43,6 +43,9 @@
 
     <!-- 音乐:本地音频扫描改用 SAF 目录树授权(OpenDocumentTree),无需 READ_MEDIA_AUDIO / READ_EXTERNAL_STORAGE 大权限 -->
 
+    <!-- Mesh 聊天:语音消息录制 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
 
     <application
         android:name=".ExamateApp"
@@ -108,6 +111,10 @@
             android:label="网页"
             android:screenOrientation="portrait" />
         <activity
+            android:name=".UserScriptActivity"
+            android:label="脚本"
+            android:screenOrientation="portrait" />
+        <activity
             android:name=".ChatActivity"
             android:label="Agents"
             android:screenOrientation="portrait"
@@ -139,6 +146,11 @@
         <activity
             android:name=".ScheduleActivity"
             android:label="课程表"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".TodoActivity"
+            android:label="待办"
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize" />
         <activity

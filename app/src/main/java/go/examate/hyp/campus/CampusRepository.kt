@@ -26,6 +26,7 @@ import go.examate.hyp.campus.model.XkStatus
 import go.examate.hyp.config.PrefsManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 /**
@@ -49,6 +50,60 @@ class CampusRepository private constructor() {
 
     /** CAS 是否已登录 */
     val isLoggedIn: Boolean get() = client?.loggedIn == true
+
+    /**
+     * 将 OkHttp 的 CAS cookie 注入到 WebView 的 CookieManager,
+     * 使 WebView 打开 CAS 保护的页面时自动完成 SSO,无需再次登录。
+     *
+     * 调用时机:WebView 创建后(确保 CookieManager 已初始化),loadUrl 之前。
+     *
+     * 注意:不显式指定 domain 属性,由 CookieManager 从 URL 推断,
+     * 避免部分 Android 版本因 domain 不匹配 URL host 而静默拒绝 cookie。
+     */
+    fun injectCookiesToWebView(): Boolean {
+        val c = client ?: return false
+        val cookieManager = android.webkit.CookieManager.getInstance()
+        cookieManager.setAcceptCookie(true)
+        // 注意:setAcceptThirdPartyCookies(webView, boolean) 需要 WebView 实例,
+        // 此处无 WebView 可传,第三方 Cookie 放行已在 WebViewActivity.configure() 中设置。
+        c.getAllCookies().forEach { cookie ->
+            val scheme = if (cookie.secure) "https" else "http"
+            // 用 cookie.domain(去前导点)作为 URL host,使 CookieManager
+            // 将 cookie 绑定到正确的域。不显式写 domain= 属性。
+            val host = cookie.domain.trimStart('.')
+            val url = "$scheme://$host${cookie.path}"
+            // 构建 cookie 字符串:仅 name=value; path=...[; secure]
+            // 不包含 domain 属性,避免 CookieManager 校验 domain 与 URL host 匹配时静默拒绝
+            val sb = StringBuilder("${cookie.name}=${cookie.value}; path=${cookie.path}")
+            if (cookie.secure) sb.append("; Secure")
+            if (cookie.httpOnly) sb.append("; HttpOnly")
+            cookieManager.setCookie(url, sb.toString())
+        }
+        // flush 确保 cookie 写入磁盘,供下次 WebView 使用
+        cookieManager.flush()
+        return true
+    }
+
+    /**
+     * 获取智慧思政 H5 的 JWT token(供 WebView 注入到请求 header 与 localStorage)。
+     *
+     * H5 应用(oshall/hbsz-h5)基于 Jeecg-Boot,认证方式为:
+     * - 请求 header: X-Access-Token
+     * - 前端 localStorage: Access-Token / X-Access-Token / W-Access-Token / token
+     *
+     * 流程:CAS SSO 获取 ticket → validateLogin → JWT token
+     *
+     * @return JWT token,失败返回 null
+     */
+    suspend fun getHbszToken(): String? {
+        val c = client ?: return null
+        return withContext(Dispatchers.IO) {
+            try {
+                if (!c.hbsz.loggedIn) c.hbsz.login()
+                c.hbsz.token.takeIf { it.isNotEmpty() }
+            } catch (e: Exception) { null }
+        }
+    }
 
     // ═══ 内存缓存 ═══
     /** 缓存条目:数据 + 过期时间戳 */
@@ -469,6 +524,45 @@ class CampusRepository private constructor() {
         val c = zhxyLogin(prefs)
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             block(c.zhxy)
+        }
+    }
+
+    // ════════════════════════════════════════════════
+    //  智慧思政 H5(hbsz) — 综测测评/离返校/留校登记
+    // ════════════════════════════════════════════════
+
+    suspend fun hbszLogin(prefs: PrefsManager): ChnuClient =
+        ensureLoggedIn(prefs).also {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                if (!it.hbsz.loggedIn) it.hbsz.login()
+            }
+        }
+
+    suspend fun getEvaluatingList(prefs: PrefsManager): List<go.examate.hyp.campus.model.HbszEvaluatingItem> {
+        return withHbsz(prefs) { it.getEvaluatingList() }
+    }
+
+    /**
+     * 获取 hbsz JWT token(供 WebView 注入到请求 header,实现 H5 免登录)。
+     * H5 用 W-Access-Token header,主站 PC 用 X-Access-Token header,
+     * 两者都从 localStorage 读 token 放 header。
+     */
+    suspend fun getHbszToken(prefs: PrefsManager): String {
+        return hbszLogin(prefs).hbsz.token
+    }
+
+    suspend fun getHolidayLeaveList(prefs: PrefsManager): List<go.examate.hyp.campus.model.HolidayLeaveRecord> {
+        return withHbsz(prefs) { it.getHolidayLeaveList() }
+    }
+
+    suspend fun getStayInSchoolList(prefs: PrefsManager): List<go.examate.hyp.campus.model.StayInSchoolRecord> {
+        return withHbsz(prefs) { it.getStayInSchoolList() }
+    }
+
+    private suspend fun <T> withHbsz(prefs: PrefsManager, block: (ChnuClient.HbszClient) -> T): T {
+        val c = hbszLogin(prefs)
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            block(c.hbsz)
         }
     }
 

@@ -72,6 +72,7 @@ import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.theme.AccentBlue
+import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.Error
 import go.examate.hyp.ui.theme.ErrorBg
 import go.examate.hyp.ui.theme.Success
@@ -358,7 +359,7 @@ private fun LoginPage(state: go.examate.hyp.watercard.WaterCardUiState, vm: Wate
                         modifier = Modifier
                             .size(width = 100.dp, height = 46.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(Color.White)
+                            .background(CardBg)
                             .clickable { vm.refreshCaptcha() },
                         contentAlignment = Alignment.Center
                     ) {
@@ -541,7 +542,7 @@ private fun BillsDialog(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
-                .background(Color.White)
+                .background(CardBg)
                 .padding(vertical = 12.dp)
         ) {
             // 标题栏

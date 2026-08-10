@@ -137,6 +137,8 @@ fun DynamicInputBar(
                 spring(dampingRatio = Spring.DampingRatioMediumBouncy), label = "addScale"
             )
             val addRotation by animateFloatAsState(if (showAttachPanel) 45f else 0f, label = "addRot")
+            // 在 @Composable 上下文读取颜色,供 onDrawSurface lambda 使用
+            val accentBlueColor = AccentBlue
             Box(
                 Modifier
                     .size(38.dp)
@@ -148,7 +150,7 @@ fun DynamicInputBar(
                                 shape = { RoundedRectangle(19.dp) },
                                 effects = { vibrancy(); blur(12.dp.toPx()) },
                                 highlight = { Highlight.Ambient },
-                                onDrawSurface = { drawRect(AccentBlue.copy(0.12f)) }
+                                onDrawSurface = { drawRect(accentBlueColor.copy(0.12f)) }
                             )
                         } else {
                             Modifier.clip(RoundedCornerShape(19.dp)).background(AccentBlue.copy(0.1f))

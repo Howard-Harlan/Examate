@@ -300,8 +300,8 @@ private fun ContentEditDialog(
                 presetColors.forEach { (hex, name) ->
                     val color = if (hex.isNotEmpty()) {
                         try { Color(android.graphics.Color.parseColor(hex)) }
-                        catch (_: Exception) { Color(0xFF9CA3AF) }
-                    } else Color(0xFF9CA3AF)
+                        catch (_: Exception) { TextHint }
+                    } else TextHint
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Box(
                             Modifier.size(32.dp).clip(CircleShape)
@@ -421,10 +421,10 @@ private fun ProviderRow(
         if (custom.isNotEmpty()) {
             try { Color(android.graphics.Color.parseColor(custom)) }
             catch (_: Exception) {
-                when (tag) { "稳定" -> Primary; "免费" -> Color(0xFF6B7280); else -> Color(0xFF9CA3AF) }
+                when (tag) { "稳定" -> Primary; "免费" -> TextSecondary; else -> TextHint }
             }
         } else {
-            when (tag) { "稳定" -> Primary; "免费" -> Color(0xFF6B7280); else -> Color(0xFF9CA3AF) }
+            when (tag) { "稳定" -> Primary; "免费" -> TextSecondary; else -> TextHint }
         }
     }
 
@@ -543,7 +543,7 @@ private fun ProviderRow(
                     Box(
                         Modifier
                             .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF6B7280))
+                            .background(TextSecondary)
                             .clickable { onDismissActions() }
                             .padding(horizontal = 16.dp, vertical = 8.dp)
                     ) {

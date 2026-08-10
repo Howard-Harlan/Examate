@@ -69,8 +69,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import go.examate.hyp.ui.components.MarkdownText
 import go.examate.hyp.ui.theme.AccentBlue
+import go.examate.hyp.ui.theme.CardBg
+import go.examate.hyp.ui.theme.ChipBg
 import go.examate.hyp.ui.theme.Danger
 import go.examate.hyp.ui.theme.ErrorBg
+import go.examate.hyp.ui.theme.InputBg
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
 import go.examate.hyp.util.ActionCard
@@ -239,7 +242,7 @@ private fun BubbleContent(
                     when {
                         msg.isError -> ErrorBg
                         isUser -> AccentBlue
-                        else -> Color.White
+                        else -> CardBg
                     }
                 )
                 .then(
@@ -370,7 +373,7 @@ private fun ToolCalls(msg: ChatMsg) {
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(6.dp))
-                .background(Color(0xFFF0F4FF))
+                .background(ChipBg)
                 .padding(horizontal = 8.dp, vertical = 4.dp)
                 .padding(bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -713,7 +716,7 @@ private fun FilePreviewCard(filePath: String) {
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
-            .background(Color(0xFFF0F4FF))
+            .background(ChipBg)
             .clickable { showPreview = true }
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -749,13 +752,13 @@ private fun FilePreviewDialog(filePath: String, onDismiss: () -> Unit) {
                 .fillMaxSize()
                 .padding(top = 40.dp, bottom = 40.dp)
                 .clip(RoundedCornerShape(14.dp))
-                .background(Color.White)
+                .background(CardBg)
         ) {
             // 顶栏:文件名 + 导出PDF(仅html) + 分享 + 关闭
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFFF8F9FA))
+                    .background(InputBg)
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {

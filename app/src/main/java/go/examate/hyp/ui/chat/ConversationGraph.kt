@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.BgPrimary
+import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.util.ChatMsg
@@ -105,6 +106,8 @@ fun ConversationGraph(
         if (nodes.isEmpty()) {
             Text("暂无对话", color = TextHint, fontSize = 14.sp, modifier = Modifier.align(Alignment.Center))
         } else {
+            // 在 @Composable 上下文读取颜色,供 Canvas DrawScope 使用
+            val activeLineColor = AccentBlue
             // 可缩放平移的画布区
             Box(
                 Modifier
@@ -137,7 +140,7 @@ fun ConversationGraph(
                             val endY = (PAD + n.depth * ROW_H).dp.toPx()
                             val onActive = n.msg.id in activePathIds && parent.msg.id in activePathIds
                             drawLine(
-                                color = if (onActive) AccentBlue else Color(0x33000000),
+                                color = if (onActive) activeLineColor else Color(0x33000000),
                                 start = Offset(startX, startY),
                                 end = Offset(endX, endY),
                                 strokeWidth = (if (onActive) 2.5f else 1.5f).dp.toPx()
@@ -197,7 +200,7 @@ private fun GraphNode(node: GNode, active: Boolean, onClick: () -> Unit) {
             .offset(x = (PAD + node.col * COL_W).dp, y = (PAD + node.depth * ROW_H).dp)
             .size(NODE_W.dp, NODE_H.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(if (active) accent.copy(0.16f) else Color.White)
+            .background(if (active) accent.copy(0.16f) else CardBg)
             .border(
                 width = if (active) 1.5.dp else 0.5.dp,
                 color = if (active) accent else Color(0x22000000),

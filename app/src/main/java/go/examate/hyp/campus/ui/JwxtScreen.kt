@@ -51,6 +51,7 @@ import go.examate.hyp.ui.theme.Divider as DividerColor
 import go.examate.hyp.ui.theme.Error
 import go.examate.hyp.ui.theme.ErrorBg
 import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.ChipBg
 import go.examate.hyp.ui.theme.Success
 import go.examate.hyp.ui.theme.SuccessBg
 import go.examate.hyp.ui.theme.SurfaceVariant
@@ -187,7 +188,7 @@ private fun GradeSection(state: GradeState, vm: JwxtViewModel) {
                     Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(14.dp))
-                        .background(Color(0xFFEEF2FF))
+                        .background(ChipBg)
                         .padding(14.dp)
                 ) {
                     Column {
@@ -560,7 +561,7 @@ private fun XkSection(state: XkState, vm: JwxtViewModel) {
                 Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFFEEF2FF))
+                    .background(ChipBg)
                     .padding(14.dp)
             ) {
                 Column {
@@ -765,7 +766,7 @@ private fun GradeDetailDialog(
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             if (d.regularScore.isNotEmpty()) {
                                 Box(
-                                    Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(Color(0xFFEEF2FF)).padding(12.dp),
+                                    Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(ChipBg).padding(12.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
