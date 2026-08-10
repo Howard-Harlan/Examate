@@ -312,12 +312,8 @@ class WebViewActivity : ComponentActivity() {
              */
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val u = request.url.toString()
-                // 脚本拾取模式:点击安装链接(.user.js / scriptcat code)直接下载回传,
-                // 而不是让 WebView 把脚本当普通页面渲染(源码/空白)
-                if (pickScript && isScriptUrl(u)) {
-                    downloadScriptForPick(u)
-                    return true
-                }
+                // 注意:脚本拾取不在此拦截 —— 脚本猫安装流程会先跳引导页再跳脚本 URL,
+                // 拦截会破坏跳转链。改为在 onPageFinished 页面加载完成后检测提取。
                 if (u.endsWith(".pdf", ignoreCase = true) ||
                     request.url.lastPathSegment?.endsWith(".pdf", ignoreCase = true) == true) {
                     startActivity(Intent(this@WebViewActivity, PdfPreviewActivity::class.java).apply {
@@ -353,13 +349,6 @@ class WebViewActivity : ComponentActivity() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, favicon)
                 webError = null
-                // 兜底:某些安装跳转不走 shouldOverrideUrlLoading(JS location 跳转/重定向直达脚本),
-                // 页面已开始加载脚本 URL 时立即拾取并停止渲染
-                if (pickScript && url != null && isScriptUrl(url)) {
-                    view?.stopLoading()
-                    downloadScriptForPick(url)
-                    return
-                }
                 // 页面文档刚开始加载即写入 token,确保 SPA 初始化时可读到(Jeecg-Boot 前端在启动时读页面存储)
                 injectTokenToStorage(view, url)
                 // document-start 脚本若已通过 addDocumentStartJavaScript 注册,此处跳过避免重复执行
@@ -373,6 +362,12 @@ class WebViewActivity : ComponentActivity() {
 
             override fun onPageFinished(view: WebView, url: String?) {
                 super.onPageFinished(view, url)
+                // 脚本拾取:页面加载完成后,若最终 URL 是脚本端点(.user.js / api code JSON)则提取回传。
+                // 放在 onPageFinished 而非拦截跳转,保证脚本猫"安装→引导页→跳转"流程不被破坏。
+                if (pickScript && url != null && isScriptUrl(url)) {
+                    downloadScriptForPick(url)
+                    return
+                }
                 // 兜底:刷新/二次导航后再次注入(幂等)
                 injectTokenToStorage(view, url)
                 injectScripts(url ?: "", "document-idle", view)
@@ -455,12 +450,6 @@ class WebViewActivity : ComponentActivity() {
                         view: WebView?,
                         request: WebResourceRequest
                     ): Boolean {
-                        // 脚本拾取:新窗口(安装按钮可能 target=_blank)同样拦截
-                        if (pickScript && isScriptUrl(request.url.toString())) {
-                            downloadScriptForPick(request.url.toString())
-                            view?.destroy()
-                            return true
-                        }
                         // 新窗口 URL 交回主 WebView 加载,然后关闭新窗口
                         this@WebViewActivity.webView?.loadUrl(request.url.toString())
                         view?.destroy()
@@ -1377,10 +1366,10 @@ private fun WebViewOverflowMenu(
             DropdownMenuItem(text = { Text("切换UA") },
                 leadingIcon = { Icon(Icons.Filled.Smartphone, null) },
                 onClick = { expanded = false; showUaPicker = true })
-            DropdownMenuItem(text = { Text("在浏览器打开") }, leadingIcon = { Icon(Icons.Filled.OpenInBrowser, null) },
-                onClick = { expanded = false; onOpenBrowser() })
             DropdownMenuItem(text = { Text("脚本") }, leadingIcon = { Icon(Icons.Filled.Extension, null) },
                 onClick = { expanded = false; onManageScripts() })
+            DropdownMenuItem(text = { Text("在浏览器打开") }, leadingIcon = { Icon(Icons.Filled.OpenInBrowser, null) },
+                onClick = { expanded = false; onOpenBrowser() })
         }
     }
 
