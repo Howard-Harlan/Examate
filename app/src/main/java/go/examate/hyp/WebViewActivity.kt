@@ -671,28 +671,37 @@ class WebViewActivity : ComponentActivity() {
                 .orEmpty()
             if (code.isNotBlank() && code.contains("==UserScript==")) return code
         }
-        // HTML 源码展示页:先反转义(&lt; &gt; &amp; &quot;),再截取 ==UserScript== 块
+        // HTML 源码展示页:先反转义(&lt; &gt; &amp; &quot;),再截取 ==UserScript== 块。
+        // 必须头尾标记都完整才算有效,否则视为误判(如详情页 HTML 里含脚本名示例)。
         if (s.startsWith("<") || s.contains("<pre") || s.contains("<code")) {
             s = s
                 .replace("&lt;", "<").replace("&gt;", ">")
                 .replace("&amp;", "&").replace("&quot;", "\"")
                 .replace("&#39;", "'").replace("&nbsp;", " ")
             val start = s.indexOf("// ==UserScript==")
-            if (start >= 0) {
-                val end = s.indexOf("// ==/UserScript==", start)
-                if (end >= 0) return s.substring(start, end + "// ==/UserScript==".length)
+            val end = s.indexOf("// ==/UserScript==", start)
+            if (start >= 0 && end > start) {
+                val extracted = s.substring(start, end + "// ==/UserScript==".length)
+                // 头部块完整(含 @match 等元数据)才接受
+                if (extracted.length > 200 && extracted.contains("@match")) return extracted
             }
         }
         return s
     }
 
-    /** 判断 URL 是否为可能包含脚本内容的候选页(安装直链 / JSON 端点 / 源码展示页) */
+    /**
+     * 判断 URL 是否为真正的脚本安装端点(触发自动拾取):
+     * - .user.js 安装直链(脚本猫 /scripts/code/{id}/{name}.user.js)
+     * - /api/v2/scripts/{id}/code JSON 端点
+     * 排除: 详情页(/script-show-page)与源码展示页 —— 那些是浏览页,点"安装"后才跳转到上面的端点,
+     * 在详情页就触发拾取会误下载 HTML 导致"缺少 UserScript 头部"。
+     */
     private fun isScriptUrl(u: String): Boolean {
         val lower = u.lowercase()
+        if (lower.contains("script-show-page")) return false
         return lower.endsWith(".user.js") ||
-            lower.endsWith(".js") && lower.contains("scriptcat") ||
-            lower.contains("/code") ||
-            lower.contains("script-show-page")
+            lower.contains("/scripts/code/") ||
+            (lower.contains("/api/v2/scripts/") && lower.contains("/code"))
     }
 
     override fun onDestroy() {
