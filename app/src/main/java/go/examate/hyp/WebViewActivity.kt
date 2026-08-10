@@ -1,5 +1,7 @@
 package go.examate.hyp
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -26,6 +28,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -35,6 +38,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
@@ -63,6 +67,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -75,6 +80,8 @@ import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
 import kotlinx.coroutines.launch
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import go.examate.hyp.util.ToastUtil
 import org.json.JSONArray
 import org.json.JSONObject
@@ -165,7 +172,8 @@ class WebViewActivity : ComponentActivity() {
                 "(KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1"
     }
 
-    private var webView: WebView? = null
+    /** WebView 实例(内部可见,GmBridge 需回调用) */
+    internal var webView: WebView? = null
     private var uaMode by mutableStateOf(UA_DEFAULT)
     private var systemUa: String = ""
     /** 待加载 URL:WebView 挂载到窗口后再 loadUrl(先挂载后加载,避免未 attach 时加载导致不渲染) */
@@ -183,6 +191,9 @@ class WebViewActivity : ComponentActivity() {
     private var pickInProgress = false
     /** 最近尝试拾取的 URL(同一 URL 只下载检测一次,SPA 重复回调去重) */
     private var lastPickUrl: String = ""
+
+    /** GM API 桥(注入为 AndroidGM,脚本通过 window.GM_* 调用) */
+    private val gmBridge: GmBridge by lazy { GmBridge(this) }
 
     // ═══ 文件上传(input type=file 支持) ═══
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
@@ -306,6 +317,9 @@ class WebViewActivity : ComponentActivity() {
         // 允许第三方 Cookie(校园系统 SSO 需要)
         android.webkit.CookieManager.getInstance().setAcceptCookie(true)
         android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+
+        // GM API 桥:脚本通过 window.GM_getValue / GM_xmlhttpRequest 等调用 Android 能力
+        addJavascriptInterface(gmBridge, "AndroidGM")
 
         webViewClient = object : WebViewClient() {
             /**
@@ -523,18 +537,21 @@ class WebViewActivity : ComponentActivity() {
     /**
      * 注入匹配当前 URL 的油猴脚本 */
     private fun injectScripts(url: String, runAt: String, view: WebView?) {
-        val codes = scriptManager.getScriptsForUrl(url, runAt)
-        if (codes.isEmpty() || view == null) return
-        // 每个脚本独立 try-catch:单个脚本报错不中断后续脚本
+        val scripts = scriptManager.getScriptsForUrl(url, runAt)
+        if (scripts.isEmpty() || view == null) return
+        // 每个脚本独立 try-catch:单个脚本报错不中断后续脚本;先注入 GM API,再按脚本名隔离执行
         val combined = buildString {
             append("(function(){")
-            codes.forEach { code ->
-                append("\n// --- script ---\n")
-                append("try {")
+            append(GM_API_PRELUDE)
+            scripts.forEach { (name, code) ->
+                append("\n// --- script: ").append(name).append(" ---\n")
+                append("window.__GM_CURRENT_SCRIPT__ = '").append(name.replace("'", "\\'")).append("';")
+                append("\ntry {")
                 append(code)
                 append("\n} catch(e) { console.warn('[userscript]', e); }")
                 append("\n")
             }
+            append("window.__GM_CURRENT_SCRIPT__ = 'default';")
             append("})();")
         }
         view.evaluateJavascript(combined, null)
@@ -568,6 +585,7 @@ class WebViewActivity : ComponentActivity() {
         val payload = scriptManager.buildDocumentStartPayload() ?: return ""
         return """
             (function(){
+                $GM_API_PRELUDE
                 var RULES = $payload;
                 var url = location.href;
                 function globMatch(p, u) {
@@ -590,9 +608,12 @@ class WebViewActivity : ComponentActivity() {
                 for (var i = 0; i < RULES.length; i++) {
                     var r = RULES[i];
                     if (!matches(r.matches, r.excludes)) continue;
+                    // 设置当前脚本名:GM API 按脚本隔离存储
+                    window.__GM_CURRENT_SCRIPT__ = r.name || 'default';
                     try { (new Function(r.code))(); }
                     catch (e) { console.warn('[userscript]', e); }
                 }
+                window.__GM_CURRENT_SCRIPT__ = 'default';
             })();
         """.trimIndent()
     }
@@ -823,10 +844,11 @@ class UserScriptManager private constructor(context: Context) {
         }
     }
 
-    fun getScriptsForUrl(url: String, runAt: String): List<String> =
+    /** 返回匹配脚本的 (脚本名, 代码) 对,脚本名用于 GM API 的 per-script 存储隔离 */
+    fun getScriptsForUrl(url: String, runAt: String): List<Pair<String, String>> =
         synchronized(scriptList) {
             scriptList.filter { it.enabled && it.runAt == runAt && matchesUrl(url, it.matches, it.excludes) }
-                .map { it.code }
+                .map { it.name to it.code }
         }
 
     /**
@@ -840,6 +862,7 @@ class UserScriptManager private constructor(context: Context) {
         val arr = JSONArray()
         list.forEach { s ->
             arr.put(JSONObject().apply {
+                put("name", s.name)
                 put("matches", JSONArray(s.matches))
                 put("excludes", JSONArray(s.excludes))
                 put("code", s.code)
@@ -953,6 +976,215 @@ class UserScriptManager private constructor(context: Context) {
 
     private fun toStringList(arr: JSONArray): List<String> =
         (0 until arr.length()).map { arr.getString(it) }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// GM API 桥 — 补全油猴脚本容器能力(GM_getValue / GM_xmlhttpRequest 等)
+// 通过 addJavascriptInterface 注入为 AndroidGM,JS 端由 GM_API_PRELUDE 包装
+// ════════════════════════════════════════════════════════════════════
+
+/** GM API JS 包装:在用户脚本执行前定义 window.GM_*,通过 AndroidGM 桥接 Android 能力 */
+private const val GM_API_PRELUDE = """
+(function(){
+    if (window.__GM_API_INSTALLED__) return;
+    window.__GM_API_INSTALLED__ = true;
+
+    // 当前脚本名(per-script 存储命名空间,注入脚本时设置)
+    var NS = function(){ return window.__GM_CURRENT_SCRIPT__ || 'default'; };
+
+    window.unsafeWindow = window;
+
+    window.GM_getValue = function(key, def) {
+        try {
+            var v = AndroidGM.getValue(NS(), key);
+            if (v === '') return (typeof def === 'undefined') ? null : def;
+            return JSON.parse(v);
+        } catch(e) { return (typeof def === 'undefined') ? null : def; }
+    };
+    window.GM_setValue = function(key, val) {
+        try { AndroidGM.setValue(NS(), key, JSON.stringify(val)); } catch(e) {}
+    };
+    window.GM_deleteValue = function(key) {
+        try { AndroidGM.deleteValue(NS(), key); } catch(e) {}
+    };
+    window.GM_listValues = function() {
+        try { return JSON.parse(AndroidGM.listValues(NS()) || '[]'); } catch(e) { return []; }
+    };
+
+    window.GM_xmlhttpRequest = function(details) {
+        try {
+            var cbName = 'GMXHR_' + Date.now() + '_' + Math.floor(Math.random() * 1e6);
+            window[cbName] = function(jsonStr) {
+                try {
+                    var res = JSON.parse(jsonStr || '{}');
+                    if (details.onload && res.status >= 200 && res.status < 300) details.onload(res);
+                    if (details.onerror && (res.status < 200 || res.status >= 300)) details.onerror(res);
+                    if (details.oncomplete) details.oncomplete(res);
+                } catch(e) {}
+                try { delete window[cbName]; } catch(e2) {}
+            };
+            AndroidGM.httpRequest(JSON.stringify({
+                method: details.method || 'GET',
+                url: details.url,
+                headers: details.headers || {},
+                data: details.data || null,
+                timeout: details.timeout || 30000,
+                cb: cbName
+            }));
+        } catch(e) {}
+    };
+
+    window.GM_notification = function(details) {
+        try {
+            var title = (typeof details === 'string') ? details : (details.title || '脚本通知');
+            var text  = (typeof details === 'string') ? '' : (details.text || details.message || '');
+            AndroidGM.notify(title, text);
+        } catch(e) {}
+    };
+
+    window.GM_setClipboard = function(text) {
+        try { AndroidGM.setClipboard(String(text)); } catch(e) {}
+    };
+
+    window.GM_addStyle = function(css) {
+        try {
+            var el = document.createElement('style');
+            el.textContent = css;
+            (document.head || document.documentElement).appendChild(el);
+        } catch(e) {}
+    };
+
+    window.GM_log = function() {
+        try { console.log.apply(console, arguments); } catch(e) {}
+    };
+})();
+"""
+
+/**
+ * Android → JS GM API 桥。脚本侧通过 addJavascriptInterface 注入的 "AndroidGM" 调用。
+ * 存储按脚本名命名空间隔离(SharedPreferences "gm_values", key = scriptName::key)。
+ */
+class GmBridge(private val activity: WebViewActivity) {
+
+    private val prefs = activity.getSharedPreferences("gm_values", Context.MODE_PRIVATE)
+
+    /** 读取值(空串表示不存在,JS 端回落默认值) */
+    @android.webkit.JavascriptInterface
+    fun getValue(scriptName: String, key: String): String =
+        prefs.getString("$scriptName::$key", "") ?: ""
+
+    @android.webkit.JavascriptInterface
+    fun setValue(scriptName: String, key: String, value: String) {
+        prefs.edit().putString("$scriptName::$key", value).apply()
+    }
+
+    @android.webkit.JavascriptInterface
+    fun deleteValue(scriptName: String, key: String) {
+        prefs.edit().remove("$scriptName::$key").apply()
+    }
+
+    /** 列出某脚本全部 key(JSON 数组字符串) */
+    @android.webkit.JavascriptInterface
+    fun listValues(scriptName: String): String {
+        val prefix = "$scriptName::"
+        val keys = prefs.all.keys.filter { it.startsWith(prefix) }.map { it.removePrefix(prefix) }
+        return org.json.JSONArray(keys).toString()
+    }
+
+    /** GM_xmlhttpRequest:OkHttp 跨域请求,完成后回调 JS(cb 为全局回调函数名) */
+    @android.webkit.JavascriptInterface
+    fun httpRequest(configJson: String) {
+        val cfg = runCatching { org.json.JSONObject(configJson) }.getOrNull() ?: return
+        val method = cfg.optString("method", "GET").uppercase()
+        val url = cfg.optString("url", "")
+        val cb = cfg.optString("cb", "")
+        val timeoutMs = cfg.optLong("timeout", 30000)
+        if (url.isEmpty()) return
+
+        kotlin.concurrent.thread {
+            val result = runCatching {
+                val client = okhttp3.OkHttpClient.Builder()
+                    .connectTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    .readTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    .followRedirects(true)
+                    .build()
+                val builder = okhttp3.Request.Builder().url(url)
+                // 注入请求头
+                val headers = cfg.optJSONObject("headers")
+                if (headers != null) {
+                    val it = headers.keys()
+                    while (it.hasNext()) {
+                        val k = it.next()
+                        builder.header(k, headers.optString(k))
+                    }
+                }
+                builder.header("User-Agent", go.examate.hyp.campus.ChnuConfig.UA)
+                // body
+                val data = cfg.opt("data")
+                val body = data?.let {
+                    val bodyStr = it.toString()
+                    val mediaType = when {
+                        url.contains("form-urlencoded") -> "application/x-www-form-urlencoded"
+                        else -> "application/json; charset=utf-8"
+                    }
+                    bodyStr.toRequestBody(mediaType.toMediaType())
+                }
+                val emptyBody = "".toRequestBody("application/json".toMediaType())
+                val request = when (method) {
+                    "POST" -> builder.post(body ?: emptyBody).build()
+                    "PUT" -> builder.put(body ?: emptyBody).build()
+                    "DELETE" -> builder.delete(body).build()
+                    "HEAD" -> builder.head().build()
+                    else -> builder.get().build()
+                }
+                client.newCall(request).execute().use { resp ->
+                    val respBody = resp.body?.string() ?: ""
+                    // 简单响应头转 JSON
+                    val headersJson = org.json.JSONObject()
+                    resp.headers.forEach { p -> headersJson.put(p.first, p.second) }
+                    org.json.JSONObject().apply {
+                        put("status", resp.code)
+                        put("statusText", resp.message)
+                        put("responseText", respBody)
+                        put("responseHeaders", headersJson)
+                        put("readyState", 4)
+                    }.toString()
+                }
+            }.getOrElse { e ->
+                org.json.JSONObject().apply {
+                    put("status", 0)
+                    put("statusText", "error")
+                    put("error", e.message ?: "network error")
+                    put("responseText", "")
+                    put("readyState", 4)
+                }.toString()
+            }
+            // 回主线程调 JS 回调
+            activity.runOnUiThread {
+                activity.webView?.evaluateJavascript(
+                    "window['$cb'] && window['$cb']($result)",
+                    null
+                )
+            }
+        }
+    }
+
+    /** GM_notification:走系统通知(权限可用时),否则 Toast 兜底 */
+    @android.webkit.JavascriptInterface
+    fun notify(title: String, text: String) {
+        activity.runOnUiThread {
+            ToastUtil.show(activity, if (text.isEmpty()) title else "$title · $text")
+        }
+    }
+
+    /** GM_setClipboard:写剪贴板 */
+    @android.webkit.JavascriptInterface
+    fun setClipboard(text: String) {
+        activity.runOnUiThread {
+            val cm = activity.getSystemService(ClipboardManager::class.java)
+            cm.setPrimaryClip(ClipData.newPlainText("GM脚本", text))
+        }
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -1274,6 +1506,7 @@ private fun ScriptEditorScreen(
     content: String, isEdit: Boolean, onDismiss: () -> Unit, onSave: (String) -> Unit
 ) {
     var text by remember { mutableStateOf(content) }
+    var showAi by remember { mutableStateOf(false) }
     val isLarge = content.length > 200_000
 
     Column(Modifier.fillMaxSize().background(CardBg).statusBarsPadding()) {
@@ -1288,12 +1521,22 @@ private fun ScriptEditorScreen(
             Text(if (isEdit) "编辑脚本" else "粘贴导入",
                 color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Medium,
                 modifier = Modifier.align(Alignment.Center))
-            LiquidGlassIconButton(
-                icon = Icons.Filled.Check,
-                contentDescription = "保存",
-                onClick = { onSave(text) },
-                modifier = Modifier.size(40.dp).align(Alignment.CenterEnd)
-            )
+            // 右侧:AI 编辑 + 保存
+            Row(Modifier.align(Alignment.CenterEnd)) {
+                LiquidGlassIconButton(
+                    icon = Icons.Filled.AutoAwesome,
+                    contentDescription = "AI 编辑",
+                    onClick = { showAi = true },
+                    modifier = Modifier.size(40.dp)
+                )
+                Spacer(Modifier.width(2.dp))
+                LiquidGlassIconButton(
+                    icon = Icons.Filled.Check,
+                    contentDescription = "保存",
+                    onClick = { onSave(text) },
+                    modifier = Modifier.size(40.dp)
+                )
+            }
         }
         if (isLarge) {
             Text("脚本较大(${content.length / 1024}KB),编辑可能有轻微卡顿", color = TextHint, fontSize = 11.sp,
@@ -1320,6 +1563,166 @@ private fun ScriptEditorScreen(
             }
         )
     }
+
+    if (showAi) {
+        val appContext = LocalContext.current
+        AiScriptEditDialog(
+            scriptContent = text,
+            onDismiss = { showAi = false },
+            onApply = { aiResult ->
+                // 应用 AI 返回的完整脚本
+                if (aiResult.isNotBlank()) {
+                    text = aiResult
+                    ToastUtil.show(appContext, "已应用 AI 修改")
+                }
+                showAi = false
+            }
+        )
+    }
+}
+
+/**
+ * AI 分块编辑对话框:只发送脚本头部元数据 + 结构索引(函数/变量清单) + 用户指令,
+ * 不发送全文 —— 大脚本(数百 KB)也能在 token 预算内完成针对性修改。
+ * 复用项目 AI 服务(HttpUtils.sendPostRequestResult 非流式)。
+ */
+@Composable
+private fun AiScriptEditDialog(
+    scriptContent: String,
+    onDismiss: () -> Unit,
+    onApply: (String) -> Unit
+) {
+    val context = LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var instruction by remember { mutableStateOf("") }
+    var loading by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf("") }
+    val showApply = result.isNotBlank()
+
+    // 构造分块上下文:头部元数据 + 函数/变量索引(不含全文)
+    val blockContext = remember(scriptContent) { buildScriptBlockContext(scriptContent) }
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { if (!loading) onDismiss() },
+        containerColor = CardBg,
+        shape = RoundedCornerShape(20.dp),
+        title = { Text("AI 编辑脚本", color = TextPrimary, fontWeight = FontWeight.Medium) },
+        text = {
+            Column(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                Text("分块注入:仅发送脚本头部 + 结构索引,不发送全文", color = TextHint, fontSize = 11.sp)
+                Spacer(Modifier.height(6.dp))
+                if (blockContext.isNotBlank()) {
+                    Text("结构索引: ${blockContext.lines().count()} 项", color = TextHint, fontSize = 11.sp)
+                }
+                Spacer(Modifier.height(8.dp))
+                androidx.compose.material3.OutlinedTextField(
+                    value = instruction,
+                    onValueChange = { instruction = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("如:把超时时间从 30 秒改成 60 秒 / 修复 xx 功能", color = TextHint, fontSize = 12.sp) },
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, color = TextPrimary),
+                    minLines = 2, maxLines = 4,
+                    shape = RoundedCornerShape(12.dp)
+                )
+                Spacer(Modifier.height(10.dp))
+                if (loading) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.material3.CircularProgressIndicator(color = AccentBlue, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Text("AI 处理中,大脚本可能需要一点时间...", color = TextSecondary, fontSize = 12.sp)
+                    }
+                } else if (error.isNotEmpty()) {
+                    Text(error, color = androidx.compose.ui.graphics.Color(0xFFE24B4A), fontSize = 12.sp)
+                } else if (showApply) {
+                    Text("AI 返回了修改后的完整脚本,点\"应用\"替换当前内容", color = TextSecondary, fontSize = 12.sp)
+                    Spacer(Modifier.height(6.dp))
+                    // 预览首 400 字符
+                    Text(
+                        result.take(400) + if (result.length > 400) "\n…(共 ${result.length} 字符)" else "",
+                        color = TextPrimary, fontSize = 11.sp, maxLines = 8, overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            if (showApply) {
+                androidx.compose.material3.TextButton(onClick = { onApply(result) }) { Text("应用", color = AccentBlue) }
+            } else {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        if (instruction.isBlank()) { ToastUtil.show(context, "请输入修改指令"); return@TextButton }
+                        loading = true; error = ""; result = ""
+                        scope.launch {
+                            val out = runAiEditScript(context, blockContext, instruction)
+                            loading = false
+                            if (out is go.examate.hyp.util.ApiResult.Success) {
+                                result = out.data
+                            } else {
+                                error = out.errorMessage()
+                            }
+                        }
+                    },
+                    enabled = !loading
+                ) { Text("发送", color = AccentBlue) }
+            }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(
+                onClick = { if (!loading) onDismiss() },
+                enabled = !loading
+            ) { Text(if (showApply) "取消" else "关闭", color = TextSecondary) }
+        }
+    )
+}
+
+/** 提取脚本结构索引(头部元数据 + 函数/变量清单),用于分块注入上下文 */
+private fun buildScriptBlockContext(script: String): String {
+    val sb = StringBuilder()
+    // 头部元数据(==UserScript== 块)
+    val headStart = script.indexOf("==UserScript==")
+    val headEnd = script.indexOf("==/UserScript==", headStart)
+    if (headStart >= 0 && headEnd > headStart) {
+        sb.append("【脚本头部元数据】\n")
+        sb.append(script.substring(headStart, headEnd + "==/UserScript==".length)).append("\n")
+    }
+    // 函数索引
+    val funcs = Regex("(?:async\\s+)?function\\s+([A-Za-z_$][\\w$]*)\\s*\\(")
+        .findAll(script).map { it.groupValues[1] }.distinct().take(60)
+    if (funcs.any()) {
+        sb.append("\n【函数清单】\n")
+        funcs.forEach { sb.append("- ").append(it).append('\n') }
+    }
+    // 常量/变量索引(取前 40)
+    val vars = Regex("(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=")
+        .findAll(script).map { it.groupValues[1] }.distinct().take(40)
+    if (vars.any()) {
+        sb.append("\n【变量清单】\n")
+        vars.forEach { sb.append("- ").append(it).append('\n') }
+    }
+    return sb.toString()
+}
+
+/** 调用项目 AI 服务做脚本修改(非流式,分块上下文) */
+private suspend fun runAiEditScript(
+    context: Context,
+    blockContext: String,
+    instruction: String
+): go.examate.hyp.util.ApiResult<String> {
+    val provider = go.examate.hyp.config.MyConfig.loadProviders(context)
+        .firstOrNull { it.visible && it.apiKey.isNotBlank() && it.hasCapability(go.examate.hyp.entity.ModelProvider.CAP_CHAT) }
+        ?: return go.examate.hyp.util.ApiResult.ServerError(-1, "未配置可用的 AI 模型,请先在 API 设置中添加")
+    val system = """你是油猴脚本(UserScript)编辑专家。用户会提供脚本的头部元数据与函数/变量索引(不含全文),以及一条修改指令。
+你的任务:
+1. 根据索引与指令判断需要修改/新增哪些函数。
+2. 直接输出修改后的完整 UserScript 脚本(必须包含 // ==UserScript== 头部与正文),不要解释。
+3. 保留原脚本所有未涉及的逻辑与格式,只做指令要求的改动。
+4. 若指令与脚本无关或无法完成,原样输出原脚本内容。"""
+    return go.examate.hyp.util.HttpUtils.sendPostRequestResult(
+        provider.requestUrl, provider.modelId,
+        "【脚本结构】\n$blockContext\n\n【修改指令】\n$instruction",
+        provider.apiKey, system, false, provider.endpointType
+    )
 }
 
 // ════════════════════════════════════════════════════════════════════
