@@ -178,6 +178,8 @@ class WebViewActivity : ComponentActivity() {
     private var docStartRegistered = false
     /** 脚本拾取模式:true 时点击 .user.js 链接会把脚本内容回传给调用方 */
     private var pickScript = false
+    /** 拾取进行中(防止 shouldOverrideUrlLoading 与 onPageStarted 双入口重复触发) */
+    private var pickInProgress = false
 
     // ═══ 文件上传(input type=file 支持) ═══
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
@@ -310,6 +312,12 @@ class WebViewActivity : ComponentActivity() {
              */
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val u = request.url.toString()
+                // 脚本拾取模式:点击安装链接(.user.js / scriptcat code)直接下载回传,
+                // 而不是让 WebView 把脚本当普通页面渲染(源码/空白)
+                if (pickScript && isScriptUrl(u)) {
+                    downloadScriptForPick(u)
+                    return true
+                }
                 if (u.endsWith(".pdf", ignoreCase = true) ||
                     request.url.lastPathSegment?.endsWith(".pdf", ignoreCase = true) == true) {
                     startActivity(Intent(this@WebViewActivity, PdfPreviewActivity::class.java).apply {
@@ -345,6 +353,13 @@ class WebViewActivity : ComponentActivity() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, favicon)
                 webError = null
+                // 兜底:某些安装跳转不走 shouldOverrideUrlLoading(JS location 跳转/重定向直达脚本),
+                // 页面已开始加载脚本 URL 时立即拾取并停止渲染
+                if (pickScript && url != null && isScriptUrl(url)) {
+                    view?.stopLoading()
+                    downloadScriptForPick(url)
+                    return
+                }
                 // 页面文档刚开始加载即写入 token,确保 SPA 初始化时可读到(Jeecg-Boot 前端在启动时读页面存储)
                 injectTokenToStorage(view, url)
                 // document-start 脚本若已通过 addDocumentStartJavaScript 注册,此处跳过避免重复执行
@@ -440,6 +455,12 @@ class WebViewActivity : ComponentActivity() {
                         view: WebView?,
                         request: WebResourceRequest
                     ): Boolean {
+                        // 脚本拾取:新窗口(安装按钮可能 target=_blank)同样拦截
+                        if (pickScript && isScriptUrl(request.url.toString())) {
+                            downloadScriptForPick(request.url.toString())
+                            view?.destroy()
+                            return true
+                        }
                         // 新窗口 URL 交回主 WebView 加载,然后关闭新窗口
                         this@WebViewActivity.webView?.loadUrl(request.url.toString())
                         view?.destroy()
@@ -453,8 +474,7 @@ class WebViewActivity : ComponentActivity() {
 
         setDownloadListener { dUrl, _, _, mimetype, _ ->
             // 脚本拾取模式:拦截 .user.js / 脚本猫 code 链接,下载内容后回传给调用方(脚本管理页导入)
-            if (pickScript && (dUrl.endsWith(".user.js", ignoreCase = true) ||
-                    dUrl.contains("scriptcat.org", ignoreCase = true) && dUrl.endsWith("/code", ignoreCase = true) ||
+            if (pickScript && (isScriptUrl(dUrl) ||
                     mimetype in setOf("text/javascript", "application/javascript"))) {
                 downloadScriptForPick(dUrl)
                 return@setDownloadListener
@@ -605,6 +625,8 @@ class WebViewActivity : ComponentActivity() {
 
     /** 脚本拾取:下载 .user.js / scriptcat code 内容,校验头部后回传给调用方(脚本管理页) */
     private fun downloadScriptForPick(url: String) {
+        if (pickInProgress) return
+        pickInProgress = true
         ToastUtil.show(this, "正在获取脚本...")
         kotlin.concurrent.thread {
             val content = runCatching {
@@ -612,11 +634,15 @@ class WebViewActivity : ComponentActivity() {
                     connectTimeout = 15000
                     readTimeout = 15000
                     setRequestProperty("User-Agent", go.examate.hyp.campus.ChnuConfig.UA)
+                    // 部分脚本站校验来源(脚本猫/油猴安装链接)
+                    setRequestProperty("Referer", webView?.url ?: "https://scriptcat.org/")
+                    setRequestProperty("Accept", "*/*")
                     instanceFollowRedirects = true
                 }
                 conn.inputStream.bufferedReader().use { it.readText() }.also { conn.disconnect() }
             }.getOrNull()
             runOnUiThread {
+                pickInProgress = false
                 if (content.isNullOrBlank() || !content.contains("==UserScript==")) {
                     ToastUtil.show(this, "未识别到脚本内容")
                     return@runOnUiThread
@@ -626,6 +652,14 @@ class WebViewActivity : ComponentActivity() {
                 finish()
             }
         }
+    }
+
+    /** 判断 URL 是否为脚本安装链接(脚本猫/油猴常见: .user.js 或 scriptcat 的 /code 端点) */
+    private fun isScriptUrl(u: String): Boolean {
+        val lower = u.lowercase()
+        return lower.endsWith(".user.js") ||
+            (lower.contains("scriptcat.org") && lower.contains("/code")) ||
+            lower.endsWith("/code") && lower.contains("scriptcat")
     }
 
     override fun onDestroy() {
