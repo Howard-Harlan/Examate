@@ -35,6 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -515,26 +516,6 @@ class WebViewActivity : ComponentActivity() {
                 docStartRegistered = h != null
             }
         }
-
-        // 脚本拾取模式:伪装已安装脚本管理器(Tampermonkey/GM_*),让脚本猫跳过"请先安装脚本管理器"引导页,
-        // 用户可直接点"安装此版本"。仅伪装检测用占位,不影响真实脚本注入逻辑。
-        if (pickScript) {
-            runCatching {
-                val fake = """
-                    (function(){
-                        try {
-                            window.Tampermonkey = window.Tampermonkey || {};
-                            window.GM_info = window.GM_info || {scriptHandler: 'Tampermonkey', script: {}, scriptMetaStr: '', version: '4.0'};
-                            window.GM_xmlhttpRequest = window.GM_xmlhttpRequest || function(){};
-                            window.GM_setValue = window.GM_setValue || function(){};
-                            window.GM_getValue = window.GM_getValue || function(){ return undefined; };
-                            window.unsafeWindow = window.unsafeWindow || window;
-                        } catch(e) {}
-                    })();
-                """.trimIndent()
-                androidx.webkit.WebViewCompat.addDocumentStartJavaScript(this, fake, setOf("*"))
-            }
-        }
         // 注意:loadUrl 不在 configure() 中调用 —— 由 WebViewScreen 在 WebView 挂载到窗口后触发,
         // 保证 WebView 已有有效尺寸/已 attach,避免部分系统 WebView 上"先加载后挂载"导致内容不渲染。
     }
@@ -649,8 +630,8 @@ class WebViewActivity : ComponentActivity() {
                     connectTimeout = 15000
                     readTimeout = 15000
                     setRequestProperty("User-Agent", go.examate.hyp.campus.ChnuConfig.UA)
-                    // 部分脚本站校验来源(脚本猫/油猴安装链接)
-                    setRequestProperty("Referer", webView?.url ?: "https://scriptcat.org/")
+                    // 注意:不能带 Referer!实测脚本猫对带 Referer 的请求返回空内容(SIZE:0),
+                    // 不带 Referer 才返回完整脚本。链接导入不带 Referer 所以成功,拾取带了所以失败。
                     setRequestProperty("Accept", "*/*")
                     instanceFollowRedirects = true
                 }
@@ -994,6 +975,8 @@ private fun UserScriptScreen(onBack: () -> Unit) {
     var editingContent by remember { mutableStateOf("") }
     var showLinkDialog by remember { mutableStateOf(false) }
     var importing by remember { mutableStateOf(false) }
+    /** 待删除确认的脚本名(非空时弹二次确认) */
+    var pendingDelete by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     /** 统一导入入口:校验 + 刷新列表 */
     fun doImport(raw: String, source: String) {
@@ -1108,7 +1091,7 @@ private fun UserScriptScreen(onBack: () -> Unit) {
                             if (idx >= 0) scripts[idx] = scripts[idx].copy(enabled = enabled)
                         },
                         onEdit = { editingId = script.id; editingContent = rebuildRaw(script); showEditor = true },
-                        onDelete = { manager.delete(script.id); scripts.removeAll { it.id == script.id }; ToastUtil.show(context, "已删除") }
+                        onDelete = { pendingDelete = script.id to script.name }
                     )
                 }
             }
@@ -1116,7 +1099,7 @@ private fun UserScriptScreen(onBack: () -> Unit) {
     }
 
     if (showEditor) {
-        ScriptEditorDialog(
+        ScriptEditorScreen(
             content = editingContent,
             isEdit = editingId != null,
             onDismiss = { showEditor = false },
@@ -1187,6 +1170,33 @@ private fun UserScriptScreen(onBack: () -> Unit) {
             }
         )
     }
+
+    // 删除二次确认
+    val delete = pendingDelete
+    if (delete != null) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            containerColor = CardBg,
+            shape = RoundedCornerShape(20.dp),
+            title = { Text("删除脚本", color = TextPrimary, fontWeight = FontWeight.Medium) },
+            text = {
+                Text("确定删除「${delete.second}」吗?删除后不可恢复。", color = TextSecondary, fontSize = 14.sp)
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    manager.delete(delete.first)
+                    scripts.removeAll { it.id == delete.first }
+                    ToastUtil.show(context, "已删除")
+                    pendingDelete = null
+                }) { Text("删除", color = androidx.compose.ui.graphics.Color(0xFFE24B4A)) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { pendingDelete = null }) {
+                    Text("取消", color = TextSecondary)
+                }
+            }
+        )
+    }
 }
 
 private fun rebuildRaw(s: UserScriptManager.UserScript): String = buildString {
@@ -1246,34 +1256,61 @@ private fun ScriptCard(
     }
 }
 
+/**
+ * 全屏脚本编辑器:顶栏(返回/标题/保存) + 大文本编辑区。
+ * 用 BasicTextField(轻量无装饰)避免大脚本(数百 KB)在 AlertDialog 中卡顿。
+ */
 @Composable
-private fun ScriptEditorDialog(
+private fun ScriptEditorScreen(
     content: String, isEdit: Boolean, onDismiss: () -> Unit, onSave: (String) -> Unit
 ) {
     var text by remember { mutableStateOf(content) }
-    androidx.compose.material3.AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = CardBg,
-        shape = RoundedCornerShape(20.dp),
-        title = { Text(if (isEdit) "编辑脚本" else "粘贴导入", color = TextPrimary, fontWeight = FontWeight.Medium) },
-        text = {
-            Column(Modifier.fillMaxWidth()) {
-                Text("支持油猴 / 脚本猫脚本(含 ==UserScript== 头部)", color = TextSecondary, fontSize = 11.sp)
-                Spacer(Modifier.height(8.dp))
-                androidx.compose.material3.OutlinedTextField(
-                    value = text, onValueChange = { text = it },
-                    modifier = Modifier.fillMaxWidth().height(280.dp),
-                    textStyle = androidx.compose.ui.text.TextStyle(
-                        fontSize = 12.sp,
-                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                        color = TextPrimary
-                    )
-                )
+    val isLarge = content.length > 200_000
+
+    Column(Modifier.fillMaxSize().background(CardBg).statusBarsPadding()) {
+        // 顶栏
+        Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)) {
+            LiquidGlassIconButton(
+                icon = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "返回",
+                onClick = onDismiss,
+                modifier = Modifier.size(40.dp).align(Alignment.CenterStart)
+            )
+            Text(if (isEdit) "编辑脚本" else "粘贴导入",
+                color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Medium,
+                modifier = Modifier.align(Alignment.Center))
+            LiquidGlassIconButton(
+                icon = Icons.Filled.Check,
+                contentDescription = "保存",
+                onClick = { onSave(text) },
+                modifier = Modifier.size(40.dp).align(Alignment.CenterEnd)
+            )
+        }
+        if (isLarge) {
+            Text("脚本较大(${content.length / 1024}KB),编辑可能有轻微卡顿", color = TextHint, fontSize = 11.sp,
+                modifier = Modifier.padding(horizontal = 14.dp))
+        }
+
+        // 编辑区:轻量 BasicTextField + 等宽字体
+        androidx.compose.foundation.text.BasicTextField(
+            value = text,
+            onValueChange = { text = it },
+            modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 4.dp),
+            textStyle = androidx.compose.ui.text.TextStyle(
+                fontSize = 12.sp,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                color = TextPrimary,
+                lineHeight = 18.sp
+            ),
+            cursorBrush = androidx.compose.ui.graphics.SolidColor(AccentBlue),
+            decorationBox = { inner ->
+                if (text.isEmpty()) {
+                    Text("支持油猴 / 脚本猫脚本(含 ==UserScript== 头部)", color = TextHint, fontSize = 12.sp)
+                }
+                inner()
             }
-        },
-        confirmButton = { androidx.compose.material3.TextButton(onClick = { onSave(text) }) { Text("保存", color = AccentBlue) } },
-        dismissButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("取消", color = TextSecondary) } }
-    )
+        )
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════
