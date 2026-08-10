@@ -180,6 +180,8 @@ class WebViewActivity : ComponentActivity() {
     private var pickScript = false
     /** 拾取进行中(防止 shouldOverrideUrlLoading 与 onPageStarted 双入口重复触发) */
     private var pickInProgress = false
+    /** 最近尝试拾取的 URL(同一 URL 只下载检测一次,SPA 重复回调去重) */
+    private var lastPickUrl: String = ""
 
     // ═══ 文件上传(input type=file 支持) ═══
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
@@ -362,8 +364,9 @@ class WebViewActivity : ComponentActivity() {
 
             override fun onPageFinished(view: WebView, url: String?) {
                 super.onPageFinished(view, url)
-                // 脚本拾取:页面加载完成后,若最终 URL 是脚本端点(.user.js / api code JSON)则提取回传。
-                // 放在 onPageFinished 而非拦截跳转,保证脚本猫"安装→引导页→跳转"流程不被破坏。
+                // 脚本拾取:页面加载完成后,若当前 URL 是脚本候选页(.user.js / /code / 源码展示页)
+                // 则下载内容检测。链接导入已验证"跳转后 URL 可直接下载脚本",这里复用同一逻辑。
+                // 内容含 ==UserScript== 才回传,否则静默(SPA 中间页/详情页不会误伤)。
                 if (pickScript && url != null && isScriptUrl(url)) {
                     downloadScriptForPick(url)
                     return
@@ -512,6 +515,26 @@ class WebViewActivity : ComponentActivity() {
                 docStartRegistered = h != null
             }
         }
+
+        // 脚本拾取模式:伪装已安装脚本管理器(Tampermonkey/GM_*),让脚本猫跳过"请先安装脚本管理器"引导页,
+        // 用户可直接点"安装此版本"。仅伪装检测用占位,不影响真实脚本注入逻辑。
+        if (pickScript) {
+            runCatching {
+                val fake = """
+                    (function(){
+                        try {
+                            window.Tampermonkey = window.Tampermonkey || {};
+                            window.GM_info = window.GM_info || {scriptHandler: 'Tampermonkey', script: {}, scriptMetaStr: '', version: '4.0'};
+                            window.GM_xmlhttpRequest = window.GM_xmlhttpRequest || function(){};
+                            window.GM_setValue = window.GM_setValue || function(){};
+                            window.GM_getValue = window.GM_getValue || function(){ return undefined; };
+                            window.unsafeWindow = window.unsafeWindow || window;
+                        } catch(e) {}
+                    })();
+                """.trimIndent()
+                androidx.webkit.WebViewCompat.addDocumentStartJavaScript(this, fake, setOf("*"))
+            }
+        }
         // 注意:loadUrl 不在 configure() 中调用 —— 由 WebViewScreen 在 WebView 挂载到窗口后触发,
         // 保证 WebView 已有有效尺寸/已 attach,避免部分系统 WebView 上"先加载后挂载"导致内容不渲染。
     }
@@ -615,7 +638,10 @@ class WebViewActivity : ComponentActivity() {
     /** 脚本拾取:下载 .user.js / scriptcat code 内容,校验头部后回传给调用方(脚本管理页) */
     private fun downloadScriptForPick(url: String) {
         if (pickInProgress) return
+        // 同一 URL 只尝试一次(SPA 详情页/源码页可能多次触发 onPageFinished)
+        if (url == lastPickUrl) return
         pickInProgress = true
+        lastPickUrl = url
         ToastUtil.show(this, "正在获取脚本...")
         kotlin.concurrent.thread {
             val content = runCatching {
@@ -636,7 +662,7 @@ class WebViewActivity : ComponentActivity() {
             runOnUiThread {
                 pickInProgress = false
                 if (script.isNullOrBlank() || !script.contains("==UserScript==")) {
-                    ToastUtil.show(this, "未识别到脚本内容")
+                    // 静默:不是脚本页(SPA 中间页/详情页)或下载失败,不打扰用户
                     return@runOnUiThread
                 }
                 val data = Intent().putExtra(EXTRA_PICK_RESULT, script)
@@ -646,12 +672,17 @@ class WebViewActivity : ComponentActivity() {
         }
     }
 
-    /** 从拾取内容中提取 UserScript 源码:优先解析 JSON(data.script.code),否则按原文本返回 */
+    /**
+     * 从拾取内容中提取 UserScript 源码,兼容三种格式:
+     * 1. 纯文本脚本(.user.js) —— 直接返回
+     * 2. JSON(脚本猫 /api/v2/scripts/{id}/code) —— 取 data.script.code
+     * 3. HTML 源码展示页(script-show-page/code) —— 从内嵌 <pre>/<code> 或转义文本中提取
+     */
     private fun extractScriptFromPick(content: String): String {
-        val trimmed = content.trim().removePrefix("\ufeff")
+        var s = content.trim().removePrefix("\ufeff")
         // JSON 形如 {"code":0,"data":{"script":{"code":"// ==UserScript==..."}}}
-        if (trimmed.startsWith("{") && trimmed.contains("==UserScript==")) {
-            val parsed = runCatching { org.json.JSONObject(trimmed) }.getOrNull()
+        if (s.startsWith("{") && s.contains("==UserScript==")) {
+            val parsed = runCatching { org.json.JSONObject(s) }.getOrNull()
             val code = parsed
                 ?.optJSONObject("data")
                 ?.optJSONObject("script")
@@ -659,17 +690,28 @@ class WebViewActivity : ComponentActivity() {
                 .orEmpty()
             if (code.isNotBlank() && code.contains("==UserScript==")) return code
         }
-        return trimmed
+        // HTML 源码展示页:先反转义(&lt; &gt; &amp; &quot;),再截取 ==UserScript== 块
+        if (s.startsWith("<") || s.contains("<pre") || s.contains("<code")) {
+            s = s
+                .replace("&lt;", "<").replace("&gt;", ">")
+                .replace("&amp;", "&").replace("&quot;", "\"")
+                .replace("&#39;", "'").replace("&nbsp;", " ")
+            val start = s.indexOf("// ==UserScript==")
+            if (start >= 0) {
+                val end = s.indexOf("// ==/UserScript==", start)
+                if (end >= 0) return s.substring(start, end + "// ==/UserScript==".length)
+            }
+        }
+        return s
     }
 
-    /** 判断 URL 是否为脚本安装链接(脚本猫/油猴常见: .user.js / api code JSON 端点) */
+    /** 判断 URL 是否为可能包含脚本内容的候选页(安装直链 / JSON 端点 / 源码展示页) */
     private fun isScriptUrl(u: String): Boolean {
         val lower = u.lowercase()
-        // 排除脚本猫"查看源码"HTML 页(/script-show-page/{id}/code),它只是源码展示页不是安装
-        if (lower.contains("script-show-page")) return false
         return lower.endsWith(".user.js") ||
-            (lower.contains("scriptcat.org") && lower.contains("/code")) ||
-            lower.endsWith("/code") && lower.contains("scriptcat")
+            lower.endsWith(".js") && lower.contains("scriptcat") ||
+            lower.contains("/code") ||
+            lower.contains("script-show-page")
     }
 
     override fun onDestroy() {
@@ -1024,6 +1066,7 @@ private fun UserScriptScreen(onBack: () -> Unit) {
                     DropdownMenuItem(text = { Text("从脚本猫获取") }, leadingIcon = { Icon(Icons.Filled.Extension, null) },
                         onClick = {
                             menuExpanded = false
+                            ToastUtil.show(context, "进入脚本详情后点\"安装此版本\",自动识别导入")
                             catPicker.launch(Intent(context, WebViewActivity::class.java).apply {
                                 putExtra(WebViewActivity.EXTRA_URL, "https://scriptcat.org/zh-CN/search")
                                 putExtra(WebViewActivity.EXTRA_TITLE, "脚本猫")
