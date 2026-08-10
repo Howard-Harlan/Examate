@@ -641,22 +641,43 @@ class WebViewActivity : ComponentActivity() {
                 }
                 conn.inputStream.bufferedReader().use { it.readText() }.also { conn.disconnect() }
             }.getOrNull()
+            // 脚本猫新版安装端点 /api/v2/scripts/{id}/code 返回 JSON,
+            // 脚本正文在 data.script.code 字段(内含转义的 \r\n,不能直接当 UserScript 解析)
+            val script = content?.let { extractScriptFromPick(it) }
             runOnUiThread {
                 pickInProgress = false
-                if (content.isNullOrBlank() || !content.contains("==UserScript==")) {
+                if (script.isNullOrBlank() || !script.contains("==UserScript==")) {
                     ToastUtil.show(this, "未识别到脚本内容")
                     return@runOnUiThread
                 }
-                val data = Intent().putExtra(EXTRA_PICK_RESULT, content)
+                val data = Intent().putExtra(EXTRA_PICK_RESULT, script)
                 setResult(android.app.Activity.RESULT_OK, data)
                 finish()
             }
         }
     }
 
-    /** 判断 URL 是否为脚本安装链接(脚本猫/油猴常见: .user.js 或 scriptcat 的 /code 端点) */
+    /** 从拾取内容中提取 UserScript 源码:优先解析 JSON(data.script.code),否则按原文本返回 */
+    private fun extractScriptFromPick(content: String): String {
+        val trimmed = content.trim().removePrefix("\ufeff")
+        // JSON 形如 {"code":0,"data":{"script":{"code":"// ==UserScript==..."}}}
+        if (trimmed.startsWith("{") && trimmed.contains("==UserScript==")) {
+            val parsed = runCatching { org.json.JSONObject(trimmed) }.getOrNull()
+            val code = parsed
+                ?.optJSONObject("data")
+                ?.optJSONObject("script")
+                ?.optString("code", "")
+                .orEmpty()
+            if (code.isNotBlank() && code.contains("==UserScript==")) return code
+        }
+        return trimmed
+    }
+
+    /** 判断 URL 是否为脚本安装链接(脚本猫/油猴常见: .user.js / api code JSON 端点) */
     private fun isScriptUrl(u: String): Boolean {
         val lower = u.lowercase()
+        // 排除脚本猫"查看源码"HTML 页(/script-show-page/{id}/code),它只是源码展示页不是安装
+        if (lower.contains("script-show-page")) return false
         return lower.endsWith(".user.js") ||
             (lower.contains("scriptcat.org") && lower.contains("/code")) ||
             lower.endsWith("/code") && lower.contains("scriptcat")
