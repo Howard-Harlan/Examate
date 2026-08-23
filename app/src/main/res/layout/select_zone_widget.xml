@@ -5,7 +5,7 @@
     android:layout_height="wrap_content"
     android:layout_width="wrap_content">
 
-    <go.examate.hyp.CustomView.RectangleDrawableConstraintLayout
+    <go.examate.hyp.customview.RectangleDrawableConstraintLayout
         android:id="@+id/root_container"
         android:layout_width="300dp"
         android:layout_height="150dp"
@@ -70,6 +70,6 @@
             app:layout_constraintTop_toTopOf="@+id/copy_btn"
             android:layout_marginStart="6dp"/>
 
-    </go.examate.hyp.CustomView.RectangleDrawableConstraintLayout>
+    </go.examate.hyp.customview.RectangleDrawableConstraintLayout>
 
 </FrameLayout>

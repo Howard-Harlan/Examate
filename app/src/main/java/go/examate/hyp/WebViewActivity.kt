@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
 import android.view.ViewGroup
@@ -18,6 +19,7 @@ import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -58,6 +60,9 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewFeature
+import go.examate.hyp.config.PrefsManager
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -76,6 +81,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.CardBg
+import go.examate.hyp.ui.theme.DialogBg
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
@@ -209,6 +215,7 @@ class WebViewActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         val url = intent.getStringExtra(EXTRA_URL) ?: run { finish(); return }
         val title = intent.getStringExtra(EXTRA_TITLE) ?: "网页"
         injectToken = intent.getStringExtra(EXTRA_INJECT_TOKEN) ?: ""
@@ -223,41 +230,43 @@ class WebViewActivity : ComponentActivity() {
         webView!!.configure(uaMode)
 
         setContent {
-            WebViewScreen(
-                initialTitle = title,
-                webView = webView!!,
-                pendingUrl = pendingUrl,
-                progressProvider = { progressState },
-                titleProvider = { if (titleState.isBlank()) title else titleState },
-                errorProvider = { webError },
-                onRetry = {
-                    webError = null
-                    val wv = webView
-                    if (wv != null) {
-                        // 渲染进程崩溃后 reload() 可能无效,统一用 loadUrl 重新加载(等价刷新)
-                        val target = wv.url ?: pendingUrl
-                        if (target.isNotEmpty()) wv.loadUrl(target) else wv.reload()
+            go.examate.hyp.ui.theme.ExamateTheme {
+                WebViewScreen(
+                    initialTitle = title,
+                    webView = webView!!,
+                    pendingUrl = pendingUrl,
+                    progressProvider = { progressState },
+                    titleProvider = { if (titleState.isBlank()) title else titleState },
+                    errorProvider = { webError },
+                    onRetry = {
+                        webError = null
+                        val wv = webView
+                        if (wv != null) {
+                            // 渲染进程崩溃后 reload() 可能无效,统一用 loadUrl 重新加载(等价刷新)
+                            val target = wv.url ?: pendingUrl
+                            if (target.isNotEmpty()) wv.loadUrl(target) else wv.reload()
+                        }
+                    },
+                    currentUaMode = uaMode,
+                    onBack = { finish() },
+                    onRefresh = { webView?.reload() },
+                    onSwitchUa = { mode ->
+                        uaMode = mode
+                        webView?.applyUa(mode)
+                        webView?.reload()
+                    },
+                    onOpenBrowser = {
+                        try {
+                            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(webView?.url ?: url)))
+                        } catch (e: Exception) {
+                            ToastUtil.show(this, "无法打开浏览器")
+                        }
+                    },
+                    onManageScripts = {
+                        startActivity(Intent(this, UserScriptActivity::class.java))
                     }
-                },
-                currentUaMode = uaMode,
-                onBack = { finish() },
-                onRefresh = { webView?.reload() },
-                onSwitchUa = { mode ->
-                    uaMode = mode
-                    webView?.applyUa(mode)
-                    webView?.reload()
-                },
-                onOpenBrowser = {
-                    try {
-                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(webView?.url ?: url)))
-                    } catch (e: Exception) {
-                        ToastUtil.show(this, "无法打开浏览器")
-                    }
-                },
-                onManageScripts = {
-                    startActivity(Intent(this, UserScriptActivity::class.java))
-                }
-            )
+                )
+            }
         }
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -295,6 +304,21 @@ class WebViewActivity : ComponentActivity() {
         return if (clean.contains("Mobile")) clean else "$clean Mobile"
     }
 
+    /**
+     * 当前是否深色模式(与应用主题设置一致):
+     * 0=跟随系统(读 uiMode), 1=浅色, 2=深色。
+     * WebView 内容/背景据此决定是否强制算法深色。
+     */
+    private fun isDarkModeActive(): Boolean {
+        val mode = PrefsManager.getInstance(this).themeMode
+        return when (mode) {
+            1 -> false
+            2 -> true
+            else -> (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+                    Configuration.UI_MODE_NIGHT_YES
+        }
+    }
+
     private fun WebView.configure(ua: Int) {
         settings.apply {
             javaScriptEnabled = true
@@ -313,6 +337,20 @@ class WebViewActivity : ComponentActivity() {
             mediaPlaybackRequiresUserGesture = false
         }
         applyUa(ua)
+
+        // WebView 内容跟随应用深色模式:深色下强制算法深色,避免网页内容仍亮白刺眼
+        if (isDarkModeActive()) {
+            // API 33+:算法深色(智能转换背景/文字);API 29-32:forceDark
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
+                WebSettingsCompat.setAlgorithmicDarkeningAllowed(settings, true)
+            } else if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK)) {
+                WebSettingsCompat.setForceDark(settings, WebSettingsCompat.FORCE_DARK_ON)
+            }
+            // 背景设深色:页面透明区域/加载间隙不闪白
+            setBackgroundColor(android.graphics.Color.rgb(28, 28, 30))
+        } else {
+            setBackgroundColor(android.graphics.Color.WHITE)
+        }
 
         // 允许第三方 Cookie(校园系统 SSO 需要)
         android.webkit.CookieManager.getInstance().setAcceptCookie(true)
@@ -1194,8 +1232,11 @@ class GmBridge(private val activity: WebViewActivity) {
 class UserScriptActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         setContent {
-            UserScriptScreen(onBack = { finish() })
+            go.examate.hyp.ui.theme.ExamateTheme {
+                UserScriptScreen(onBack = { finish() })
+            }
         }
     }
 }
@@ -1277,7 +1318,7 @@ private fun UserScriptScreen(onBack: () -> Unit) {
                     expanded = menuExpanded,
                     onDismissRequest = { menuExpanded = false },
                     shape = RoundedCornerShape(20.dp),
-                    containerColor = Color.White.copy(alpha = 0.95f),
+                    containerColor = DialogBg,
                     tonalElevation = 0.dp,
                     shadowElevation = 8.dp
                 ) {
@@ -1760,15 +1801,20 @@ private fun WebViewScreen(
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.align(Alignment.Center).padding(horizontal = 56.dp)
             )
-            // 功能菜单
-            WebViewOverflowMenu(
-                currentUaMode = currentUaMode,
-                onRefresh = onRefresh,
-                onSwitchUa = onSwitchUa,
-                onOpenBrowser = onOpenBrowser,
-                onManageScripts = onManageScripts,
-                modifier = Modifier.align(Alignment.CenterEnd)
-            )
+            // 右侧:功能菜单(刷新已移入菜单)
+            Row(
+                Modifier.align(Alignment.CenterEnd),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                WebViewOverflowMenu(
+                    currentUaMode = currentUaMode,
+                    onRefresh = onRefresh,
+                    onSwitchUa = onSwitchUa,
+                    onOpenBrowser = onOpenBrowser,
+                    onManageScripts = onManageScripts
+                )
+            }
         }
 
         // 加载进度条
@@ -1815,9 +1861,11 @@ private fun WebViewScreen(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(err, color = TextSecondary, fontSize = 14.sp)
                         Spacer(Modifier.height(12.dp))
-                        androidx.compose.material3.OutlinedButton(onClick = onRetry) {
-                            Text("重试", color = AccentBlue)
-                        }
+                        go.examate.hyp.ui.components.LiquidGlassButton(
+                            text = "重试",
+                            onClick = onRetry,
+                            modifier = Modifier.padding(horizontal = 24.dp)
+                        )
                     }
                 }
             }
@@ -1849,11 +1897,12 @@ private fun WebViewOverflowMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
             shape = RoundedCornerShape(20.dp),
-            containerColor = Color.White.copy(alpha = 0.95f),
+            containerColor = DialogBg,
             tonalElevation = 0.dp,
             shadowElevation = 8.dp
         ) {
-            DropdownMenuItem(text = { Text("刷新") }, leadingIcon = { Icon(Icons.Filled.Refresh, null) },
+            DropdownMenuItem(text = { Text("刷新") },
+                leadingIcon = { Icon(Icons.Filled.Refresh, null) },
                 onClick = { expanded = false; onRefresh() })
             DropdownMenuItem(text = { Text("切换UA") },
                 leadingIcon = { Icon(Icons.Filled.Smartphone, null) },

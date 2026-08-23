@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import go.examate.hyp.ui.components.LiquidGlassBackground
 import go.examate.hyp.ui.components.LiquidGlassIconButton
+import go.examate.hyp.ui.theme.SelectedBg
 import go.examate.hyp.ui.theme.ExamateTheme
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.TextPrimary
@@ -117,7 +118,7 @@ private fun ScheduleSettingsScreen(onBack: () -> Unit) {
                     Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(if (subTab == index) Primary else ScheduleCellBg)
+                        .background(if (subTab == index) SelectedBg else ScheduleCellBg)
                         .clickable { subTab = index }
                         .padding(vertical = 9.dp),
                     contentAlignment = Alignment.Center

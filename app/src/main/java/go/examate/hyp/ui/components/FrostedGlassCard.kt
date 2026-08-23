@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import go.examate.hyp.ui.theme.GlassBorder
+import go.examate.hyp.ui.theme.GlassCardTint
 import go.examate.hyp.ui.theme.GlassHighlight
 import go.examate.hyp.ui.theme.GlassShadow
 
@@ -35,13 +36,18 @@ import go.examate.hyp.ui.theme.GlassShadow
 fun FrostedGlassCard(
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 24.dp,
-    tint: Color = Color.White.copy(alpha = 0.55f),
+    tint: Color? = null,
     elevation: Dp = 6.dp,
     content: @Composable BoxScope.() -> Unit
 ) {
     val shape = RoundedCornerShape(cornerRadius)
+    // 默认 tint 主题化:浅色 100% 白(base),深色 11% 白(深色下避免过亮)。
+    // 渐变用 alpha 乘法保留 tint 的透明度,避免 copy(alpha=x) 把深色 tint 覆盖成高白
+    val effectiveTint = tint ?: GlassCardTint
+    val tintAlpha = effectiveTint.alpha
     // 在 @Composable 上下文读取颜色,供 drawBehind lambda 使用
     val highlightColor = GlassHighlight
+    val highlightAlpha = highlightColor.alpha
 
     Box(
         modifier = modifier
@@ -55,8 +61,8 @@ fun FrostedGlassCard(
             .background(
                 brush = Brush.linearGradient(
                     colors = listOf(
-                        tint.copy(alpha = 0.8f),
-                        tint.copy(alpha = 0.6f)
+                        effectiveTint.copy(alpha = tintAlpha * 0.8f),
+                        effectiveTint.copy(alpha = tintAlpha * 0.6f)
                     ),
                     start = Offset(0f, 0f),
                     end = Offset(0f, Float.POSITIVE_INFINITY)
@@ -67,7 +73,7 @@ fun FrostedGlassCard(
                 drawRect(
                     brush = Brush.linearGradient(
                         colors = listOf(
-                            highlightColor.copy(alpha = 0.5f),
+                            highlightColor.copy(alpha = highlightAlpha * 0.5f),
                             Color.Transparent
                         ),
                         start = Offset(0f, 0f),

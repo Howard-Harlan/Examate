@@ -26,6 +26,8 @@ import androidx.compose.ui.window.DialogProperties
 import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.ChipBg
 import go.examate.hyp.ui.theme.DialogBg
+import go.examate.hyp.ui.theme.TextPrimary
+import go.examate.hyp.ui.theme.TextSecondary
 
 /**
  * 浅白色对话框(克制风格,用于表单/确认等场景)
@@ -67,7 +69,7 @@ fun PlainDialog(
 fun PlainDialogTitle(text: String) {
     Text(
         text = text,
-        color = Color.Black,
+        color = TextPrimary,
         fontSize = 20.sp,
         fontWeight = FontWeight.Medium,
         modifier = Modifier.padding(24.dp, 20.dp, 24.dp, 8.dp)
@@ -78,7 +80,7 @@ fun PlainDialogTitle(text: String) {
 fun PlainDialogContent(text: String) {
     Text(
         text = text,
-        color = Color.Black.copy(0.7f),
+        color = TextSecondary,
         fontSize = 14.sp,
         lineHeight = 20.sp,
         modifier = Modifier.padding(24.dp, 0.dp, 24.dp, 8.dp)
@@ -143,7 +145,7 @@ private fun DialogButton(
     ) {
         Text(
             text = text,
-            color = if (isAccent) Color.White else Color.Black,
+            color = if (isAccent) Color.White else TextPrimary,
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium
         )

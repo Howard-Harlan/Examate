@@ -44,11 +44,31 @@ val GlassHighlightDark = Color(0x33FFFFFF)    // 深色玻璃高光(20% 白)
 val GlassShadowLight = Color(0x1A000000)      // 浅色阴影(10% 黑)
 val GlassShadowDark = Color(0x66000000)       // 深色阴影(40% 黑,更深以增强层次)
 
+// ── 主题化玻璃表面(深色用白色低透明度,避免过亮) ──
+// 注意:组件内渐变用 "alpha 乘法"(copy(alpha = base.alpha * x)),
+// 因此这里存的是基础白度(100% 白),渐变在浅色下还原为 80%/60% 白
+val GlassCardTintLight = Color(0xFFFFFFFF)    // 卡片基础白(浅色 100%,渐变后 80%/60%)
+val GlassCardTintDark = Color(0x1CFFFFFF)     // 深色卡片 11% 白(渐变后 ~9%/7%,深色玻璃观感)
+val GlassChipTintLight = Color(0x7AFFFFFF)    // 玻璃胶囊 48% 白
+val GlassChipTintDark = Color(0x1FFFFFFF)     // 深色玻璃胶囊 12% 白
+val GlassInputTintLight = Color(0xE0FFFFFF)   // 输入/高亮面 88% 白
+val GlassInputTintDark = Color(0x2EFFFFFF)    // 深色输入面 18% 白
+val BgGradientTintLight = Color(0xFFE8EAF0)   // 页面背景底部微光(浅色)
+val BgGradientTintDark = Color(0xFF1A1A2E)    // 页面背景底部微光(深蓝黑,与 hero 渐变一致)
+
 // ── 主色 ──
 val PrimaryLight = Color(0xFF374151)          // 深石墨灰(按钮/图标)
 val PrimaryDarkColor = Color(0xFFE5E5EA)      // 深色提亮(iOS systemGray)
 val AccentLight = Color(0xFF6B7280)
 val AccentDark = Color(0xFFAEAEB2)            // 深色辅助色提亮
+
+// ── 选中态(切换按钮/Tab/选择器) ──
+// 深色下 Primary 会提亮成浅灰 #E5E5EA,若直接作按钮背景会"白底白字"发白,
+// 因此选中背景用品牌蓝(白字对比度 ~4.6:1,清晰不发白)
+val SelectedBgLight = Color(0xFF374151)       // 浅色:原 Primary 深灰,观感不变
+val SelectedBgDark = Color(0xFF3D6BD6)        // 深色:品牌蓝
+val OnSelectedLight = Color(0xFFFFFFFF)       // 选中文字:白
+val OnSelectedDark = Color(0xFFFFFFFF)        // 选中文字:白(蓝底上对比度达标)
 
 // ── 文字(核心可读性) ──
 // 深色模式用纯白 + 透明白,而非灰色,保证对比度

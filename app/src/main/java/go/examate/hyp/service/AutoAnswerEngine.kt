@@ -32,10 +32,11 @@ import org.json.JSONObject
 class AutoAnswerEngine private constructor(
     private val providers: List<ModelProvider>,
     private val multiAiVerify: Boolean = false,
-    private val verifySelectedIndices: Set<Int> = emptySet()
+    private val verifySelectedIndices: Set<Int> = emptySet(),
+    private val context: android.content.Context? = null
 ) {
-    /** UnifiedFloatingService 实例当前未使用,保留参数以便未来扩展 */
-    constructor(service: UnifiedFloatingService, providers: List<ModelProvider>, multiAiVerify: Boolean = false, verifySelectedIndices: Set<Int> = emptySet()) : this(providers, multiAiVerify, verifySelectedIndices)
+    /** UnifiedFloatingService 实例当前未使用,保留参数以便未来扩展;传入的 context 用于构建笔记索引 */
+    constructor(service: UnifiedFloatingService, providers: List<ModelProvider>, multiAiVerify: Boolean = false, verifySelectedIndices: Set<Int> = emptySet()) : this(providers, multiAiVerify, verifySelectedIndices, service.applicationContext)
 
     companion object {
         private const val TAG = "AutoAnswerEngine"
@@ -74,6 +75,20 @@ class AutoAnswerEngine private constructor(
         activeProviders
     } else {
         activeProviders.filterIndexed { index, _ -> verifySelectedIndices.contains(index) }
+    }
+
+    /**
+     * 笔记知识索引(渐进披露):只注入标题+摘要,保持解题请求低 token。
+     * 类似 Skills 的索引机制,避免把全部笔记正文塞进每轮请求影响速率。
+     */
+    private val notesIndexPrompt: String by lazy {
+        context?.let { go.examate.hyp.notes.NoteStorage.buildIndexPrompt(it) } ?: ""
+    }
+
+    /** 解题系统提示词:基础解题格式 + 笔记知识索引 */
+    private val solvingSystemPrompt: String by lazy {
+        if (notesIndexPrompt.isBlank()) MyConfig.SYSTEM_PROMPT
+        else MyConfig.SYSTEM_PROMPT + notesIndexPrompt
     }
 
     fun start() {
@@ -211,7 +226,7 @@ class AutoAnswerEngine private constructor(
             provider.modelId,
             currentQuestionText,
             provider.apiKey,
-            MyConfig.SYSTEM_PROMPT,
+            solvingSystemPrompt,
             provider.enableThinking,
             provider.endpointType ?: "chat"
         )
@@ -238,7 +253,7 @@ class AutoAnswerEngine private constructor(
                             provider.modelId,
                             currentQuestionText,
                             provider.apiKey,
-                            MyConfig.SYSTEM_PROMPT,
+                            solvingSystemPrompt,
                             provider.enableThinking,
                             provider.endpointType ?: "chat"
                         )

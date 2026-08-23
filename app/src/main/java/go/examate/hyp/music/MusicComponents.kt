@@ -11,8 +11,10 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +25,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -35,18 +39,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
@@ -56,18 +59,16 @@ import com.kyant.shapes.RoundedRectangle
 import go.examate.hyp.ui.components.IconMusic
 import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.AccentPurple
+import go.examate.hyp.ui.theme.IsDark
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
 
 /**
- * 统一封面加载组件 — 自动选择封面来源:
- *  1. coverUrl 是 http(s) URL → 在线封面(Coil 直接加载)
- *  2. albumId > 0 → 本地 albumart(content://media/external/audio/albumart/<id>),
- *     加载失败时回退到 3
- *  3. coverUrl 是本地文件路径 → IO 线程提取嵌入封面字节,再交 Coil 显示
- *  4. 都没有 → 占位图标
+ * 统一封面加载组件 — 本地/在线统一走 [AlbumArtLoader.load]:
+ *  在线封面(OkHttp 下载,自动补全协议相对 URL) → 本地嵌入封面 → albumart → 目录封面
+ *  全部失败显示标题首字母占位。
  */
 @Composable
 fun MusicCover(
@@ -78,99 +79,38 @@ fun MusicCover(
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
 
-    // 本地文件路径:异步提取嵌入封面字节(getEmbeddedPicture)
-    var embeddedCover by androidx.compose.runtime.remember(item.id) {
-        androidx.compose.runtime.mutableStateOf<ByteArray?>(null)
+    var cover by androidx.compose.runtime.remember(item.id) {
+        androidx.compose.runtime.mutableStateOf<android.graphics.Bitmap?>(null)
     }
-    // albumart 加载失败标记:失败后回退提取嵌入封面
-    var albumArtFailed by androidx.compose.runtime.remember(item.id) {
-        androidx.compose.runtime.mutableStateOf(false)
-    }
-
-    // 需要提取嵌入封面的条件:
-    // 1. coverUrl 是文件路径且(albumId<=0 或 albumart 加载失败)
-    // 2. localUri 非空且没有其他封面来源(系统打开的音频文件)
-    val needEmbedded = (item.coverUrl.isNotBlank() &&
-        !item.coverUrl.startsWith("http") &&
-        (item.albumId <= 0 || albumArtFailed)) ||
-        (item.localUri != null && item.albumId <= 0 && item.coverUrl.isBlank()) ||
-        (item.localUri != null && albumArtFailed)
-    androidx.compose.runtime.LaunchedEffect(item.coverUrl, albumArtFailed, item.localUri) {
-        if (needEmbedded && embeddedCover == null) {
-            embeddedCover = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                // 优先用文件路径,回退到 content URI
-                extractEmbeddedCover(item.coverUrl) ?: extractEmbeddedCoverFromUri(context, item.localUri)
-            }
-        }
-    }
-
-    // 构建封面 model
-    val coverModel: Any? = when {
-        item.coverUrl.startsWith("http") -> item.coverUrl
-        item.albumId > 0 && !albumArtFailed ->
-            android.net.Uri.parse("content://media/external/audio/albumart/${item.albumId}")
-        embeddedCover != null -> embeddedCover!!
-        else -> null
+    androidx.compose.runtime.LaunchedEffect(item.id) {
+        cover = AlbumArtLoader.load(context, item)
     }
 
     Box(modifier.background(if (active) Primary.copy(0.2f) else Primary.copy(0.07f)), contentAlignment = Alignment.Center) {
-        if (coverModel != null) {
-            // 用 rememberAsyncImagePainter 监听加载状态,albumart 失败时触发回退
-            val painter = coil.compose.rememberAsyncImagePainter(
-                model = ImageRequest.Builder(context)
-                    .data(coverModel)
-                    .crossfade(true)
-                    .build()
-            )
-            val painterState = painter.state
-            // albumart URI 加载失败 → 置 albumArtFailed=true 触发嵌入封面提取
-            androidx.compose.runtime.LaunchedEffect(painterState) {
-                if (painterState is coil.compose.AsyncImagePainter.State.Error &&
-                    item.albumId > 0 && !albumArtFailed) {
-                    albumArtFailed = true
-                }
-            }
-            androidx.compose.foundation.Image(
-                painter = painter,
+        when {
+            // 解析出的封面(本地/在线统一)
+            cover != null -> androidx.compose.foundation.Image(
+                bitmap = cover!!.asImageBitmap(),
                 contentDescription = item.title,
+                contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
-        } else if (active && isPlaying) {
-            PlayingBars()
-        } else {
-            Icon(IconMusic, contentDescription = null, tint = if (active) Primary else TextHint,
-                modifier = Modifier.size(20.dp))
+            // 播放中的当前曲目:律动条
+            active && isPlaying -> PlayingBars()
+            // 无封面占位:标题首字母,观感更接近有封面
+            else -> {
+                val initial = item.title.firstOrNull()?.uppercaseChar() ?: '♪'
+                Text(
+                    text = initial.toString(),
+                    color = if (active) Primary else TextHint,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }
 
-/** 从本地音频文件提取嵌入封面图片字节(MediaMetadataRetriever.getEmbeddedPicture) */
-private fun extractEmbeddedCover(filePath: String): ByteArray? {
-    if (filePath.isBlank()) return null
-    val retriever = android.media.MediaMetadataRetriever()
-    return try {
-        retriever.setDataSource(filePath)
-        retriever.embeddedPicture
-    } catch (e: Exception) {
-        null
-    } finally {
-        runCatching { retriever.release() }
-    }
-}
-
-/** 从 content/file URI 提取嵌入封面字节(albumart URI 失败时的回退) */
-private fun extractEmbeddedCoverFromUri(context: android.content.Context, uri: android.net.Uri?): ByteArray? {
-    if (uri == null) return null
-    val retriever = android.media.MediaMetadataRetriever()
-    return try {
-        retriever.setDataSource(context, uri)
-        retriever.embeddedPicture
-    } catch (e: Exception) {
-        null
-    } finally {
-        runCatching { retriever.release() }
-    }
-}
 
 /**
  * 律动条 — 三根随音乐跳动的竖条(rememberInfiniteTransition),播放中显示于当前曲目。
@@ -198,13 +138,22 @@ fun PlayingBars(color: Color = AccentBlue, modifier: Modifier = Modifier) {
 
 /**
  * 单曲行 — 列表/历史/搜索共用(QueueItem)。当前曲目显示律动条。
+ * 层级强化:每行带轻量卡片底(非播放中),行间间距由调用方提供。
  */
 @Composable
-fun TrackRow(item: QueueItem, active: Boolean, isPlaying: Boolean, onClick: () -> Unit) {
+fun TrackRow(
+    item: QueueItem,
+    active: Boolean,
+    isPlaying: Boolean,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
+    sourceLabel: String? = null
+) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
-            .background(if (active) Primary.copy(0.10f) else Color.Transparent)
-            .clickable { onClick() }.padding(horizontal = 12.dp, vertical = 11.dp),
+            .background(if (active) Primary.copy(0.12f) else go.examate.hyp.ui.theme.CardBg.copy(0.55f))
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(horizontal = 12.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         MusicCover(
@@ -213,8 +162,37 @@ fun TrackRow(item: QueueItem, active: Boolean, isPlaying: Boolean, onClick: () -
         )
         Spacer(Modifier.size(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(item.title, color = if (active) Primary else TextPrimary, fontSize = 14.sp,
-                fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(item.title, color = if (active) Primary else TextPrimary, fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false))
+                if (!sourceLabel.isNullOrBlank()) {
+                    Spacer(Modifier.size(6.dp))
+                    Box(
+                        Modifier.clip(RoundedCornerShape(5.dp))
+                            .background(go.examate.hyp.ui.theme.Primary.copy(0.14f))
+                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                    ) {
+                        Text(sourceLabel, color = go.examate.hyp.ui.theme.Primary, fontSize = 9.sp)
+                    }
+                }
+                // 音质标注(落雪同款:搜索接口给出的最高可得档)— 24bit臻品/SQ无损/HQ高清
+                if (item.qualityTag.isNotBlank()) {
+                    Spacer(Modifier.size(6.dp))
+                    val (bg, fg) = when (item.qualityTag) {
+                        "24bit" -> Color(0xFFB45309).copy(0.16f) to Color(0xFFB45309)
+                        "SQ" -> Color(0xFF7C3AED).copy(0.14f) to Color(0xFF7C3AED)
+                        else -> Color(0xFF2563EB).copy(0.14f) to Color(0xFF2563EB)
+                    }
+                    Box(
+                        Modifier.clip(RoundedCornerShape(5.dp))
+                            .background(bg)
+                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                    ) {
+                        Text(item.qualityTag, color = fg, fontSize = 9.sp, fontWeight = FontWeight.Medium)
+                    }
+                }
+            }
             Text(item.artistDisplay(), color = TextHint, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Spacer(Modifier.size(8.dp))
@@ -225,13 +203,26 @@ fun TrackRow(item: QueueItem, active: Boolean, isPlaying: Boolean, onClick: () -
 /**
  * 底部悬浮液态玻璃播放条 — drawBackdrop 折射下方内容层,显示当前曲目 + 进度 + 控制。
  * 由主页/列表页共用,占满可用宽度(旁边的"我的"按钮由调用方拼接)。
+ * 交互(Apple Music 式):
+ *  - 点击 → 直接展开播放页
+ *  - 按住拖动(含长按后拖) → 1:1 跟手驱动播放页 sheet 展开,松手未过阈值弹性收回
  */
 @Composable
-fun PlayerBar(controller: MusicController, backdrop: Backdrop, modifier: Modifier = Modifier, onClick: () -> Unit = {}) {
+fun PlayerBar(
+    controller: MusicController,
+    backdrop: Backdrop,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit = {},
+    onSheetDrag: ((dyPx: Float) -> Unit)? = null,
+    onSheetDragEnd: (() -> Unit)? = null
+) {
     val track = controller.current
     val progress = if (track != null && track.durationMs > 0)
         controller.positionMs.toFloat() / track.durationMs else 0f
 
+    // 主题色/模式在组合上下文读取,供 onDrawSurface 使用;
+    // 降低透明度(加深遮罩),强化悬浮条与背景层级区分
+    val playerTint = Color.White.copy(if (IsDark) 0.24f else 0.52f)
     Box(
         modifier.fillMaxWidth().height(64.dp)
             .drawBackdrop(
@@ -242,9 +233,33 @@ fun PlayerBar(controller: MusicController, backdrop: Backdrop, modifier: Modifie
                     blur(8f.dp.toPx())
                     lens(18f.dp.toPx(), 18f.dp.toPx())
                 },
-                onDrawSurface = { drawRect(Color.White.copy(0.26f)) }
+                onDrawSurface = { drawRect(playerTint) }
             )
-            .clickable { onClick() }
+            .pointerInput(Unit) {
+                // 按住拖动:越过迟滞阈值后进入拖拽模式,1:1 跟手回调 dy(上拉展开/下拉收回),
+                // 松手由调用方按位置/方向判定展开或弹性取消
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    var totalDy = 0f
+                    var started = false
+                    var lastY = down.position.y
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull() ?: break
+                        if (!change.pressed) break
+                        val dy = change.position.y - lastY
+                        lastY = change.position.y
+                        totalDy += dy
+                        if (!started && kotlin.math.abs(totalDy) > 16f && onSheetDrag != null) started = true
+                        if (started) {
+                            onSheetDrag!!.invoke(dy)
+                            change.consume()
+                        }
+                    }
+                    if (started) onSheetDragEnd?.invoke()
+                }
+            }
+            .clickable(onClick = onClick)
     ) {
         Column(Modifier.fillMaxSize()) {
             Row(
@@ -295,7 +310,7 @@ fun PlayerBar(controller: MusicController, backdrop: Backdrop, modifier: Modifie
                 PlayIcon(isPlaying = controller.isPlaying) { controller.toggle() }
                 PlayerCtrlBtn("⏭", 32.dp) { controller.next() }
             }
-            Box(Modifier.fillMaxWidth().height(3.dp).background(Color.Black.copy(0.06f))) {
+            Box(Modifier.fillMaxWidth().height(3.dp).background(if (IsDark) Color.White.copy(0.15f) else Color.Black.copy(0.06f))) {
                 Box(Modifier.fillMaxWidth(progress.coerceIn(0f, 1f)).height(3.dp).background(AccentBlue))
             }
         }
@@ -310,11 +325,17 @@ private fun PlayIcon(isPlaying: Boolean, onClick: () -> Unit) {
     ) {
         if (isPlaying) {
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Box(Modifier.size(4.dp, 15.dp).background(Color.White, RoundedCornerShape(1.dp)))
-                Box(Modifier.size(4.dp, 15.dp).background(Color.White, RoundedCornerShape(1.dp)))
+                // 深色下 Primary 提亮为浅灰,图标需反色为深色
+                val iconColor = if (IsDark) Color(0xFF1A1A2E) else Color.White
+                Box(Modifier.size(4.dp, 15.dp).background(iconColor, RoundedCornerShape(1.dp)))
+                Box(Modifier.size(4.dp, 15.dp).background(iconColor, RoundedCornerShape(1.dp)))
             }
         } else {
-            Icon(Icons.Filled.PlayArrow, contentDescription = "播放", tint = Color.White, modifier = Modifier.size(24.dp))
+            Icon(
+                Icons.Filled.PlayArrow, contentDescription = "播放",
+                tint = if (IsDark) Color(0xFF1A1A2E) else Color.White,
+                modifier = Modifier.size(24.dp)
+            )
         }
     }
 }

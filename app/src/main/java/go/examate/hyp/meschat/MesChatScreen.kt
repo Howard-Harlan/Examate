@@ -23,6 +23,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
@@ -32,6 +33,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import java.io.File
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -65,7 +67,7 @@ import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.outlined.Article
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.AltRoute
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -74,8 +76,10 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
@@ -105,8 +109,10 @@ import go.examate.hyp.ui.theme.AccentMint
 import go.examate.hyp.ui.theme.AccentPeach
 import go.examate.hyp.ui.theme.AccentPurple
 import go.examate.hyp.ui.theme.BgPrimary
+import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.Danger
 import go.examate.hyp.ui.theme.DialogBg
+import go.examate.hyp.ui.theme.IsDark
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.Success
 import go.examate.hyp.ui.theme.TextHint
@@ -155,7 +161,10 @@ fun MesChatScreen(
     onPlayVoice: (MesMessage) -> Unit,
     onOpenImage: (MesMessage) -> Unit,
     onOpenFile: (MesMessage) -> Unit,
-    onSendVoice: (ByteArray, Int) -> Unit
+    onSendVoice: (ByteArray, Int) -> Unit,
+    hasMoreHistory: Boolean = false,
+    isLoadingOlder: Boolean = false,
+    onLoadOlder: () -> Unit = {}
 ) {
     val listState = rememberLazyListState()
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
@@ -228,9 +237,43 @@ fun MesChatScreen(
         onDispose { voiceRec.release() }
     }
 
-    // 新消息到达时滚动到底部
+    // ═══ 懒加载历史:滚动到顶触发翻页;顶部新增恢复视口锚点,底部新增滚到底 ═══
+    var prevSize by remember { mutableStateOf(0) }
+    var prevTopId by remember { mutableStateOf<String?>(null) }
+    val firstVisible = remember { mutableStateOf(0 to 0) }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
+            .collect { firstVisible.value = it }
+    }
     LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
+        val size = messages.size
+        if (size == 0) return@LaunchedEffect
+        val topId = messages.firstOrNull()?.id
+        if (prevSize == 0) {
+            // 首次进入:定位到最新消息
+            listState.scrollToItem(size - 1)
+        } else if (size > prevSize) {
+            if (topId != prevTopId) {
+                // 顶部新增(懒加载翻页):恢复锚点,视口不跳动
+                val added = size - prevSize
+                val (idx, off) = firstVisible.value
+                listState.scrollToItem((idx + added).coerceAtMost(size - 1), off)
+            } else {
+                // 底部新增:滚动到底
+                listState.animateScrollToItem(size - 1)
+            }
+        }
+        prevSize = size
+        prevTopId = topId
+    }
+    // 滚动到顶且还有更早历史 → 自动请求下一页(用户看到哪儿才拉哪儿)
+    LaunchedEffect(listState, hasMoreHistory, isLoadingOlder) {
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .collect { idx ->
+                if (idx <= 1 && hasMoreHistory && !isLoadingOlder && messages.isNotEmpty()) {
+                    onLoadOlder()
+                }
+            }
     }
 
     Column(
@@ -248,6 +291,11 @@ fun MesChatScreen(
             onSwitchModeClick = { showModeSheet = true }
         )
 
+        // ═══ 密钥匹对会话横幅 ═══
+        if (conversation.isKeyPairChat) {
+            KeyPairBanner()
+        }
+
         // ═══ 消息列表 ═══
         if (messages.isEmpty()) {
             EmptyConversationState(conversation, Modifier.weight(1f))
@@ -258,6 +306,20 @@ fun MesChatScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(vertical = 12.dp)
             ) {
+                if (hasMoreHistory) {
+                    item(key = "older_indicator") {
+                        Box(
+                            Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                if (isLoadingOlder) "正在加载更早消息…" else "上滑加载更早消息",
+                                color = TextHint,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                }
                 items(messages, key = { it.id }) { msg ->
                     MessageBubble(
                         msg = msg,
@@ -384,11 +446,11 @@ private fun ChatTopBar(
                     Icon(Icons.Filled.Lock, contentDescription = null, tint = TextHint, modifier = Modifier.size(13.dp))
                 }
             }
-            // 副标题:频道显示成员数,私聊显示传输通道
-            val subtitle = if (conversation.isChannel) {
-                if (conversation.peerCount > 0) "${conversation.peerCount} 位成员" else "频道"
-            } else {
-                conversation.transport.label
+            // 副标题:频道显示成员数,密钥匹对显示加密说明,私聊显示传输通道
+            val subtitle = when {
+                conversation.isChannel -> if (conversation.peerCount > 0) "${conversation.peerCount} 位成员" else "频道"
+                conversation.isKeyPairChat -> "密钥加密 · 持有相同配对密钥的成员可解密"
+                else -> conversation.transport.label
             }
             Text(subtitle, color = TextHint, fontSize = 11.sp, maxLines = 1)
         }
@@ -401,10 +463,9 @@ private fun ChatTopBar(
 @Composable
 private fun ChatModeChip(currentMode: ChatMode, onClick: () -> Unit) {
     val icon = when (currentMode) {
-        ChatMode.LOCAL -> Icons.Filled.Wifi
-        ChatMode.BLE -> Icons.Filled.Bluetooth
-        ChatMode.WIFI_AWARE -> Icons.Filled.Wifi
-        ChatMode.CLOUD -> Icons.Filled.CloudOff
+        ChatMode.AUTO -> Icons.Filled.AltRoute
+        ChatMode.LAN_UDP -> Icons.Filled.Lan
+        ChatMode.NOSTR -> Icons.Filled.CloudOff
     }
     FrostedGlassCard(modifier = Modifier.padding(0.dp)) {
         Row(
@@ -420,12 +481,33 @@ private fun ChatModeChip(currentMode: ChatMode, onClick: () -> Unit) {
     }
 }
 
+/** 密钥匹对会话横幅 */
+@Composable
+private fun KeyPairBanner() {
+    Row(
+        Modifier.fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(AccentMint.copy(0.1f))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(Icons.Filled.Lock, contentDescription = null, tint = AccentMint, modifier = Modifier.size(14.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "密钥匹对 · 端到端加密,只有持有相同配对密钥的成员可以解密",
+            color = AccentMint,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
 @Composable
 private fun TransportMiniIndicator(status: TransportStatus) {
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        TransportDotIcon(Icons.Filled.Bluetooth, active = status.ble)
-        TransportDotIcon(Icons.Filled.Wifi, active = status.wifiAware)
-        TransportDotIcon(Icons.Filled.CloudOff, active = status.nostr)
+        TransportDotIcon(Icons.Filled.Lan, active = status.lanUdp)
+        TransportDotIcon(Icons.Filled.Public, active = status.nostr)
     }
 }
 
@@ -447,8 +529,7 @@ private fun TransportDotIcon(icon: androidx.compose.ui.graphics.vector.ImageVect
 @Composable
 private fun TransportDot(transport: TransportType) {
     val color = when (transport) {
-        TransportType.BLE -> Success
-        TransportType.WIFI_AWARE -> AccentMint
+        TransportType.LAN_UDP -> AccentMint
         TransportType.NOSTR -> AccentBlue
         else -> TextHint
     }
@@ -511,7 +592,7 @@ private fun MessageBubble(
                 MesMessageType.VOICE -> VoiceBubble(msg, onPlayVoice)
                 MesMessageType.FILE -> FileBubble(msg, onOpenFile)
             }
-            // 时间 + 送达状态
+            // 时间 + 送达状态 + 通道标记
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = if (msg.isMine) Arrangement.End else Arrangement.Start
@@ -521,6 +602,7 @@ private fun MessageBubble(
                     color = TextHint,
                     fontSize = 10.sp
                 )
+                MessageViaBadge(msg)
                 if (msg.isMine && msg.deliveryState != null) {
                     Spacer(Modifier.width(4.dp))
                     DeliveryStateIcon(msg.deliveryState)
@@ -534,9 +616,27 @@ private fun MessageBubble(
     }
 }
 
+/** 消息通道标记:显示消息经由的传输通道与跳数(仅收到的消息) */
+@Composable
+private fun MessageViaBadge(msg: MesMessage) {
+    if (msg.isMine || msg.via == TransportType.NONE) return
+    val label = when {
+        msg.via == TransportType.LAN_UDP -> "局域网"
+        msg.via == TransportType.LAN_UDP -> "局域网"
+        else -> "Nostr"
+    }
+    Spacer(Modifier.width(4.dp))
+    Text(
+        label,
+        color = if (msg.via == TransportType.LAN_UDP) AccentMint else AccentBlue,
+        fontSize = 9.sp
+    )
+}
+
 @Composable
 private fun TextBubble(msg: MesMessage) {
-    val bubbleColor = if (msg.isMine) AccentBlue.copy(0.85f) else Color.White.copy(0.75f)
+    // 对方气泡主题化:浅色半透明白/深色深灰面,避免深色下白底+白字
+    val bubbleColor = if (msg.isMine) AccentBlue.copy(0.85f) else CardBg
     val textColor = if (msg.isMine) Color.White else TextPrimary
     val shape = if (msg.isMine) {
         RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp)
@@ -566,7 +666,7 @@ private fun ImageBubble(msg: MesMessage, onOpenImage: (MesMessage) -> Unit) {
         Modifier
             .size(width = 200.dp, height = 200.dp)
             .clip(shape)
-            .background(Color.White.copy(0.6f))
+            .background(CardBg)
             .clickable {
                 // 暂时仅 Toast 提示"点击查看",后续可由 onOpenImage 接入大图查看页
                 Toast.makeText(context, "点击查看", Toast.LENGTH_SHORT).show()
@@ -598,7 +698,7 @@ private fun ImageBubble(msg: MesMessage, onOpenImage: (MesMessage) -> Unit) {
 @Composable
 private fun VoiceBubble(msg: MesMessage, onPlayVoice: (MesMessage) -> Unit) {
     val context = LocalContext.current
-    val bubbleColor = if (msg.isMine) AccentBlue.copy(0.85f) else Color.White.copy(0.75f)
+    val bubbleColor = if (msg.isMine) AccentBlue.copy(0.85f) else CardBg
     val textColor = if (msg.isMine) Color.White else TextPrimary
     val shape = if (msg.isMine) {
         RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp)
@@ -706,7 +806,8 @@ private fun VoiceBubble(msg: MesMessage, onPlayVoice: (MesMessage) -> Unit) {
 @Composable
 private fun FileBubble(msg: MesMessage, onOpenFile: (MesMessage) -> Unit) {
     val context = LocalContext.current
-    val bubbleColor = if (msg.isMine) AccentBlue.copy(0.85f) else Color.White.copy(0.75f)
+    // 对方气泡主题化:浅色半透明白/深色深灰面
+    val bubbleColor = if (msg.isMine) AccentBlue.copy(0.85f) else CardBg
     val textColor = if (msg.isMine) Color.White else TextPrimary
     val subColor = if (msg.isMine) Color.White.copy(0.75f) else TextHint
     val shape = RoundedCornerShape(16.dp)
@@ -851,7 +952,8 @@ private fun ChatInputBar(
             )
         }
         Spacer(Modifier.width(8.dp))
-        // 输入框
+        // 输入框(深色模式降白)
+        val isDark = IsDark
         OutlinedTextField(
             value = inputText,
             onValueChange = onInputChange,
@@ -861,10 +963,10 @@ private fun ChatInputBar(
             singleLine = false,
             maxLines = 4,
             colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = Color.White.copy(0.7f),
-                unfocusedContainerColor = Color.White.copy(0.55f),
+                focusedContainerColor = Color.White.copy(if (isDark) 0.12f else 0.7f),
+                unfocusedContainerColor = Color.White.copy(if (isDark) 0.08f else 0.55f),
                 focusedBorderColor = AccentBlue.copy(0.45f),
-                unfocusedBorderColor = Color.White.copy(0.5f)
+                unfocusedBorderColor = Color.White.copy(if (isDark) 0.2f else 0.5f)
             )
         )
         Spacer(Modifier.width(8.dp))
@@ -905,14 +1007,22 @@ private fun EmptyConversationState(conv: ChatConversation, modifier: Modifier = 
             )
             Spacer(Modifier.height(10.dp))
             Text(
-                if (conv.isChannel) "频道 ${conv.title}" else "与 ${conv.title} 的私聊",
+                when {
+                    conv.isChannel -> "频道 ${conv.title}"
+                    conv.isKeyPairChat -> "密钥匹对会话 ${conv.title}"
+                    else -> "与 ${conv.title} 的私聊"
+                },
                 color = TextSecondary,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                if (conv.isChannel) "在频道中发送消息即可让所有成员看到" else "消息将通过 Mesh 网络加密传输",
+                when {
+                    conv.isChannel -> "在频道中发送消息即可让所有成员看到"
+                    conv.isKeyPairChat -> "消息以配对密钥端到端加密,只有持有相同密钥的成员可以解密"
+                    else -> "消息优先走局域网 UDP 直连,不可达时经云端中继加密转发"
+                },
                 color = TextHint,
                 fontSize = 11.sp
             )

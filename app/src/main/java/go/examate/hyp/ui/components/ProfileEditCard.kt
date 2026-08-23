@@ -194,10 +194,10 @@ fun ProfileEditCard(
 
     // 生日选择弹窗:年/月/日三列滚轮
     if (showDatePicker) {
-        // 默认:已设置则用已设置日期,否则当前年份减20年的1月1日
+        // 默认:已设置则用已设置日期,否则当前年份减20年的6月15日(月日取中间值方便选择)
         val initial = birthday.takeIf { it.isNotEmpty() }
             ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
-            ?: LocalDate.of(LocalDate.now().year - 20, 1, 1)
+            ?: LocalDate.of(LocalDate.now().year - 20, 6, 15)
         BirthdayPickerDialog(
             initialDate = initial,
             onDismiss = { showDatePicker = false },

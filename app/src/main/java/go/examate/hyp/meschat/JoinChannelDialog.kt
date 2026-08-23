@@ -54,6 +54,7 @@ import go.examate.hyp.ui.theme.AccentMint
 import go.examate.hyp.ui.theme.AccentPurple
 import go.examate.hyp.ui.theme.ChipBg
 import go.examate.hyp.ui.theme.Danger
+import go.examate.hyp.ui.theme.IsDark
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
@@ -101,10 +102,10 @@ fun JoinChannelDialog(
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = Color.White,
-                    unfocusedContainerColor = Color.White.copy(0.7f),
+                    focusedContainerColor = if (IsDark) Color.White.copy(0.15f) else Color.White,
+                    unfocusedContainerColor = if (IsDark) Color.White.copy(0.08f) else Color.White.copy(0.7f),
                     focusedBorderColor = AccentBlue.copy(0.5f),
-                    unfocusedBorderColor = Color(0xFFE5E5EA)
+                    unfocusedBorderColor = if (IsDark) Color.White.copy(0.25f) else Color(0xFFE5E5EA)
                 )
             )
             Spacer(Modifier.height(6.dp))
@@ -151,10 +152,10 @@ fun JoinChannelDialog(
                         imeAction = ImeAction.Done
                     ),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = Color.White,
-                        unfocusedContainerColor = Color.White.copy(0.7f),
+                        focusedContainerColor = if (IsDark) Color.White.copy(0.15f) else Color.White,
+                        unfocusedContainerColor = if (IsDark) Color.White.copy(0.08f) else Color.White.copy(0.7f),
                         focusedBorderColor = AccentBlue.copy(0.5f),
-                        unfocusedBorderColor = Color(0xFFE5E5EA)
+                        unfocusedBorderColor = if (IsDark) Color.White.copy(0.25f) else Color(0xFFE5E5EA)
                     )
                 )
             }

@@ -17,8 +17,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import go.examate.hyp.ui.theme.GlassBorder
+import go.examate.hyp.ui.theme.GlassCardTint
 import go.examate.hyp.ui.theme.GlassHighlight
 import go.examate.hyp.ui.theme.GlassShadow
+import go.examate.hyp.ui.theme.IsDark
 
 /**
  * 液态玻璃容器（强效果，用于按钮/开关等小控件）
@@ -34,12 +36,19 @@ import go.examate.hyp.ui.theme.GlassShadow
 fun LiquidGlassCard(
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 999.dp,
-    tint: Color = Color.White.copy(alpha = 0.55f),
+    tint: Color? = null,
     content: @Composable BoxScope.() -> Unit
 ) {
     val shape = RoundedCornerShape(cornerRadius)
+    // 默认 tint 主题化:浅色 100% 白(base),深色 11% 白。
+    // 渐变/高光用 alpha 乘法保留 tint 透明度,避免深色 tint 被 copy(alpha=x) 覆盖成高白
+    val effectiveTint = tint ?: GlassCardTint
+    val tintAlpha = effectiveTint.alpha
     // 在 @Composable 上下文读取颜色,供 drawBehind lambda 使用
     val highlightColor = GlassHighlight
+    val highlightAlpha = highlightColor.alpha
+    // 深色下底部反射/对角高光同步降白
+    val isDark = IsDark
 
     Box(
         modifier = modifier
@@ -53,9 +62,9 @@ fun LiquidGlassCard(
             .background(
                 brush = Brush.linearGradient(
                     colors = listOf(
-                        tint.copy(alpha = 0.85f),
-                        tint.copy(alpha = 0.65f),
-                        tint.copy(alpha = 0.75f)
+                        effectiveTint.copy(alpha = tintAlpha * 0.85f),
+                        effectiveTint.copy(alpha = tintAlpha * 0.65f),
+                        effectiveTint.copy(alpha = tintAlpha * 0.75f)
                     ),
                     start = Offset(0f, 0f),
                     end = Offset(0f, Float.POSITIVE_INFINITY)
@@ -66,8 +75,8 @@ fun LiquidGlassCard(
                 drawRect(
                     brush = Brush.linearGradient(
                         colors = listOf(
-                            highlightColor.copy(alpha = 0.6f),
-                            highlightColor.copy(alpha = 0.2f),
+                            highlightColor.copy(alpha = highlightAlpha * 0.6f),
+                            highlightColor.copy(alpha = highlightAlpha * 0.2f),
                             Color.Transparent
                         ),
                         start = Offset(0f, 0f),
@@ -79,7 +88,7 @@ fun LiquidGlassCard(
                     brush = Brush.linearGradient(
                         colors = listOf(
                             Color.Transparent,
-                            Color.White.copy(alpha = 0.15f)
+                            Color.White.copy(alpha = if (isDark) 0.06f else 0.15f)
                         ),
                         start = Offset(0f, size.height * 0.6f),
                         end = Offset(0f, size.height)
@@ -89,7 +98,7 @@ fun LiquidGlassCard(
                 drawRect(
                     brush = Brush.linearGradient(
                         colors = listOf(
-                            Color.White.copy(alpha = 0.18f),
+                            Color.White.copy(alpha = if (isDark) 0.07f else 0.18f),
                             Color.Transparent
                         ),
                         start = Offset(0f, 0f),

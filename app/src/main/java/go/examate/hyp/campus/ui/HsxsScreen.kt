@@ -7,6 +7,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -62,6 +63,7 @@ import go.examate.hyp.config.PrefsManager
 import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassButton
+import go.examate.hyp.ui.theme.SelectedBg
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.InputBg
@@ -233,7 +235,7 @@ private fun LostDetailView(id: String, repo: CampusRepository, prefs: PrefsManag
                     if (imagesArr.length() > 1) {
                         Row(Modifier.align(Alignment.BottomCenter).padding(8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             for (i in 0 until imagesArr.length()) {
-                                Box(Modifier.size(6.dp).clip(CircleShape).background(if (i == currentImg) Primary else Color.White.copy(0.7f)))
+                                Box(Modifier.size(6.dp).clip(CircleShape).background(if (i == currentImg) SelectedBg else Color.White.copy(0.7f)))
                             }
                         }
                         // 左右点击切换
@@ -376,7 +378,7 @@ private fun PublishLostDialog(repo: CampusRepository, prefs: PrefsManager,
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     listOf("1" to "失物", "2" to "招领").forEach { (v, l) ->
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { type = v }) {
-                            Box(Modifier.size(18.dp).clip(CircleShape).background(if (type == v) Primary else SurfaceVariant), contentAlignment = Alignment.Center) {
+                            Box(Modifier.size(18.dp).clip(CircleShape).background(if (type == v) SelectedBg else SurfaceVariant), contentAlignment = Alignment.Center) {
                                 if (type == v) Box(Modifier.size(8.dp).clip(CircleShape).background(CardBg))
                             }
                             Spacer(Modifier.width(6.dp))
@@ -576,12 +578,13 @@ private fun SurveyDetailView(id: String, repo: CampusRepository, prefs: PrefsMan
                                     verticalAlignment = Alignment.CenterVertically) {
                                     val selected = answers[qId]?.toString() == key
                                     Box(Modifier.size(20.dp).clip(CircleShape)
-                                        .background(if (selected) Primary else SurfaceVariant)
+                                        .background(if (selected) SelectedBg else Color.Transparent)
+                                        .border(1.dp, if (selected) SelectedBg else TextHint.copy(0.45f), CircleShape)
                                         .clickable { answers = answers.toMutableMap().also { it[qId] = key.toIntOrNull() ?: key } },
                                         contentAlignment = Alignment.Center
                                     ) { if (selected) Box(Modifier.size(8.dp).clip(CircleShape).background(CardBg)) }
                                     Spacer(Modifier.width(6.dp))
-                                    Text(label, fontSize = 13.sp)
+                                    Text(label, color = TextPrimary, fontSize = 13.sp)
                                 }
                             }
                         } else if (qType == 2) {
@@ -594,7 +597,8 @@ private fun SurveyDetailView(id: String, repo: CampusRepository, prefs: PrefsMan
                                 }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                                     val checked = selected.contains(key)
                                     Box(Modifier.size(20.dp).clip(RoundedCornerShape(4.dp))
-                                        .background(if (checked) Primary else SurfaceVariant)
+                                        .background(if (checked) SelectedBg else Color.Transparent)
+                                        .border(1.dp, if (checked) SelectedBg else TextHint.copy(0.45f), RoundedCornerShape(4.dp))
                                         .clickable {
                                             val newList = selected.toMutableList()
                                             if (newList.contains(key)) newList.remove(key) else newList.add(key)
@@ -602,7 +606,7 @@ private fun SurveyDetailView(id: String, repo: CampusRepository, prefs: PrefsMan
                                         }, contentAlignment = Alignment.Center
                                     ) { if (checked) Text("✓", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
                                     Spacer(Modifier.width(6.dp))
-                                    Text(label, fontSize = 13.sp)
+                                    Text(label, color = TextPrimary, fontSize = 13.sp)
                                 }
                             }
                         }

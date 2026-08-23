@@ -72,6 +72,7 @@ import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.ChipBg
 import go.examate.hyp.ui.theme.Danger
+import go.examate.hyp.ui.theme.DialogBg
 import go.examate.hyp.ui.theme.ErrorBg
 import go.examate.hyp.ui.theme.InputBg
 import go.examate.hyp.ui.theme.TextPrimary
@@ -183,7 +184,8 @@ private fun MessageLongPressMenu(
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
-        containerColor = Color.White.copy(0.92f),
+        // 主题化容器:浅色白/深色深灰,避免深色下白色弹窗过亮
+        containerColor = DialogBg,
         shadowElevation = 12.dp
     ) {
         GlassMenuItem(icon = Icons.Filled.ContentCopy, label = "复制", onClick = onCopy)
@@ -404,11 +406,13 @@ private fun MessageContent(msg: ChatMsg, isUser: Boolean, isStreaming: Boolean =
         )
     } else {
         val ctx = androidx.compose.ui.platform.LocalContext.current
+        val prefs = go.examate.hyp.config.PrefsManager.getInstance(ctx)
         MarkdownText(
             markdown = msg.content,
             textColor = if (msg.isError) Danger else TextPrimary,
-            fontSize = go.examate.hyp.config.PrefsManager.getInstance(ctx).chatFontSize,
-            fontFamily = go.examate.hyp.util.ReadingFont.family(ctx),
+            fontSize = prefs.chatFontSize,
+            // 衬线字体开关:替代原 ReadingFont.family,与阅读器自定义字体解耦
+            fontFamily = if (prefs.chatFontSerif) androidx.compose.ui.text.font.FontFamily.Serif else null,
             isStreaming = isStreaming
         )
     }

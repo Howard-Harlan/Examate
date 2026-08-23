@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import go.examate.hyp.campus.model.DEFAULT_TOTAL_WEEKS
+import go.examate.hyp.ui.theme.SelectedBg
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.InputBg
@@ -90,7 +91,7 @@ fun WeekMultiSelect(
                 val selected = w in selectedWeeks
                 Box(
                     Modifier.size(28.dp).clip(RoundedCornerShape(50))
-                        .background(if (selected) Primary else ScheduleCellBg)
+                        .background(if (selected) SelectedBg else ScheduleCellBg)
                         .clickable {
                             onWeeksChange(
                                 if (selected) selectedWeeks.toMutableSet().apply { remove(w) }
@@ -174,7 +175,7 @@ fun NumberSelect(label: String, value: Int, range: IntRange, onChange: (Int) -> 
                             val selected = num == value
                             Box(
                                 Modifier.weight(1f).size(36.dp).clip(RoundedCornerShape(8.dp))
-                                    .background(if (selected) Primary else ScheduleCellBg)
+                                    .background(if (selected) SelectedBg else ScheduleCellBg)
                                     .clickable {
                                         onChange(num)
                                         showGrid = false
@@ -248,7 +249,7 @@ internal fun WeekPickerDialog(
                                     .weight(1f)
                                     .height(52.dp)
                                     .clip(RoundedCornerShape(10.dp))
-                                    .background(if (isCurrent) Primary else InputBg)
+                                    .background(if (isCurrent) SelectedBg else InputBg)
                                     .clickable { onSelect(w) },
                                 contentAlignment = Alignment.Center
                             ) {

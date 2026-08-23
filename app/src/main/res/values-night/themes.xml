@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 深色模式(跟随系统 uiMode=night)系统级主题:
+         与浅色主题同结构,仅窗口背景/状态栏/文字色换深色,
+         避免系统深色模式下冷启动与转场出现白底闪屏 -->
+    <style name="Theme.Examate" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorPrimaryDark">@color/primary_dark</item>
+        <item name="colorAccent">@color/accent</item>
+        <item name="android:windowBackground">@color/bg_night</item>
+        <item name="android:statusBarColor">@color/bg_night</item>
+        <item name="android:navigationBarColor">@color/bg_night</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:textColorPrimary">@color/text_night_primary</item>
+        <item name="android:textColorSecondary">@color/text_night_secondary</item>
+        <item name="android:textColorHint">@color/text_night_hint</item>
+        <!-- 全局页面转场:Telegram 式左右滑动(见 res/anim) -->
+        <item name="android:windowAnimationStyle">@style/ActivityTransition</item>
+    </style>
+
+    <!-- 页面进出转场动画(打开:右滑入/旧页左移;返回:反向) -->
+    <style name="ActivityTransition">
+        <item name="android:activityOpenEnterAnimation">@anim/activity_open_enter</item>
+        <item name="android:activityOpenExitAnimation">@anim/activity_open_exit</item>
+        <item name="android:activityCloseEnterAnimation">@anim/activity_close_enter</item>
+        <item name="android:activityCloseExitAnimation">@anim/activity_close_exit</item>
+    </style>
+</resources>

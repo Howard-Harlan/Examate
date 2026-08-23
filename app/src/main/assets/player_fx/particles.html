@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>3D 粒子律动</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+               background: transparent; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<!-- 内置 three.js(全局资产;页面以 assets/player_fx/ 为 base 加载,自定义页同样用此相对路径引库) -->
+<script src="../libs/three.min.js"></script>
+<script>
+/**
+ * 播放页内置特效 — three.js 3D 粒子律动。
+ * 原生桥:window.__onPlayerEvent(jsonStr) 接收播放状态,事件字段:
+ *   type: track(切歌) / state(播放暂停) / progress(进度)
+ *   isPlaying / progress(0..1) / title / artist / colors{accent,bgTop,bgBottom}
+ * 设计:粒子球壳随播放呼吸旋转,暂停时缓慢漂浮;主题色由播放页封面 Palette 推送。
+ */
+(function () {
+  var COUNT = 1100;
+  var scene = new THREE.Scene();
+  var camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 100);
+  camera.position.z = 7;
+
+  var renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+  renderer.setClearColor(0x000000, 0);
+  renderer.domElement.style.position = 'fixed';
+  renderer.domElement.style.inset = '0';
+  document.body.appendChild(renderer.domElement);
+
+  // 粒子:球壳分布(两层,内外错落)
+  var positions = new Float32Array(COUNT * 3);
+  var seeds = new Float32Array(COUNT);
+  for (var i = 0; i < COUNT; i++) {
+    var r = (i % 2 === 0 ? 2.6 : 3.4) + Math.random() * 0.5;
+    var theta = Math.random() * Math.PI * 2;
+    var phi = Math.acos(2 * Math.random() - 1);
+    positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+    positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+    positions[i * 3 + 2] = r * Math.cos(phi);
+    seeds[i] = Math.random() * Math.PI * 2;
+  }
+  var geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+  var accent = new THREE.Color(0x7ba0ff);
+  // 注意:用 NormalBlending 而非 Additive — 叠加混色在浅色主题背景上会完全不可见
+  var mat = new THREE.PointsMaterial({
+    size: 0.075, color: accent, transparent: true, opacity: 0.9,
+    blending: THREE.NormalBlending, depthWrite: false, sizeAttenuation: true
+  });
+  var points = new THREE.Points(geo, mat);
+  scene.add(points);
+
+  // 伴生微尘层(白色,保证任意主题色下都有可见点)
+  var DUST = 260;
+  var dustPos = new Float32Array(DUST * 3);
+  for (var d = 0; d < DUST; d++) {
+    var rr = 2.2 + Math.random() * 1.9;
+    var th = Math.random() * Math.PI * 2;
+    var ph = Math.acos(2 * Math.random() - 1);
+    dustPos[d * 3] = rr * Math.sin(ph) * Math.cos(th);
+    dustPos[d * 3 + 1] = rr * Math.sin(ph) * Math.sin(th);
+    dustPos[d * 3 + 2] = rr * Math.cos(ph);
+  }
+  var dustGeo = new THREE.BufferGeometry();
+  dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
+  var dustMat = new THREE.PointsMaterial({
+    size: 0.045, color: 0xffffff, transparent: true, opacity: 0.5,
+    blending: THREE.NormalBlending, depthWrite: false, sizeAttenuation: true
+  });
+  var dust = new THREE.Points(dustGeo, dustMat);
+  scene.add(dust);
+
+  // 状态
+  var isPlaying = false;
+  var progress = 0;
+  var energy = 0;      // 播放能量(播放时趋近 1,暂停趋近 0)
+  var t = 0;
+
+  window.__onPlayerEvent = function (jsonStr) {
+    try {
+      var e = JSON.parse(jsonStr);
+      if (typeof e.isPlaying === 'boolean') isPlaying = e.isPlaying;
+      if (typeof e.progress === 'number') progress = e.progress;
+      if (e.colors && e.colors.accent) {
+        try { accent.set(e.colors.accent); mat.color = accent; } catch (err) {}
+      }
+    } catch (err) {}
+  };
+
+  function tick() {
+    requestAnimationFrame(tick);
+    t += 0.016;
+    // 能量缓动:播放 → 活跃,暂停 → 平静
+    energy += ((isPlaying ? 1 : 0) - energy) * 0.04;
+
+    // 呼吸缩放 + 双层反向旋转(速度随能量)
+    var breath = 1 + Math.sin(t * (0.8 + energy * 1.6)) * (0.02 + energy * 0.06);
+    points.scale.set(breath, breath, breath);
+    points.rotation.y += 0.0012 + energy * 0.004;
+    points.rotation.x = Math.sin(t * 0.25) * 0.18;
+    dust.rotation.y -= 0.0008 + energy * 0.0025;
+
+    // 粒子微漂移:沿各自相位正弦扰动(能量越高振幅越大)
+    var pos = geo.attributes.position.array;
+    for (var i = 0; i < COUNT; i++) {
+      var s = seeds[i];
+      pos[i * 3 + 1] += Math.sin(t * (0.6 + energy * 1.8) + s) * (0.0006 + energy * 0.0022);
+    }
+    geo.attributes.position.needsUpdate = true;
+
+    mat.opacity = 0.6 + energy * 0.3;
+    mat.size = 0.065 + energy * 0.03;
+    dustMat.opacity = 0.35 + energy * 0.25;
+    renderer.render(scene, camera);
+  }
+  tick();
+
+  addEventListener('resize', function () {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+})();
+</script>
+</body>
+</html>

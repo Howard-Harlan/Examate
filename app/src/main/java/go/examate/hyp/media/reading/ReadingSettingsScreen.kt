@@ -52,6 +52,7 @@ import go.examate.hyp.media.legado.ContentRuleStore
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.components.LiquidGlassToggle
+import go.examate.hyp.ui.theme.SelectedBg
 import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.Danger
 import go.examate.hyp.ui.theme.DialogBg
@@ -123,7 +124,7 @@ fun ReadingSettingsScreen(
             listOf("阅读偏好", "内容管理").forEachIndexed { index, label ->
                 Box(
                     Modifier.weight(1f).clip(RoundedCornerShape(10.dp))
-                        .background(if (settingsTab == index) Primary else SurfaceVariant)
+                        .background(if (settingsTab == index) SelectedBg else SurfaceVariant)
                         .clickable { settingsTab = index }
                         .padding(vertical = 9.dp),
                     contentAlignment = Alignment.Center
@@ -231,7 +232,7 @@ fun ReadingSettingsScreen(
                                     .padding(horizontal = 6.dp, vertical = 4.dp))
                         }
 
-                        // 启用开关:仅控制阅读器自身,字体文件与 Agents 共享
+                        // 启用开关:仅控制阅读器自身(Agents 已改用衬线字体开关,不再共享字体文件)
                         if (fontPathState.isNotEmpty()) {
                             Spacer(Modifier.height(14.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -250,7 +251,7 @@ fun ReadingSettingsScreen(
                         } else {
                             Spacer(Modifier.height(6.dp))
                             Text(
-                                "字体与 Agents 设置共享,导入一次即可在两处使用,无需重复导入",
+                                "自定义字体仅用于阅读器,Agents 已改用独立的衬线字体开关",
                                 color = TextHint, fontSize = 11.sp
                             )
                         }

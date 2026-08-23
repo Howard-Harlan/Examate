@@ -13,7 +13,7 @@ backdrop = "1.0.6"
 shapes = "1.2.0"
 okhttp = "4.12.0"
 jsoup = "1.23.1"
-quickjsWrapper = "3.2.3"
+quickjsWrapper = "2.4.0"
 shizuku = "13.1.5"
 lifecycle = "2.9.1"
 coil = "2.7.0"
@@ -21,6 +21,8 @@ alipaySdk = "15.8.09"
 wechatSdk = "6.8.0"
 bouncycastle = "1.78.1"
 webkit = "1.13.0"
+palette = "1.0.0"
+media = "1.7.0"
 
 [libraries]
 junit = { group = "junit", name = "junit", version.ref = "junit" }
@@ -53,6 +55,8 @@ alipay-sdk = { group = "com.alipay.sdk", name = "alipay-sdk-android", version.re
 wechat-sdk = { group = "com.tencent.mm.opensdk", name = "wechat-sdk-android", version.ref = "wechatSdk" }
 bouncycastle = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
 webkit = { group = "androidx.webkit", name = "webkit", version.ref = "webkit" }
+palette-ktx = { group = "androidx.palette", name = "palette-ktx", version.ref = "palette" }
+media = { group = "androidx.media", name = "media", version.ref = "media" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }

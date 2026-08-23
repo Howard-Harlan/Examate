@@ -47,15 +47,11 @@ object MusicStore {
     /** 支持的音频扩展名 */
     private val AUDIO_EXTS = setOf("mp3", "flac", "m4a", "wav", "ogg", "aac", "opus")
 
-    /** 默认扫描根目录(MediaStore 为空时使用) */
-    private val SCAN_DIRS = listOf(
-        "/sdcard/Music",
-        "/sdcard/Download",
-        "/sdcard/DCIM",
-        "/sdcard/Documents",
-        "/storage/emulated/0/Music",
-        "/storage/emulated/0/Download"
-    )
+    /** 默认扫描根目录(MediaStore 为空时使用,动态取外存路径以适配不同设备) */
+    private val SCAN_DIRS by lazy {
+        val ext = android.os.Environment.getExternalStorageDirectory().absolutePath
+        listOf("$ext/Music", "$ext/Download", "$ext/DCIM", "$ext/Documents")
+    }
 
     fun scan(context: Context, folderRelativePath: String? = null): List<Track> {
         // 策略1:MediaStore 查询
@@ -132,9 +128,13 @@ object MusicStore {
         val retriever = MediaMetadataRetriever()
         return try {
             retriever.setDataSource(context, doc.uri)
-            val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
-                ?: doc.name.orEmpty().substringBeforeLast('.')
-            val artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST).orEmpty()
+            // 注意:TITLE/ARTIST 标签可能写入了空串(非缺失),extractMetadata 返回空串,
+            // 统一先取再判内容:标题空→文件名回退;歌手无实际内容→走命名约定拆分
+            val tagTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+            val rawTitle = if (!tagTitle.isNullOrBlank()) tagTitle else doc.name.orEmpty().substringBeforeLast('.')
+            val rawArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST).orEmpty()
+            // 无歌手标签时按文件名约定「作者 - 歌名」拆分匹配导入文件
+            val (title, artist) = splitArtistTitle(rawTitle, rawArtist)
             val album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM).orEmpty()
             val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                 ?.toLongOrNull() ?: 0L
@@ -274,9 +274,12 @@ object MusicStore {
         val retriever = MediaMetadataRetriever()
         return try {
             retriever.setDataSource(file.absolutePath)
-            val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
-                ?: file.nameWithoutExtension
-            val artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST).orEmpty()
+            // 同 parseAudioDocument:标签可能为空串,标题空→文件名回退
+            val tagTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+            val rawTitle = if (!tagTitle.isNullOrBlank()) tagTitle else file.nameWithoutExtension
+            val rawArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST).orEmpty()
+            // 无歌手标签时按文件名约定「作者 - 歌名」拆分匹配导入文件
+            val (title, artist) = splitArtistTitle(rawTitle, rawArtist)
             val album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM).orEmpty()
             val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                 ?.toLongOrNull() ?: 0L
@@ -297,6 +300,19 @@ object MusicStore {
             runCatching { retriever.release() }
         }
     }
+
+    /**
+     * 文件名命名约定拆分 — 支持导入文件的「作者 - 歌名」格式:
+     * 仅当歌手信息无实际内容(标签缺失或为空串——很多文件写入空 ARTIST 标签,
+     * extractMetadata 会返回空串而非 null,必须按内容判断)且标题(文件名)含" - "时拆分,
+     * 前段为作者、后段为歌名;已有歌手的不动。
+     */
+    private fun splitArtistTitle(rawTitle: String, rawArtist: String): Pair<String, String> {
+        if (rawArtist.isNotBlank() || !rawTitle.contains(" - ")) return rawTitle to rawArtist
+        val a = rawTitle.substringBefore(" - ").trim()
+        val t = rawTitle.substringAfter(" - ").trim()
+        return if (a.isNotEmpty() && t.isNotEmpty()) t to a else rawTitle to rawArtist
+    }
 }
 
 /**
@@ -316,12 +332,16 @@ object PlayHistoryStore {
                 val o = arr.optJSONObject(i) ?: return@mapNotNull null
                 val localUriStr = o.optString("localUri")
                 val historyKey = o.optString("historyKey")
+                val platform = o.optString("platform")
+                val songmid = o.optString("songmid")
                 val base = QueueItem(
                     id = o.optString("id"),
                     title = o.optString("title", "未知"),
                     artist = o.optString("artist"),
                     durationMs = o.optLong("duration"),
                     coverUrl = o.optString("cover"),
+                    coverRef = o.optString("coverRef"),
+                    qualityTag = o.optString("qualityTag"),
                     albumId = o.optLong("albumId", -1L),
                     historyKey = historyKey
                 )
@@ -333,14 +353,17 @@ object PlayHistoryStore {
                         val cid = parts.getOrNull(2)?.toLongOrNull() ?: 0L
                         base.copy(resolver = {
                             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                val req = runCatching {
-                                    go.examate.hyp.music.bili.BiliClient(context).resolveAudio(bvid, cid)
-                                }.getOrNull()
-                                if (req != null) ResolveResult.Ok(req)
-                                else ResolveResult.Err("B站音频解析失败")
+                                PlayResolver.resolveBili(context, bvid, cid)
                             }
                         })
                     }
+                    platform.isNotBlank() && songmid.isNotBlank() -> base.copy(resolver = {
+                        val song = go.examate.hyp.music.lx.LxSong(
+                            platform, songmid, base.title, base.artist,
+                            base.durationMs, base.coverUrl, base.coverRef
+                        )
+                        PlayResolver.resolve(context, song)
+                    })
                     else -> base
                 }
             }
@@ -353,10 +376,19 @@ object PlayHistoryStore {
         val trimmed = list.take(MAX)
         val arr = org.json.JSONArray()
         trimmed.forEach { t ->
+            // 从 id("lx_platform_songmid")解析平台与 songmid(与 FavoritesStore 同款)
+            var platform = ""; var songmid = ""
+            if (t.id.startsWith("lx_")) {
+                val rest = t.id.removePrefix("lx_")
+                val sep = rest.indexOf('_')
+                if (sep > 0) { platform = rest.substring(0, sep); songmid = rest.substring(sep + 1) }
+            }
             arr.put(org.json.JSONObject().apply {
                 put("id", t.id); put("title", t.title); put("artist", t.artist)
                 put("duration", t.durationMs); put("cover", t.coverUrl)
+                put("coverRef", t.coverRef); put("qualityTag", t.qualityTag)
                 put("albumId", t.albumId)
+                put("platform", platform); put("songmid", songmid)
                 put("localUri", t.localUri?.toString().orEmpty()); put("historyKey", t.historyKey)
             })
         }

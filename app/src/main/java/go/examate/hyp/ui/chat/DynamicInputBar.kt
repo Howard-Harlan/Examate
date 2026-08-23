@@ -72,6 +72,7 @@ import com.kyant.shapes.RoundedRectangle
 import go.examate.hyp.ui.components.LocalGlassBackdrop
 import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.Danger
+import go.examate.hyp.ui.theme.IsDark
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextSecondary
 import kotlinx.coroutines.Dispatchers
@@ -96,6 +97,8 @@ fun DynamicInputBar(
     onStop: () -> Unit
 ) {
     val backdrop = LocalGlassBackdrop.current
+    // 深色模式降白:外层玻璃 38%→12%,避免在纯黑背景上过亮
+    val isDark = IsDark
     Column(
         Modifier
             .fillMaxWidth()
@@ -109,10 +112,10 @@ fun DynamicInputBar(
                             blur(20.dp.toPx())
                         },
                         highlight = { Highlight.Ambient },
-                        onDrawSurface = { drawRect(Color.White.copy(0.38f)) }
+                        onDrawSurface = { drawRect(Color.White.copy(if (isDark) 0.12f else 0.38f)) }
                     )
                 } else {
-                    Modifier.background(Color.White.copy(0.88f))
+                    Modifier.background(Color.White.copy(if (isDark) 0.18f else 0.88f))
                 }
             )
             .navigationBarsPadding()
@@ -172,7 +175,7 @@ fun DynamicInputBar(
                             shape = { RoundedRectangle(22.dp) },
                             effects = { vibrancy(); blur(16.dp.toPx()) },
                             highlight = { Highlight.Ambient },
-                            onDrawSurface = { drawRect(Color.White.copy(0.2f)) }
+                            onDrawSurface = { drawRect(Color.White.copy(if (isDark) 0.06f else 0.2f)) }
                         )
                     } else Modifier
                 ),
@@ -182,7 +185,7 @@ fun DynamicInputBar(
                     focusedContainerColor = Color.Transparent,
                     unfocusedContainerColor = Color.Transparent,
                     focusedBorderColor = AccentBlue.copy(0.45f),
-                    unfocusedBorderColor = Color.White.copy(0.35f),
+                    unfocusedBorderColor = Color.White.copy(if (isDark) 0.15f else 0.35f),
                     cursorColor = AccentBlue
                 ),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),

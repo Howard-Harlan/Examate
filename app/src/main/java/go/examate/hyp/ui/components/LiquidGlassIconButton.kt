@@ -18,6 +18,8 @@ import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.highlight.Highlight
 import com.kyant.shapes.Capsule
+import go.examate.hyp.ui.theme.GlassInputTint
+import go.examate.hyp.ui.theme.IsDark
 import go.examate.hyp.ui.theme.TextPrimary
 
 /**
@@ -36,6 +38,8 @@ fun LiquidGlassIconButton(
     ambientHighlight: Boolean = true
 ) {
     val backdrop = LocalGlassBackdrop.current
+    // 深色模式降白:玻璃面 42%→12%,回退面 88%→18%
+    val isDark = IsDark
     Box(
         modifier
             .then(
@@ -48,10 +52,10 @@ fun LiquidGlassIconButton(
                             blur(12f)
                         },
                         highlight = { if (ambientHighlight) Highlight.Ambient else Highlight.Plain },
-                        onDrawSurface = { drawRect(Color.White.copy(surfaceAlpha)) }
+                        onDrawSurface = { drawRect(Color.White.copy(if (isDark) 0.12f else surfaceAlpha)) }
                     )
                 } else {
-                    Modifier.clip(RoundedCornerShape(20.dp)).background(Color.White.copy(0.88f))
+                    Modifier.clip(RoundedCornerShape(20.dp)).background(GlassInputTint)
                 }
             )
             .clickable { onClick() },

@@ -60,6 +60,10 @@ import go.examate.hyp.ui.chat.ModelSelector
 import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.components.LocalGlassBackdrop
 import go.examate.hyp.ui.components.MarkdownText
+import go.examate.hyp.ui.theme.SelectedBg
+import go.examate.hyp.ui.theme.GlassCardTint
+import go.examate.hyp.ui.theme.GlassChipTint
+import go.examate.hyp.ui.theme.IsDark
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
@@ -114,6 +118,8 @@ fun AiWriterScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    // 深色模式降白:顶部/输入玻璃面 38%~48%→12%
+    val isDark = IsDark
     val scope = rememberCoroutineScope()
     val backdrop = LocalGlassBackdrop.current
     val keyboard = LocalSoftwareKeyboardController.current
@@ -228,7 +234,7 @@ fun AiWriterScreen(
                 item {
                     Box(
                         Modifier.fillMaxWidth(0.85f).clip(RoundedCornerShape(16.dp))
-                            .background(Color.White.copy(0.7f)).padding(14.dp)
+                            .background(GlassCardTint).padding(14.dp)
                     ) {
                         if (streamingText.isBlank() && isGenerating) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -285,10 +291,10 @@ fun AiWriterScreen(
                             backdrop = backdrop,
                             shape = { Capsule() },
                             effects = { vibrancy(); blur(12f) },
-                            onDrawSurface = { drawRect(Color.White.copy(0.48f)) }
+                            onDrawSurface = { drawRect(Color.White.copy(if (isDark) 0.12f else 0.48f)) }
                         )
                     } else {
-                        Modifier.clip(RoundedCornerShape(20.dp)).background(Color.White.copy(0.88f))
+                        Modifier.clip(RoundedCornerShape(20.dp)).background(GlassChipTint)
                     }
                 )
             ) {
@@ -339,10 +345,10 @@ fun AiWriterScreen(
                             backdrop = backdrop,
                             shape = { Capsule() },
                             effects = { vibrancy(); blur(10f) },
-                            onDrawSurface = { drawRect(Color.White.copy(0.4f)) }
+                            onDrawSurface = { drawRect(Color.White.copy(if (isDark) 0.12f else 0.4f)) }
                         )
                     } else {
-                        Modifier.clip(RoundedCornerShape(22.dp)).background(Color.White.copy(0.88f))
+                        Modifier.clip(RoundedCornerShape(22.dp)).background(GlassChipTint)
                     }
                 )
             ) {
@@ -350,7 +356,7 @@ fun AiWriterScreen(
                     WriterStage.entries.forEach { s ->
                         Box(
                             Modifier.clip(RoundedCornerShape(18.dp))
-                                .background(if (stage == s) Primary else Color.Transparent)
+                                .background(if (stage == s) SelectedBg else Color.Transparent)
                                 .clickable { stage = s }.padding(horizontal = 12.dp, vertical = 7.dp),
                             contentAlignment = Alignment.Center
                         ) {
@@ -369,10 +375,10 @@ fun AiWriterScreen(
                             backdrop = backdrop,
                             shape = { RoundedRectangle(26.dp) },
                             effects = { vibrancy(); blur(18f) },
-                            onDrawSurface = { drawRect(Color.White.copy(0.38f)) }
+                            onDrawSurface = { drawRect(Color.White.copy(if (isDark) 0.12f else 0.38f)) }
                         )
                     } else {
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(26.dp)).background(Color.White.copy(0.9f))
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(26.dp)).background(GlassChipTint)
                     }
                 ).padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -427,7 +433,8 @@ private fun MessageBubble(
         Box(
             Modifier.fillMaxWidth(if (isUser) 0.8f else 0.88f)
                 .clip(RoundedCornerShape(16.dp))
-                .background(if (isUser) Primary.copy(0.12f) else Color.White.copy(0.7f))
+                // 对方气泡主题化:浅色半透明白/深色深灰面,避免深色下白底黑字
+                .background(if (isUser) Primary.copy(0.12f) else GlassCardTint)
                 .padding(14.dp)
         ) {
             Column {

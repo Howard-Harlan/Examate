@@ -1,10 +1,14 @@
 package go.examate.hyp.meschat
 
+import android.util.Base64
 import org.bouncycastle.crypto.ec.CustomNamedCurves
 import org.bouncycastle.math.ec.ECPoint
 import java.math.BigInteger
 import java.security.MessageDigest
 import java.security.SecureRandom
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * Nostr 密码学工具:secp256k1 密钥对生成 + BIP-340 Schnorr 签名。
@@ -145,5 +149,121 @@ object NostrCrypto {
         arr.put(tags)
         arr.put(content)
         return sha256Hex(arr.toString().toByteArray())
+    }
+
+    // ════════════════════════════════════════
+    //  AES 工具(密钥匹对私聊 / NIP-04)
+    // ════════════════════════════════════════
+
+    /** AES-256-CBC 加密/解密(失败返回 null) */
+    private fun aes(mode: Int, key: ByteArray, iv: ByteArray, data: ByteArray): ByteArray? {
+        return try {
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            cipher.init(mode, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
+            cipher.doFinal(data)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * 从配对密钥(口令)派生 32 字节 AES 密钥:SHA-256(UTF-8 口令)。
+     */
+    fun deriveKey(secret: String): ByteArray =
+        sha256(secret.toByteArray(Charsets.UTF_8))
+
+    /**
+     * 配对房间 ID:由配对密钥确定性派生(不暴露密钥本身)。
+     * 双方输入相同密钥 → 得到相同房间 ID,订阅/过滤都以此为准。
+     */
+    fun roomIdFromKey(key: String): String = sha256Hex(deriveKey(key)).take(16)
+
+    /** 配对房间加密:随机 IV + AES-CBC,返回 (iv, ciphertext);失败返回 null */
+    fun roomEncrypt(key: ByteArray, plain: String): Pair<ByteArray, ByteArray>? {
+        val iv = ByteArray(16).also { SecureRandom().nextBytes(it) }
+        val cipher = aes(Cipher.ENCRYPT_MODE, key, iv, plain.toByteArray(Charsets.UTF_8))
+            ?: return null
+        return iv to cipher
+    }
+
+    /** 配对房间解密;失败返回 null(密钥不符时静默丢弃) */
+    fun roomDecrypt(key: ByteArray, iv: ByteArray, cipher: ByteArray): String? =
+        aes(Cipher.DECRYPT_MODE, key, iv, cipher)?.toString(Charsets.UTF_8)
+
+    /**
+     * NIP-04 ECDH 共享密钥:secp256k1 点乘 + SHA-256(x 坐标)。
+     * 公钥为 x-only(本应用生成的 pubkey),按偶数 y 重建点,双方一致。
+     */
+    fun sharedSecretNip04(privKeyHex: String, pubKeyHex: String): ByteArray? {
+        return try {
+            val d = BigInteger(1, fromHex(privKeyHex)).mod(n)
+            val point = listOf("02" + pubKeyHex, "03" + pubKeyHex)
+                .asSequence()
+                .map { runCatching { curve.decodePoint(fromHex(it)) }.getOrNull() }
+                .filterNotNull()
+                .firstOrNull { it.isValid && !it.isInfinity }
+                ?: return null
+            val shared = point.multiply(d).normalize()
+            if (shared.isInfinity) return null
+            sha256(to32Bytes(shared.affineXCoord.toBigInteger()))
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** NIP-04 加密:输出 "base64(iv)?iv=base64(ciphertext)" */
+    fun encryptNip04(sharedKey: ByteArray, plain: String): String {
+        val iv = ByteArray(16).also { SecureRandom().nextBytes(it) }
+        val cipher = aes(Cipher.ENCRYPT_MODE, sharedKey, iv, plain.toByteArray(Charsets.UTF_8))
+            ?: return ""
+        return Base64.encodeToString(iv, Base64.NO_WRAP) +
+            "?iv=" + Base64.encodeToString(cipher, Base64.NO_WRAP)
+    }
+
+    /** NIP-04 解密;失败返回 null */
+    fun decryptNip04(sharedKey: ByteArray, payload: String): String? {
+        val parts = payload.split("?iv=")
+        if (parts.size != 2) return null
+        return try {
+            val iv = Base64.decode(parts[0], Base64.NO_WRAP)
+            val ct = Base64.decode(parts[1], Base64.NO_WRAP)
+            aes(Cipher.DECRYPT_MODE, sharedKey, iv, ct)?.toString(Charsets.UTF_8)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * 计算 NIP-04 共享密钥的两种候选(公钥 x-only,偶 y 与奇 y 两个候选点)。
+     * 发送方统一按偶 y 加密;解密时若偶 y 失败再尝试奇 y,
+     * 兼容按奇 y 重建点的第三方实现。
+     */
+    fun sharedSecretsNip04(privKeyHex: String, pubKeyHex: String): List<ByteArray> {
+        return try {
+            val d = BigInteger(1, fromHex(privKeyHex)).mod(n)
+            listOf("02" + pubKeyHex, "03" + pubKeyHex)
+                .mapNotNull { prefix ->
+                    runCatching { curve.decodePoint(fromHex(prefix)) }
+                        .getOrNull()
+                        ?.takeIf { it.isValid && !it.isInfinity }
+                }
+                .mapNotNull { point ->
+                    val shared = point.multiply(d).normalize()
+                    if (shared.isInfinity) null
+                    else sha256(to32Bytes(shared.affineXCoord.toBigInteger()))
+                }
+                .distinctBy { it.joinToString(",") }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    /** NIP-04 解密(尝试全部候选共享密钥);失败返回 null */
+    fun decryptNip04Any(secrets: List<ByteArray>, payload: String): String? {
+        for (secret in secrets) {
+            val plain = decryptNip04(secret, payload)
+            if (plain != null) return plain
+        }
+        return null
     }
 }

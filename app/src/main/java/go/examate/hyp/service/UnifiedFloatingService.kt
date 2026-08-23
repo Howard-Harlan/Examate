@@ -48,7 +48,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 
-import go.examate.hyp.CustomView.RectangleDrawableConstraintLayout
+import go.examate.hyp.customview.RectangleDrawableConstraintLayout
 import go.examate.hyp.R
 import go.examate.hyp.config.MyConfig
 import go.examate.hyp.config.PrefsManager
@@ -509,14 +509,15 @@ class UnifiedFloatingService : Service() {
     }
 
     /**
-     * 启动悬浮聊天窗(局域网 UDP 广播模式)
+     * 启动悬浮聊天窗(Mesh 局域网聊天,复用 [go.examate.hyp.meschat.MesChatController] 单例,
+     * 与主界面聊天页共享传输层;统一端口与协议,避免旧版独立 UDP 实现抢占 19876 端口)
      */
     private fun startFloatingChat() {
         if (!Settings.canDrawOverlays(this)) {
             ToastUtil.show(this, "请先授予悬浮窗权限")
             return
         }
-        startService(Intent(this, LanChatService::class.java))
+        startService(Intent(this, go.examate.hyp.meschat.MesChatFloatingService::class.java))
     }
 
     /**

@@ -1,5 +1,7 @@
 package go.examate.hyp.ui.theme
 
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.graphics.Color
 
 /**
@@ -9,8 +11,13 @@ import androidx.compose.ui.graphics.Color
  * 多个文件的硬编码色值,统一抽取到这里,便于统一调整与复用。
  */
 
-/** 课表节次格子背景(原 `Color(0xFFF0F0F2)`,9 处重复) */
-val ScheduleCellBg = Color(0xFFF0F0F2)
+/**
+ * 课表节次格子背景(原 `Color(0xFFF0F0F2)`,9 处重复)。
+ * 深色模式下自动切换为深灰面,避免浅灰格子破坏深色视觉效果。
+ */
+val ScheduleCellBg: Color
+    @Composable @ReadOnlyComposable get() =
+        if (IsDark) Color(0xFF2C2C2E) else Color(0xFFF0F0F2)
 
 /** 课表卡片渐变起始(原 `Color(0xFF374151)`,3 处重复) */
 val ScheduleGradientStart = Color(0xFF374151)

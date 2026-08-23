@@ -7,35 +7,29 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- 课表课前提醒:Android 12+ 精确闹钟 -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <!-- 开机后重新调度提醒 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
-    <!-- 局域网聊天:UDP 广播发现设备 -->
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- 网络状态:Nostr 中继连接检测 -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- 局域网聊天:UDP 广播直连,普通权限即可;组播锁提高休眠时收到广播包的可靠性 -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
-    <!-- Wi-Fi Aware (NAN) 传输:需要 CHANGE_WIFI_STATE + 位置(Android 13+ 用 NEARBY_WIFI_DEVICES) -->
-    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <!-- P2P 直连(可选功能,路由器 AP 隔离时的点对点通道,按需运行时申请):
+         Android 13+ 为 NEARBY_WIFI_DEVICES(neverForLocation),12 及以下为 ACCESS_FINE_LOCATION -->
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
         android:usesPermissionFlags="neverForLocation"
         tools:targetApi="33" />
-    <uses-feature android:name="android.hardware.wifi.aware" android:required="false" />
-
-    <!-- BLE Mesh 聊天:蓝牙 + 定位(Android 12+ 需要新权限) -->
-    <uses-permission android:name="android.permission.BLUETOOTH"
-        android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
-        android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
-
-    <!-- BLE 硬件特性声明(非必需) -->
-    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 
     <uses-permission
         android:name="android.permission.WRITE_SECURE_SETTINGS"
@@ -61,8 +55,7 @@
         <service
             android:name=".service.UnifiedFloatingService"
             android:foregroundServiceType="mediaProjection" />
-        <service android:name=".service.LanChatService"/>
-        <!-- Mesh 聊天悬浮窗服务(ComposeView 挂载到 WindowManager) -->
+        <!-- Mesh 聊天悬浮窗服务(ComposeView 挂载到 WindowManager,与主界面共享 MesChatController 单例) -->
         <service android:name=".meschat.MesChatFloatingService"/>
         <service
             android:name=".service.MyAccessibilityService"
@@ -103,6 +96,15 @@
             android:name=".MainActivity"
             android:screenOrientation="portrait" />
         <activity
+            android:name=".DeepLearningActivity"
+            android:label="Deep Learning"
+            android:screenOrientation="portrait" />
+        <activity
+            android:name=".notes.MemoActivity"
+            android:label="速记"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
             android:name=".ApiConfigActivity"
             android:label="API设置"
             android:screenOrientation="portrait" />
@@ -117,11 +119,6 @@
         <activity
             android:name=".ChatActivity"
             android:label="Agents"
-            android:screenOrientation="portrait"
-            android:windowSoftInputMode="adjustResize" />
-        <activity
-            android:name=".LanChatActivity"
-            android:label="局域网聊天"
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize" />
         <activity
@@ -225,9 +222,41 @@
                 <data android:pathPattern=".*\\.opus" />
             </intent-filter>
         </activity>
+
+        <!-- 音乐后台播放:前台服务 + 通知栏控制 -->
+        <service
+            android:name=".music.MusicPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
         <activity
             android:name=".music.bili.BiliLoginActivity"
             android:label="B站登录"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".music.auth.NeteaseLoginActivity"
+            android:label="网易云登录"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".music.auth.TxLoginActivity"
+            android:label="QQ音乐登录"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".music.auth.KugouLoginActivity"
+            android:label="酷狗登录"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".music.auth.KuwoLoginActivity"
+            android:label="酷我登录"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".music.auth.MiguLoginActivity"
+            android:label="咪咕登录"
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize" />
         <activity
@@ -257,6 +286,10 @@
         <activity
             android:name=".SystemSettingsActivity"
             android:label="系统设置"
+            android:screenOrientation="portrait" />
+        <activity
+            android:name=".CacheManagerActivity"
+            android:label="缓存管理"
             android:screenOrientation="portrait" />
         <activity
             android:name=".notes.NotesActivity"
@@ -290,6 +323,19 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_schedule_info" />
+        </receiver>
+        <!-- 课表课前提醒:接收闹钟触发 + 开机后重新调度 -->
+        <receiver
+            android:name=".campus.ScheduleReminderReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="go.examate.hyp.SCHEDULE_REMINDER" />
+                <action android:name="go.examate.hyp.SCHEDULE_RESCHEDULE" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
         </receiver>
         <!-- Shizuku API -->
         <provider

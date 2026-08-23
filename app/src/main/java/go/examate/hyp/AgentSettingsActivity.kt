@@ -7,7 +7,6 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import go.examate.hyp.util.ToastUtil
-import go.examate.hyp.util.ReadingFont
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -90,10 +89,13 @@ import go.examate.hyp.ui.components.PlainDialog
 import go.examate.hyp.ui.components.PlainDialogContent
 import go.examate.hyp.ui.components.PlainDialogButtons
 import go.examate.hyp.ui.components.PlainDialogTitle
+import go.examate.hyp.ui.theme.SelectedBg
 import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.ChipBg
 import go.examate.hyp.ui.theme.Danger
 import go.examate.hyp.ui.theme.DialogBg
+import go.examate.hyp.ui.theme.GlassChipTint
+import go.examate.hyp.ui.theme.IsDark
 import go.examate.hyp.ui.theme.ExamateTheme
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.SurfaceVariant
@@ -133,7 +135,7 @@ private fun AgentSettingsScreen(onBack: () -> Unit) {
     var toolsExpanded by remember { mutableStateOf(false) }
     var showToolDialog by remember { mutableStateOf(false) }
     var editingTool by remember { mutableStateOf<CustomToolSpec?>(null) }
-    var fontPathState by remember { mutableStateOf(PrefsManager.getInstance(context).chatFontPath) }
+    var fontSerifState by remember { mutableStateOf(PrefsManager.getInstance(context).chatFontSerif) }
     var fontSizeState by remember { mutableIntStateOf(PrefsManager.getInstance(context).chatFontSize) }
     var fontSizeLevel by remember { mutableIntStateOf(PrefsManager.getInstance(context).chatFontSizeLevel) }
     var bgPathState by remember { mutableStateOf(PrefsManager.getInstance(context).chatBackgroundPath) }
@@ -152,13 +154,6 @@ private fun AgentSettingsScreen(onBack: () -> Unit) {
         builtinToolNames = ToolRegistry.registeredTools().map { it.name }.filter { it !in customNames }
     }
 
-    val fontPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) {
-            val ok = ReadingFont.import(context, uri)
-            ToastUtil.show(context, if (ok) "字体已导入" else "导入失败(请选 ttf/otf)")
-            if (ok) fontPathState = PrefsManager.getInstance(context).chatFontPath
-        }
-    }
     // 聊天背景图片选择:复制到 filesDir/chat_background.jpg
     val bgPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
@@ -233,7 +228,7 @@ private fun AgentSettingsScreen(onBack: () -> Unit) {
                 listOf("工具", "样式").forEachIndexed { index, label ->
                     Box(
                         Modifier.weight(1f).clip(RoundedCornerShape(10.dp))
-                            .background(if (settingsTab == index) Primary else SurfaceVariant)
+                            .background(if (settingsTab == index) SelectedBg else SurfaceVariant)
                             .clickable { settingsTab = index }
                             .padding(vertical = 9.dp),
                         contentAlignment = Alignment.Center
@@ -431,20 +426,19 @@ private fun AgentSettingsScreen(onBack: () -> Unit) {
                     item {
                         FrostedGlassCard(modifier = Modifier.fillMaxWidth()) {
                             Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp)) {
+                                // 衬线字体开关(替代原自定义字体导入,与阅读器解耦)
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Column(Modifier.weight(1f)) {
-                                        Text("正文字体", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                        Text(if (fontPathState.isEmpty()) "系统默认" else "已导入自定义字体", color = TextHint, fontSize = 11.sp)
+                                        Text("衬线字体", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                        Text("开启后正文使用衬线字体,阅读更舒适", color = TextHint, fontSize = 11.sp)
                                     }
-                                    if (fontPathState.isNotEmpty()) {
-                                        Text("恢复默认", color = Danger, fontSize = 12.sp,
-                                            modifier = Modifier.clickable {
-                                                ReadingFont.clear(context); fontPathState = ""
-                                                ToastUtil.show(context, "已恢复默认字体")
-                                            }.padding(horizontal = 6.dp, vertical = 4.dp))
-                                        Spacer(Modifier.width(8.dp))
-                                    }
-                                    CompactGlassButton(text = "导入字体", onClick = { fontPicker.launch("*/*") })
+                                    LiquidGlassToggle(
+                                        selected = fontSerifState,
+                                        onSelect = {
+                                            fontSerifState = it
+                                            PrefsManager.getInstance(context).chatFontSerif = it
+                                        }
+                                    )
                                 }
                                 Spacer(Modifier.height(14.dp))
                                 // 正文字号:三档(偏小/常规/偏大)
@@ -456,7 +450,7 @@ private fun AgentSettingsScreen(onBack: () -> Unit) {
                                         val selected = fontSizeLevel == lvl
                                         Box(
                                             Modifier.weight(1f).clip(RoundedCornerShape(10.dp))
-                                                .background(if (selected) Primary else Primary.copy(0.08f))
+                                                .background(if (selected) SelectedBg else Primary.copy(0.08f))
                                                 .clickable {
                                                     fontSizeLevel = lvl
                                                     PrefsManager.getInstance(context).chatFontSizeLevel = lvl
@@ -686,7 +680,7 @@ private fun CustomToolDialog(
     ) {
         Text(
             if (initial == null) "添加自定义工具" else "编辑工具",
-            color = Color.Black,
+            color = TextPrimary,
             fontSize = 20.sp,
             fontWeight = FontWeight.Medium,
             textAlign = TextAlign.Center,
@@ -763,7 +757,7 @@ private fun CustomToolDialog(
                     val on = method == m
                     Box(
                         Modifier.clip(RoundedCornerShape(8.dp))
-                            .background(if (on) Primary else Primary.copy(0.08f))
+                            .background(if (on) SelectedBg else Primary.copy(0.08f))
                             .clickable { method = m }.padding(horizontal = 16.dp, vertical = 6.dp)
                     ) { Text(m, color = if (on) Color.White else Primary, fontSize = 12.sp) }
                 }
@@ -789,7 +783,7 @@ private fun CustomToolDialog(
                     .padding(vertical = 10.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text("取消", color = Color.Black, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text("取消", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
             }
             Box(
                 Modifier
@@ -921,7 +915,7 @@ private fun AddMemoryDialog(
                     Box(
                         Modifier
                             .clip(RoundedCornerShape(12.dp))
-                            .background(if (category == cat) Primary else SurfaceVariant)
+                            .background(if (category == cat) SelectedBg else SurfaceVariant)
                             .clickable { category = cat }
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
@@ -1010,6 +1004,8 @@ private fun CompactGlassButton(
     onClick: () -> Unit
 ) {
     val backdrop = LocalGlassBackdrop.current
+    // 深色模式降白:玻璃面 50%→12%,回退面改主题化胶囊色
+    val isDark = IsDark
     Box(
         Modifier
             .clip(Capsule())
@@ -1020,10 +1016,10 @@ private fun CompactGlassButton(
                         shape = { Capsule() },
                         effects = { vibrancy(); blur(8f.dp.toPx()) },
                         highlight = { Highlight.Plain },
-                        onDrawSurface = { drawRect(Color.White.copy(0.5f)) }
+                        onDrawSurface = { drawRect(Color.White.copy(if (isDark) 0.12f else 0.5f)) }
                     )
                 } else {
-                    Modifier.background(Color.White.copy(0.7f))
+                    Modifier.background(GlassChipTint)
                 }
             )
             .clickable { onClick() }

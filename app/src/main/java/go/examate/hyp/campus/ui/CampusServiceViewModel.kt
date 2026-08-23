@@ -225,6 +225,8 @@ sealed class CampusRoute {
     object QuickService : CampusRoute()
     /** 班级通讯录:需要登录智慧门户 */
     object ClassContact : CampusRoute()
+    /** 教材清单:jiaocaigo.com 手机号登录后查询本学期教材 */
+    object TextbookList : CampusRoute()
 }
 
 /** 登录状态 */

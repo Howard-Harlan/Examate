@@ -1,5 +1,8 @@
 *.iml
 .gradle
+.gradlehome
+build_log.txt
+assemble_log.txt
 /local.properties
 # Kotlin 编译错误日志
 .kotlin/
@@ -44,3 +47,12 @@ sniff_data/
 .uploads/
 .qoder/
 .workbuddy/
+
+# 根目录调试/临时文件
+b64.txt
+pdone_latest.js
+lx_sign_check.js
+build_debug.log
+package.json
+package-lock.json
+node_modules/

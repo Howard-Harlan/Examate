@@ -36,7 +36,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -267,8 +266,7 @@ private fun TipStackCard() {
     ) { page ->
         val tip = Tips[page]
         FrostedGlassCard(
-            modifier = Modifier.fillMaxWidth().height(120.dp),
-            tint = Color.White.copy(alpha = 1f)
+            modifier = Modifier.fillMaxWidth().height(120.dp)
         ) {
             Column(
                 Modifier.fillMaxSize().background(CardBg).padding(18.dp),

@@ -64,7 +64,6 @@ class JsEngine private constructor() : JsEngineApi, java.io.Closeable {
         java.setProperty("log", JSCallFunction { args -> ext.log(args.strOr(0)) })
         java.setProperty("toast", JSCallFunction { args -> ext.log(args.strOr(0)) })
         global.setProperty("java", java)
-        java.release()
     }
 
     /**

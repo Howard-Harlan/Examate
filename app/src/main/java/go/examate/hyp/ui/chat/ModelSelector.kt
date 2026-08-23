@@ -20,12 +20,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import go.examate.hyp.entity.ModelProvider
 import go.examate.hyp.ui.theme.AccentBlue
+import go.examate.hyp.ui.theme.DialogBg
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 
@@ -50,7 +50,8 @@ fun ModelSelector(providers: List<ModelProvider>, selectedIndex: Int, onSelect: 
             onDismissRequest = { expanded = false },
             modifier = Modifier.width(220.dp),
             shape = RoundedCornerShape(20.dp),
-            containerColor = Color.White.copy(0.95f),
+            // 主题化容器:浅色白/深色深灰
+            containerColor = DialogBg,
             tonalElevation = 0.dp,
             shadowElevation = 8.dp
         ) {

@@ -141,8 +141,10 @@ fun ReaderCoreScreen(
     // CSS 自定义样式(覆盖字号/颜色/行距/缩进/段距/对齐/字重)
     val customStyle = remember { ReaderPrefs.parseCss(ReaderPrefs.getCustomCss(context)) }
 
-    val bg = ReaderPrefs.bgColor(bgTheme)
-    val fg = customStyle.textColor ?: ReaderPrefs.textColor(bgTheme)
+    // 背景主题:系统夜间时"纸白"自动切换为夜黑,护眼绿保持不切换
+    val effectiveTheme = if (go.examate.hyp.ui.theme.IsDark && bgTheme == 0) 2 else bgTheme
+    val bg = ReaderPrefs.bgColor(effectiveTheme)
+    val fg = customStyle.textColor ?: ReaderPrefs.textColor(effectiveTheme)
     val fontSize = customStyle.fontSize ?: ReaderPrefs.fontSizeSp(fontLevel)
     val lineHeightExtra = customStyle.lineHeightExtra ?: 10
     val paragraphSpacing = customStyle.paragraphSpacing ?: 12
@@ -161,7 +163,7 @@ fun ReaderCoreScreen(
         LazyColumn(
             Modifier.fillMaxSize().clickable { showBar = !showBar },
             state = listState,
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp, vertical = 56.dp)
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 20.dp, top = 56.dp, end = 20.dp, bottom = 64.dp)
         ) {
             item {
                 Text(chapter?.title.orEmpty(), color = fg, fontSize = (fontSize + 3).sp, fontWeight = FontWeight.Bold)
@@ -208,7 +210,7 @@ fun ReaderCoreScreen(
             }
             Row(
                 Modifier.fillMaxWidth().align(Alignment.BottomCenter).background(bg.copy(0.95f))
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                    .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 20.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {

@@ -66,6 +66,7 @@ import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.components.LiquidGlassIconButton
+import go.examate.hyp.ui.theme.SelectedBg
 import go.examate.hyp.ui.theme.Divider as DividerColor
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.SurfaceVariant
@@ -459,7 +460,7 @@ fun ScheduleScreen(onBack: () -> Unit) {
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "返回",
                     onClick = onBack,
-                    modifier = Modifier.size(36.dp)
+                    modifier = Modifier.size(40.dp)
                 )
                 // [< 周次/日期 >] 融合胶囊:点击中间文字展开选择器
                 // start padding 加大,与左侧返回按钮拉开距离
@@ -549,7 +550,7 @@ fun ScheduleScreen(onBack: () -> Unit) {
                     icon = Icons.Filled.Download,
                     contentDescription = "导入课表",
                     onClick = { showImportDialog = true },
-                    modifier = Modifier.size(36.dp)
+                    modifier = Modifier.size(40.dp)
                 )
                 Spacer(Modifier.width(4.dp))
                 // 添加课程(+ 图标,周/日视图统一显示)
@@ -559,14 +560,14 @@ fun ScheduleScreen(onBack: () -> Unit) {
                     onClick = {
                         editTarget = null; initialSlot = null; showAddCoursePage = true
                     },
-                    modifier = Modifier.size(36.dp)
+                    modifier = Modifier.size(40.dp)
                 )
                 Spacer(Modifier.width(4.dp))
                 LiquidGlassIconButton(
                     icon = Icons.Filled.Settings,
                     contentDescription = "设置",
                     onClick = { settingsLauncher.launch(Intent(context, ScheduleSettingsActivity::class.java)) },
-                    modifier = Modifier.size(36.dp)
+                    modifier = Modifier.size(40.dp)
                 )
             }
 
@@ -816,7 +817,7 @@ private fun JwxtImportOptionsDialog(
                     ) {
                         Box(
                             Modifier.size(20.dp).clip(RoundedCornerShape(10.dp))
-                                .background(if (creditMode == mode) Primary else SurfaceVariant),
+                                .background(if (creditMode == mode) SelectedBg else SurfaceVariant),
                             contentAlignment = Alignment.Center
                         ) {
                             if (creditMode == mode) {
@@ -840,7 +841,7 @@ private fun JwxtImportOptionsDialog(
                 ) {
                     Box(
                         Modifier.size(20.dp).clip(RoundedCornerShape(4.dp))
-                            .background(if (includeExperiment) Primary else SurfaceVariant),
+                            .background(if (includeExperiment) SelectedBg else SurfaceVariant),
                         contentAlignment = Alignment.Center
                     ) {
                         if (includeExperiment) Text("✓", color = Color.White, fontSize = 11.sp)

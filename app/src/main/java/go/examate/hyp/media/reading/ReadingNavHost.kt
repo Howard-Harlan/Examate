@@ -69,6 +69,7 @@ import go.examate.hyp.media.reader.ReaderTocView
 import go.examate.hyp.media.reader.TextProvider
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassIconButton
+import go.examate.hyp.ui.theme.SelectedBg
 import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.Danger
@@ -367,7 +368,7 @@ private fun ReadingHubScreen(
                 // 全选
                 val allSel = sources.isNotEmpty() && sources.all { selectedUrls[it.bookSourceUrl] == true }
                 Box(
-                    Modifier.clip(RoundedCornerShape(8.dp)).background(if (allSel) Primary else SurfaceVariant)
+                    Modifier.clip(RoundedCornerShape(8.dp)).background(if (allSel) SelectedBg else SurfaceVariant)
                         .clickable {
                             if (allSel) selectedUrls.clear()
                             else sources.forEach { selectedUrls[it.bookSourceUrl] = true }
@@ -431,7 +432,7 @@ private fun ReadingHubScreen(
                 labelByTab.forEachIndexed { i, label ->
                     Box(
                         Modifier.weight(1f).clip(RoundedCornerShape(10.dp))
-                            .background(if (tab == i) Primary else ScheduleCellBg)
+                            .background(if (tab == i) SelectedBg else ScheduleCellBg)
                             .clickable { tab = i }.padding(vertical = 9.dp),
                         contentAlignment = Alignment.Center
                     ) {
@@ -545,7 +546,7 @@ private fun BookSourceCard(
             if (multiSelect) {
                 Box(
                     Modifier.size(22.dp).clip(RoundedCornerShape(11.dp))
-                        .background(if (isSelected) Primary else Color.Transparent)
+                        .background(if (isSelected) SelectedBg else Color.Transparent)
                         .border(
                             if (isSelected) 0.dp else 2.dp,
                             if (isSelected) Color.Transparent else Color(0xFFD1D5DB),

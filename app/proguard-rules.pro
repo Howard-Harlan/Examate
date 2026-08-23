@@ -49,3 +49,11 @@
 -dontwarn com.alipay.**
 -dontwarn com.ta.utdid2.**
 -dontwarn com.ut.device.**
+
+# ───────── QuickJS wrapper(com.whl.quickjs) ─────────
+# QuickJS 通过 JNI 调用 QuickJSContext.evaluate 等;JNI 类名混淆会导致调用失败
+-keep class com.whl.quickjs.wrapper.** { *; }
+-keep class com.whl.quickjs.android.** { *; }
+-dontwarn com.whl.quickjs.**
+# 我们传给 QuickJS 的 JSCallFunction 是匿名 Lambda,QuickJS wrapper 通过反射找 invoke 方法
+-keepattributes Exceptions

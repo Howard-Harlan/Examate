@@ -49,7 +49,8 @@ import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.components.LiquidGlassToggle
-import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.SelectedBg
+
 import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.ScheduleCellBg
 import go.examate.hyp.ui.theme.TextHint
@@ -91,7 +92,7 @@ internal fun ScheduleManageTab(onEditSchedule: (String) -> Unit) {
                             if (meta.isCurrent) {
                                 Spacer(Modifier.width(8.dp))
                                 Box(
-                                    Modifier.clip(RoundedCornerShape(4.dp)).background(Primary).padding(horizontal = 6.dp, vertical = 2.dp)
+                                    Modifier.clip(RoundedCornerShape(4.dp)).background(go.examate.hyp.ui.theme.SelectedBg).padding(horizontal = 6.dp, vertical = 2.dp)
                                 ) {
                                     Text("当前", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Medium)
                                 }
@@ -370,6 +371,32 @@ internal fun ScheduleEditPage(metaId: String, onBack: () -> Unit) {
                                     }.padding(4.dp))
                             }
                         }
+                        Spacer(Modifier.height(12.dp))
+                        // 期末周周次(考试周,默认 18 周)
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("期末周", color = TextPrimary, fontSize = 13.sp)
+                                Text("第几周为考试周", color = TextHint, fontSize = 10.sp)
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("‹", color = TextHint, fontSize = 16.sp,
+                                    modifier = Modifier.clickable {
+                                        if (meta.examWeek > 1) {
+                                            meta = meta.copy(examWeek = meta.examWeek - 1)
+                                            ScheduleStorage.updateScheduleMeta(context, meta)
+                                        }
+                                    }.padding(4.dp))
+                                Text("第${meta.examWeek}周", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.width(52.dp), textAlign = TextAlign.Center)
+                                Text("›", color = TextHint, fontSize = 16.sp,
+                                    modifier = Modifier.clickable {
+                                        if (meta.examWeek < 30) {
+                                            meta = meta.copy(examWeek = meta.examWeek + 1)
+                                            ScheduleStorage.updateScheduleMeta(context, meta)
+                                        }
+                                    }.padding(4.dp))
+                            }
+                        }
                     }
                 }
 
@@ -409,7 +436,7 @@ internal fun ScheduleEditPage(metaId: String, onBack: () -> Unit) {
                                     Box(
                                         Modifier
                                             .clip(RoundedCornerShape(6.dp))
-                                            .background(if (selected) Primary else ScheduleCellBg)
+                                            .background(if (selected) SelectedBg else ScheduleCellBg)
                                             .clickable {
                                                 meta = meta.copy(fontScale = scale)
                                                 ScheduleStorage.updateScheduleMeta(context, meta)

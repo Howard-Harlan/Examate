@@ -68,6 +68,7 @@ import go.examate.hyp.campus.ui.JwxtScreen
 import go.examate.hyp.campus.ui.LoginState
 import go.examate.hyp.campus.ui.QuickServiceScreen
 import go.examate.hyp.campus.ui.ScScreen
+import go.examate.hyp.campus.ui.TextbookListScreen
 import go.examate.hyp.config.PrefsManager
 import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.FrostedGlassCard
@@ -198,12 +199,17 @@ private fun CampusServiceRoot(onBack: () -> Unit, initialRoute: CampusRoute = Ca
         is CampusRoute.QuickService -> {
             QuickServiceScreen(
                 onBack = { viewModel.setRoute(CampusRoute.Home) },
-                onClassContact = { viewModel.setRoute(CampusRoute.ClassContact) }
+                onClassContact = { viewModel.setRoute(CampusRoute.ClassContact) },
+                onTextbookList = { viewModel.setRoute(CampusRoute.TextbookList) }
             )
             return
         }
         is CampusRoute.ClassContact -> {
             ClassContactScreen(onBack = { viewModel.setRoute(CampusRoute.QuickService) })
+            return
+        }
+        is CampusRoute.TextbookList -> {
+            TextbookListScreen(onBack = { viewModel.setRoute(CampusRoute.QuickService) })
             return
         }
         else -> { /* 主页继续往下渲染 */ }

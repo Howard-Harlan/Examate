@@ -1,16 +1,23 @@
 package go.examate.hyp.ui.theme
 
 import android.app.Activity
+import android.content.SharedPreferences
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
@@ -21,6 +28,7 @@ import go.examate.hyp.config.PrefsManager
 // ════════════════════════════════════════════════════
 
 data class AppColors(
+    val isDark: Boolean,
     val bgPrimary: Color,
     val cardBg: Color,           // 卡片/列表项背景
     val dialogBg: Color,         // 对话框/底部弹窗背景
@@ -31,6 +39,12 @@ data class AppColors(
     val glassBorder: Color,
     val glassHighlight: Color,
     val glassShadow: Color,
+    val glassCardTint: Color,    // 毛玻璃卡片主体 tint
+    val glassChipTint: Color,    // 玻璃胶囊表面(顶栏按钮/选择器等)
+    val glassInputTint: Color,   // 高亮输入/表面(输入栏、气泡等)
+    val bgGradientTint: Color,   // 页面背景底部微光色
+    val selectedBg: Color,       // 选择器/切换按钮选中背景(深色用品牌蓝,避免 Primary 提亮成浅灰发白)
+    val onSelected: Color,       // 选中背景上的文字/图标色
     val primary: Color,
     val accent: Color,
     val textPrimary: Color,
@@ -55,6 +69,7 @@ data class AppColors(
 )
 
 val LightAppColors = AppColors(
+    isDark = false,
     bgPrimary = BgPrimaryLight,
     cardBg = CardBgLight,
     dialogBg = DialogBgLight,
@@ -65,6 +80,12 @@ val LightAppColors = AppColors(
     glassBorder = GlassBorderLight,
     glassHighlight = GlassHighlightLight,
     glassShadow = GlassShadowLight,
+    glassCardTint = GlassCardTintLight,
+    glassChipTint = GlassChipTintLight,
+    glassInputTint = GlassInputTintLight,
+    bgGradientTint = BgGradientTintLight,
+    selectedBg = SelectedBgLight,
+    onSelected = OnSelectedLight,
     primary = PrimaryLight,
     accent = AccentLight,
     textPrimary = TextPrimaryLight,
@@ -89,6 +110,7 @@ val LightAppColors = AppColors(
 )
 
 val DarkAppColors = AppColors(
+    isDark = true,
     bgPrimary = BgPrimaryDark,
     cardBg = CardBgDark,
     dialogBg = DialogBgDark,
@@ -99,6 +121,12 @@ val DarkAppColors = AppColors(
     glassBorder = GlassBorderDark,
     glassHighlight = GlassHighlightDark,
     glassShadow = GlassShadowDark,
+    glassCardTint = GlassCardTintDark,
+    glassChipTint = GlassChipTintDark,
+    glassInputTint = GlassInputTintDark,
+    bgGradientTint = BgGradientTintDark,
+    selectedBg = SelectedBgDark,
+    onSelected = OnSelectedDark,
     primary = PrimaryDarkColor,
     accent = AccentDark,
     textPrimary = TextPrimaryDarkColor,
@@ -219,6 +247,27 @@ val WarningBg: Color
 val SurfaceVariant: Color
     @Composable @ReadOnlyComposable get() = LocalAppColors.current.surfaceVariant
 
+val IsDark: Boolean
+    @Composable @ReadOnlyComposable get() = LocalAppColors.current.isDark
+
+val GlassCardTint: Color
+    @Composable @ReadOnlyComposable get() = LocalAppColors.current.glassCardTint
+
+val GlassChipTint: Color
+    @Composable @ReadOnlyComposable get() = LocalAppColors.current.glassChipTint
+
+val GlassInputTint: Color
+    @Composable @ReadOnlyComposable get() = LocalAppColors.current.glassInputTint
+
+val BgGradientTint: Color
+    @Composable @ReadOnlyComposable get() = LocalAppColors.current.bgGradientTint
+
+val SelectedBg: Color
+    @Composable @ReadOnlyComposable get() = LocalAppColors.current.selectedBg
+
+val OnSelected: Color
+    @Composable @ReadOnlyComposable get() = LocalAppColors.current.onSelected
+
 // ════════════════════════════════════════════════════
 //  Material3 ColorScheme
 // ════════════════════════════════════════════════════
@@ -273,6 +322,9 @@ private val DarkColorScheme = darkColorScheme(
  *
  * 深色模式下状态栏图标自动变白,浅色模式变黑(参考 Apple HIG)。
  *
+ * 主题即时生效:themeMode 以 Compose 状态 + SharedPreferences 监听器驱动,
+ * 切换偏好后所有在栈中的 Activity 都会自动重组刷新,无需重建或重启应用。
+ *
  * @param darkMode 强制指定模式(null=读取用户设置)
  */
 @Composable
@@ -281,7 +333,21 @@ fun ExamateTheme(
     content: @Composable () -> Unit
 ) {
     val context = LocalContext.current
-    val themeMode = PrefsManager.getInstance(context).themeMode
+    val prefs = remember { PrefsManager.getInstance(context) }
+
+    // 主题模式作为可观察状态:SharedPreferences 变化时触发全局重组,
+    // 返回栈中尚未销毁的 Activity 也会即时刷新主题
+    var themeMode by remember { mutableIntStateOf(prefs.themeMode) }
+    DisposableEffect(prefs) {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == PrefsManager.KEY_THEME_MODE) {
+                themeMode = prefs.themeMode
+            }
+        }
+        prefs.registerSettingsListener(listener)
+        onDispose { prefs.unregisterSettingsListener(listener) }
+    }
+
     val isDark = darkMode ?: when (themeMode) {
         1 -> false
         2 -> true
@@ -290,15 +356,20 @@ fun ExamateTheme(
     val colors = if (isDark) DarkAppColors else LightAppColors
     val colorScheme = if (isDark) DarkColorScheme else LightColorScheme
 
-    // 状态栏图标颜色适配:深色模式用白色图标,浅色模式用深色图标
+    // 状态栏图标颜色 + 窗口背景适配:
+    // 深色模式用白色图标、深色窗口背景(避免转场/启动时闪白)
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
-            val window = (view.context as Activity).window
+            // 悬浮窗服务的 ComposeView 上下文是 Service 而非 Activity,
+            // 强转 Activity 会抛 ClassCastException,这里统一做安全转换
+            val activity = view.context as? Activity ?: return@SideEffect
+            val window = activity.window
             WindowCompat.getInsetsController(window, view).apply {
                 isAppearanceLightStatusBars = !isDark
                 isAppearanceLightNavigationBars = !isDark
             }
+            window.decorView.setBackgroundColor(colors.bgPrimary.toArgb())
         }
     }
 

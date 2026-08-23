@@ -51,6 +51,11 @@ class PrefsManager private constructor(context: Context) {
         get() = prefsConfig.getInt(KEY_CHAT_FONT_SIZE_LEVEL, 1)
         set(value) = prefsConfig.edit().putInt(KEY_CHAT_FONT_SIZE_LEVEL, value).apply()
 
+    /** Agents 聊天正文衬线字体开关(与阅读器自定义字体解耦,独立控制) */
+    var chatFontSerif: Boolean
+        get() = prefsConfig.getBoolean(KEY_CHAT_FONT_SERIF, false)
+        set(value) = prefsConfig.edit().putBoolean(KEY_CHAT_FONT_SERIF, value).apply()
+
     /** 聊天背景图片路径(空=默认背景) */
     var chatBackgroundPath: String
         get() = prefsConfig.getString(KEY_CHAT_BACKGROUND_PATH, "") ?: ""
@@ -291,6 +296,7 @@ class PrefsManager private constructor(context: Context) {
         const val KEY_CHAT_FONT_PATH = "chat_font_path"
         const val KEY_CHAT_FONT_SIZE = "chat_font_size"
         const val KEY_CHAT_FONT_SIZE_LEVEL = "chat_font_size_level"
+        const val KEY_CHAT_FONT_SERIF = "chat_font_serif"
         const val KEY_CHAT_BACKGROUND_PATH = "chat_background_path"
         private const val KEY_PROVIDERS = "providers"
         private const val KEY_COMPLETED = "completed"

@@ -13,9 +13,9 @@ import go.examate.hyp.ui.components.LiquidGlassBackground
 import go.examate.hyp.ui.theme.ExamateTheme
 
 /**
- * 笔记页面 — 列表 / 编辑器 / 速记代办 三页切换。
+ * 笔记页面 — 列表 / 编辑器 两态切换(重做版)。
  *
- * 简单 when(state) 分支管理页面,与项目其他单 Activity 页面一致(不用 Navigation Compose)。
+ * 速记已独立为 MemoActivity,这里只承载 Markdown 知识笔记。
  * 接收 ACTION_VIEW intent 时,从 extra `noteId` 直接打开对应笔记编辑器。
  */
 class NotesActivity : ComponentActivity() {
@@ -28,7 +28,6 @@ class NotesActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        // deep link:外部传 noteId 直接续编
         val initialNoteId = intent?.getStringExtra("noteId")
         setContent {
             ExamateTheme {

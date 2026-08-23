@@ -28,6 +28,7 @@ import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
 import com.kyant.shapes.Capsule
 import go.examate.hyp.ui.components.glass.InteractiveHighlight
+import go.examate.hyp.ui.theme.IsDark
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -54,6 +55,10 @@ enum class ButtonStyle {
  * - onDrawSurface: tint(BlendMode.Hue) + surfaceColor
  *
  * 通过 LocalGlassBackdrop 获取 backdrop(由 LiquidGlassContainer 提供)
+ *
+ * 深色适配:
+ * - Primary 用提亮灰底 + 深色文字(参考 iOS 深色模式主按钮)
+ * - Outline/White 文字改为白色系,避免深色文字在深色背景上不可见
  */
 @Composable
 fun LiquidGlassButton(
@@ -68,20 +73,23 @@ fun LiquidGlassButton(
     val animationScope = rememberCoroutineScope()
     val interactiveHighlight = remember(animationScope) { InteractiveHighlight(animationScope) }
 
+    // 深色模式适配:读取当前主题模式
+    val isDark = IsDark
     val textColor = when (style) {
         ButtonStyle.Primary -> Color.White
-        ButtonStyle.White -> Color(0xFF1A1A2E)
-        ButtonStyle.Outline -> Color(0xFF1A1A2E)
+        ButtonStyle.White -> if (isDark) Color.White else Color(0xFF1A1A2E)
+        ButtonStyle.Outline -> if (isDark) Color.White else Color(0xFF1A1A2E)
     }
     val tint = when (style) {
-        ButtonStyle.Primary -> Color(0xFF1A1A2E)
+        // 深色模式用品牌蓝底(避免提亮灰底过亮刺眼),白字对比度达标
+        ButtonStyle.Primary -> if (isDark) go.examate.hyp.ui.theme.SelectedBg else Color(0xFF1A1A2E)
         ButtonStyle.White -> Color.Unspecified
         ButtonStyle.Outline -> Color.Unspecified
     }
     val surfaceColor = when (style) {
         ButtonStyle.Primary -> Color.Unspecified
-        ButtonStyle.White -> Color.White.copy(0.5f)
-        ButtonStyle.Outline -> Color.White.copy(0.25f)
+        ButtonStyle.White -> Color.White.copy(if (isDark) 0.22f else 0.5f)
+        ButtonStyle.Outline -> Color.White.copy(if (isDark) 0.12f else 0.25f)
     }
 
     Row(

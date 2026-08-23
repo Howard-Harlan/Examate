@@ -47,6 +47,7 @@ import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.components.PlainDialog
 import go.examate.hyp.ui.components.PlainDialogButtons
 import go.examate.hyp.ui.components.PlainDialogTitle
+import go.examate.hyp.ui.theme.SelectedBg
 import go.examate.hyp.ui.theme.Divider as DividerColor
 import go.examate.hyp.ui.theme.Error
 import go.examate.hyp.ui.theme.ErrorBg
@@ -59,6 +60,7 @@ import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
 import go.examate.hyp.ui.theme.Warning
+import go.examate.hyp.ui.theme.WarningBg
 
 /** 教务系统功能 Tab(移除课表,合并选课+选课结果为"选课") */
 private enum class JwxtTab(val label: String) {
@@ -119,7 +121,7 @@ private fun XuankeSection(xkState: XkState, courseState: SelectedCourseState, vm
                 Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(if (subTab == index) Primary else SurfaceVariant)
+                    .background(if (subTab == index) SelectedBg else SurfaceVariant)
                     .clickable { subTab = index }
                     .padding(vertical = 10.dp),
                 contentAlignment = Alignment.Center
@@ -389,7 +391,7 @@ private fun EvaluationCard(e: EvaluationItem, isPending: Boolean, onClick: () ->
                 Box(
                     Modifier
                         .clip(RoundedCornerShape(4.dp))
-                        .background(if (isPending) Color(0xFFFFF3E0) else SuccessBg)
+                        .background(if (isPending) WarningBg else SuccessBg)
                         .padding(horizontal = 8.dp, vertical = 3.dp)
                 ) {
                     Text(
@@ -593,7 +595,7 @@ private fun XkSection(state: XkState, vm: JwxtViewModel) {
                 Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFFFFF3E0))
+                    .background(WarningBg)
                     .padding(14.dp)
             ) {
                 Column {
@@ -778,7 +780,7 @@ private fun GradeDetailDialog(
                             }
                             if (d.finalExamScore.isNotEmpty()) {
                                 Box(
-                                    Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(Color(0xFFFFF3E0)).padding(12.dp),
+                                    Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(WarningBg).padding(12.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {

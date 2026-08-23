@@ -38,25 +38,26 @@ import go.examate.hyp.ui.components.IconSchool
 import go.examate.hyp.ui.components.IconNote
 import go.examate.hyp.ui.theme.BgPrimary
 import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
 
 /**
- * 探索页
- * - 局域网聊天:发现同局域网设备,实时文字通信
- * - 校园服务:查询课表、成绩、校园卡等(需先绑定学校)
- * - 下载器:粘贴直链下载文件,支持断点续传
+ * 探索页 — 分类布局。
+ *
+ * - 校内服务:校园服务 / 课程表 / 乐校通水卡 / Mesh 聊天
+ * - 探索边界:速记 / 阅读 / 音乐 / 下载
  */
 @Composable
 fun QiushiScreen(
-    onLanChatClick: () -> Unit,
+    onMesChatClick: () -> Unit,
     onCampusServiceClick: () -> Unit,
     onWaterCardClick: () -> Unit = {},
     onScheduleClick: () -> Unit = {},
     onDownloaderClick: () -> Unit = {},
     onReadingClick: () -> Unit = {},
     onMusicClick: () -> Unit = {},
-    onNotesClick: () -> Unit = {},
+    onMemoClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -77,80 +78,73 @@ fun QiushiScreen(
         )
         Spacer(Modifier.height(20.dp))
 
-        // ═══ 功能入口:两列方形网格(顺序:校园服务/课程表/笔记/阅读/音乐/水卡/局域网聊天/下载) ═══
+        // ═══ 校内服务 ═══
+        SectionHeader("校内服务")
+        Spacer(Modifier.height(12.dp))
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             FeatureCard(
                 title = "校园服务",
-                subtitle = "",
                 iconVector = IconSchool,
                 onClick = onCampusServiceClick
             )
             FeatureCard(
                 title = "课程表",
-                subtitle = "",
                 iconVector = IconCalendar,
                 onClick = onScheduleClick
             )
         }
-
         Spacer(Modifier.height(14.dp))
-
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             FeatureCard(
-                title = "笔记",
-                subtitle = "",
+                title = "乐校通水卡",
+                iconRes = R.drawable.ic_water_card,
+                onClick = onWaterCardClick
+            )
+            FeatureCard(
+                title = "局域网聊天",
+                iconRes = R.drawable.ic_mes_chat,
+                onClick = onMesChatClick
+            )
+        }
+
+        Spacer(Modifier.height(26.dp))
+
+        // ═══ 探索边界 ═══
+        SectionHeader("探索边界")
+        Spacer(Modifier.height(12.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            FeatureCard(
+                title = "速记",
                 iconVector = IconNote,
-                onClick = onNotesClick
+                onClick = onMemoClick
             )
             FeatureCard(
                 title = "阅读",
-                subtitle = "",
                 iconVector = IconBook,
                 onClick = onReadingClick
             )
         }
-
         Spacer(Modifier.height(14.dp))
-
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             FeatureCard(
                 title = "音乐",
-                subtitle = "",
                 iconVector = IconMusic,
                 onClick = onMusicClick
             )
             FeatureCard(
-                title = "乐校通水卡",
-                subtitle = "",
-                iconRes = R.drawable.ic_water_card,
-                onClick = onWaterCardClick
-            )
-        }
-
-        Spacer(Modifier.height(14.dp))
-
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            FeatureCard(
-                title = "局域网聊天",
-                subtitle = "",
-                iconRes = R.drawable.ic_lan_chat,
-                onClick = onLanChatClick
-            )
-            FeatureCard(
                 title = "下载",
-                subtitle = "",
                 iconVector = IconDownload,
                 onClick = onDownloaderClick
             )
@@ -158,11 +152,27 @@ fun QiushiScreen(
     }
 }
 
+/** 分类小标题:主标题 + 装饰线 */
+@Composable
+private fun SectionHeader(title: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .size(width = 3.dp, height = 14.dp)
+                .background(Primary.copy(alpha = 0.6f), androidx.compose.foundation.shape.RoundedCornerShape(2.dp))
+        )
+        Spacer(Modifier.size(8.dp))
+        Text(title, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.weight(1f))
+        Text("›", color = TextHint, fontSize = 14.sp)
+    }
+}
+
 /** 方形功能卡片:图标居上、标题居下,占父级 Row 等分宽度并保持 1:1 比例 */
 @Composable
 private fun RowScope.FeatureCard(
     title: String,
-    subtitle: String,
+    subtitle: String = "",
     iconRes: Int = 0,
     iconVector: ImageVector? = null,
     onClick: () -> Unit

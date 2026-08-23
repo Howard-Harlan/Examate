@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.LiquidGlassButton
+import go.examate.hyp.ui.theme.SelectedBg
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.TextHint
@@ -135,7 +136,7 @@ fun DatePickerDialog(
                                         .weight(1f)
                                         .height(40.dp)
                                         .clip(CircleShape)
-                                        .background(if (isSelected) Primary else Color.Transparent)
+                                        .background(if (isSelected) SelectedBg else Color.Transparent)
                                         .clickable { selectedDate = date },
                                     contentAlignment = Alignment.Center
                                 ) {

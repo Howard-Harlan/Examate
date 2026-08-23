@@ -8,27 +8,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import go.examate.hyp.config.PrefsManager
 import go.examate.hyp.ui.components.LiquidGlassContainer
+import go.examate.hyp.ui.screens.FestivalWelcomeHost
 import go.examate.hyp.ui.screens.QiushiScreen
 import go.examate.hyp.ui.screens.SettingsScreen
 import go.examate.hyp.ui.screens.ShensiScreen
 
 @Composable
 fun MainScreen(
-    overlayGranted: Boolean,
-    accessibilityGranted: Boolean,
-    batteryGranted: Boolean,
-    shizukuGranted: Boolean,
-    onLaunchClick: () -> Unit,
-    onScreenshotClick: () -> Unit,
+    onDeepLearningClick: () -> Unit,
     onChatClick: () -> Unit,
-    onLanChatClick: () -> Unit,
+    onMesChatClick: () -> Unit,
     onCampusServiceClick: () -> Unit,
     onWaterCardClick: () -> Unit,
     onScheduleClick: () -> Unit,
     onDownloaderClick: () -> Unit,
     onReadingClick: () -> Unit,
     onMusicClick: () -> Unit,
-    onNotesClick: () -> Unit,
+    onMemoClick: () -> Unit,
+    onOpenTodo: () -> Unit,
+    onOpenNotes: (String?) -> Unit,
     onUserSettingsClick: () -> Unit,
     onApiConfigClick: () -> Unit,
     onAgentSettingsClick: () -> Unit,
@@ -46,23 +44,21 @@ fun MainScreen(
     ) {
         when (selectedTab) {
             0 -> ShensiScreen(
-                overlayGranted = overlayGranted,
-                accessibilityGranted = accessibilityGranted,
-                batteryGranted = batteryGranted,
-                shizukuGranted = shizukuGranted,
-                onLaunchAccessibility = onLaunchClick,
-                onLaunchScreenshot = onScreenshotClick,
-                onChatClick = onChatClick
+                onDeepLearningClick = onDeepLearningClick,
+                onChatClick = onChatClick,
+                onOpenTodo = onOpenTodo,
+                onOpenNotes = onOpenNotes,
+                onOpenSchedule = onScheduleClick
             )
             1 -> QiushiScreen(
-                onLanChatClick = onLanChatClick,
+                onMesChatClick = onMesChatClick,
                 onCampusServiceClick = onCampusServiceClick,
                 onWaterCardClick = onWaterCardClick,
                 onScheduleClick = onScheduleClick,
                 onDownloaderClick = onDownloaderClick,
                 onReadingClick = onReadingClick,
                 onMusicClick = onMusicClick,
-                onNotesClick = onNotesClick
+                onMemoClick = onMemoClick
             )
             2 -> SettingsScreen(
                 onUserSettingsClick = onUserSettingsClick,
@@ -74,6 +70,9 @@ fun MainScreen(
             )
         }
     }
+
+    // 节日欢迎页:任意 Tab 下首次进入均会弹一次(活动期间)
+    FestivalWelcomeHost()
 }
 
 /**
@@ -81,21 +80,18 @@ fun MainScreen(
  */
 @Composable
 fun MainScreenRoot(
-    overlayGranted: Boolean,
-    accessibilityGranted: Boolean,
-    batteryGranted: Boolean,
-    shizukuGranted: Boolean,
-    onLaunchClick: () -> Unit,
-    onScreenshotClick: () -> Unit,
+    onDeepLearningClick: () -> Unit,
     onChatClick: () -> Unit,
-    onLanChatClick: () -> Unit,
+    onMesChatClick: () -> Unit,
     onCampusServiceClick: () -> Unit,
     onWaterCardClick: () -> Unit,
     onScheduleClick: () -> Unit,
     onDownloaderClick: () -> Unit,
     onReadingClick: () -> Unit,
     onMusicClick: () -> Unit,
-    onNotesClick: () -> Unit,
+    onMemoClick: () -> Unit,
+    onOpenTodo: () -> Unit,
+    onOpenNotes: (String?) -> Unit,
     onUserSettingsClick: () -> Unit,
     onApiConfigClick: () -> Unit,
     onAgentSettingsClick: () -> Unit,
@@ -104,21 +100,18 @@ fun MainScreenRoot(
     onSystemSettingsClick: () -> Unit
 ) {
     MainScreen(
-        overlayGranted = overlayGranted,
-        accessibilityGranted = accessibilityGranted,
-        batteryGranted = batteryGranted,
-        shizukuGranted = shizukuGranted,
-        onLaunchClick = onLaunchClick,
-        onScreenshotClick = onScreenshotClick,
+        onDeepLearningClick = onDeepLearningClick,
         onChatClick = onChatClick,
-        onLanChatClick = onLanChatClick,
+        onMesChatClick = onMesChatClick,
         onCampusServiceClick = onCampusServiceClick,
         onWaterCardClick = onWaterCardClick,
         onScheduleClick = onScheduleClick,
         onDownloaderClick = onDownloaderClick,
         onReadingClick = onReadingClick,
         onMusicClick = onMusicClick,
-        onNotesClick = onNotesClick,
+        onMemoClick = onMemoClick,
+        onOpenTodo = onOpenTodo,
+        onOpenNotes = onOpenNotes,
         onUserSettingsClick = onUserSettingsClick,
         onApiConfigClick = onApiConfigClick,
         onAgentSettingsClick = onAgentSettingsClick,

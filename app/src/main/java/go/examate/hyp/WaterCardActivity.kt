@@ -75,14 +75,15 @@ import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.Error
 import go.examate.hyp.ui.theme.ErrorBg
+import go.examate.hyp.ui.theme.ExamateTheme
+import go.examate.hyp.ui.theme.IsDark
+import go.examate.hyp.ui.theme.ScheduleGradientEnd
+import go.examate.hyp.ui.theme.ScheduleGradientStart
 import go.examate.hyp.ui.theme.Success
 import go.examate.hyp.ui.theme.SuccessBg
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
-import go.examate.hyp.ui.theme.ExamateTheme
-import go.examate.hyp.ui.theme.ScheduleGradientEnd
-import go.examate.hyp.ui.theme.ScheduleGradientStart
 import go.examate.hyp.watercard.Page
 import go.examate.hyp.watercard.PayEvent
 import go.examate.hyp.watercard.WaterCardViewModel
@@ -947,10 +948,11 @@ private fun EmptyBlock(text: String) {
 
 @Composable
 private fun textFieldColors() = TextFieldDefaults.colors(
-    focusedContainerColor = Color.White.copy(0.7f),
-    unfocusedContainerColor = Color.White.copy(0.5f),
+    // 深色模式降白,避免输入框在深色背景上过亮
+    focusedContainerColor = Color.White.copy(if (IsDark) 0.12f else 0.7f),
+    unfocusedContainerColor = Color.White.copy(if (IsDark) 0.08f else 0.5f),
     focusedIndicatorColor = AccentBlue,
-    unfocusedIndicatorColor = Color(0xFFD1D5DB),
+    unfocusedIndicatorColor = if (IsDark) Color.White.copy(0.25f) else Color(0xFFD1D5DB),
     focusedTextColor = TextPrimary,
     unfocusedTextColor = TextPrimary,
     cursorColor = AccentBlue,

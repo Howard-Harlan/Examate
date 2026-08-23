@@ -1,7 +1,6 @@
 package go.examate.hyp.music
 
 import android.content.Context
-import go.examate.hyp.music.bili.BiliAuth
 import go.examate.hyp.music.lx.LxSourceStore
 
 /**
@@ -41,11 +40,11 @@ object MusicSourcePrefs {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(kind.id, enabled).apply()
     }
 
-    /** 该源是否已完成配置(在线源需登录/导入脚本才可用) */
+    /** 该源是否已完成配置(B站无需登录即可搜索/播放,登录态可选) */
     fun isConfigured(context: Context, kind: MusicSourceKind): Boolean = when (kind) {
         MusicSourceKind.LOCAL -> true
         MusicSourceKind.NETEASE -> LxSourceStore.loadAll(context).isNotEmpty()
-        MusicSourceKind.BILI -> BiliAuth.isLoggedIn(context)
+        MusicSourceKind.BILI -> true
     }
 
     /** 可用于搜索的源(已启用 且 已配置) */

@@ -29,6 +29,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import go.examate.hyp.ui.theme.IsDark
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
@@ -47,13 +48,15 @@ fun SearchField(
     modifier: Modifier = Modifier,
     showLeadingIcon: Boolean = true
 ) {
+    // 深色模式降白 + 主按钮图标反色(深色下 Primary 提亮为浅灰,需配深色图标)
+    val isDark = IsDark
     Row(
         modifier
             .fillMaxWidth()
             .height(46.dp)
             .clip(RoundedCornerShape(23.dp))
-            .background(Color.White.copy(0.55f))
-            .border(1.dp, Color.White.copy(0.7f), RoundedCornerShape(23.dp))
+            .background(Color.White.copy(if (isDark) 0.15f else 0.55f))
+            .border(1.dp, Color.White.copy(if (isDark) 0.25f else 0.7f), RoundedCornerShape(23.dp))
             .padding(start = 16.dp, end = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -85,6 +88,12 @@ fun SearchField(
         Box(
             Modifier.size(34.dp).clip(RoundedCornerShape(17.dp)).background(Primary).clickable { onSearch() },
             contentAlignment = Alignment.Center
-        ) { Icon(Icons.Filled.Search, contentDescription = "搜索", tint = Color.White, modifier = Modifier.size(18.dp)) }
+        ) {
+            Icon(
+                Icons.Filled.Search, contentDescription = "搜索",
+                tint = if (isDark) Color(0xFF1A1A2E) else Color.White,
+                modifier = Modifier.size(18.dp)
+            )
+        }
     }
 }

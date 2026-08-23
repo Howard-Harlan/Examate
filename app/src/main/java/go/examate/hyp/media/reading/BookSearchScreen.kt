@@ -42,6 +42,7 @@ import go.examate.hyp.media.legado.BookSourceRepository
 import go.examate.hyp.media.legado.SearchBook
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassIconButton
+import go.examate.hyp.ui.theme.SelectedBg
 import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.Danger
 import go.examate.hyp.ui.theme.Primary
@@ -141,7 +142,7 @@ fun BookSearchScreen(
             labelByTab.forEachIndexed { i, label ->
                 Box(
                     Modifier.weight(1f).clip(RoundedCornerShape(10.dp))
-                        .background(if (searchTab == i) Primary else SurfaceVariant)
+                        .background(if (searchTab == i) SelectedBg else SurfaceVariant)
                         .clickable {
                             if (searchTab != i) {
                                 searchTab = i

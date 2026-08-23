@@ -24,7 +24,10 @@ object NoteStorage {
         val title: String,
         val content: String,
         val createdAt: Long,
-        val updatedAt: Long
+        val updatedAt: Long,
+        val pinned: Boolean = false,
+        /** 是否作为 AI 搜题的知识来源(默认是,可在笔记「功能设置」里关闭) */
+        val knowledgeSource: Boolean = true
     )
 
     /** 索引条目(无正文,用于列表展示) */
@@ -32,7 +35,9 @@ object NoteStorage {
         val id: String,
         val title: String,
         val createdAt: Long,
-        val updatedAt: Long
+        val updatedAt: Long,
+        val pinned: Boolean = false,
+        val knowledgeSource: Boolean = true
     )
 
     private fun notesDir(context: Context): File =
@@ -60,7 +65,9 @@ object NoteStorage {
                     id = o.optString("id"),
                     title = o.optString("title"),
                     createdAt = o.optLong("createdAt"),
-                    updatedAt = o.optLong("updatedAt")
+                    updatedAt = o.optLong("updatedAt"),
+                    pinned = o.optBoolean("pinned"),
+                    knowledgeSource = o.optBoolean("knowledgeSource", true)
                 ))
             }
         }
@@ -77,6 +84,8 @@ object NoteStorage {
                     put("title", e.title)
                     put("createdAt", e.createdAt)
                     put("updatedAt", e.updatedAt)
+                    put("pinned", e.pinned)
+                    put("knowledgeSource", e.knowledgeSource)
                 })
             }
             indexFile(context).writeText(arr.toString())
@@ -91,7 +100,7 @@ object NoteStorage {
         runCatching {
             noteFile(context, id).writeText(content)
             val entries = readIndex(context)
-            entries.add(IndexEntry(id, title, now, now))
+            entries.add(IndexEntry(id, title, now, now, knowledgeSource = true))
             writeIndex(context, entries)
         }
         return note
@@ -105,9 +114,9 @@ object NoteStorage {
             val now = System.currentTimeMillis()
             val idx = entries.indexOfFirst { it.id == note.id }
             if (idx >= 0) {
-                entries[idx] = IndexEntry(note.id, note.title, entries[idx].createdAt, now)
+                entries[idx] = IndexEntry(note.id, note.title, entries[idx].createdAt, now, note.pinned, note.knowledgeSource)
             } else {
-                entries.add(IndexEntry(note.id, note.title, note.createdAt, now))
+                entries.add(IndexEntry(note.id, note.title, note.createdAt, now, note.pinned, note.knowledgeSource))
             }
             writeIndex(context, entries)
         }
@@ -123,17 +132,19 @@ object NoteStorage {
         }
     }
 
-    /** 列出笔记:从索引读取,按 updatedAt 降序(不含正文) */
+    /** 列出笔记:置顶优先,再按 updatedAt 降序(不含正文) */
     fun listNotes(context: Context): List<Note> {
         return readIndex(context)
-            .sortedByDescending { it.updatedAt }
+            .sortedWith(compareByDescending<IndexEntry> { it.pinned }.thenByDescending { it.updatedAt })
             .map { e ->
                 Note(
                     id = e.id,
                     title = e.title,
                     content = "",  // 列表不返回正文,节省内存
                     createdAt = e.createdAt,
-                    updatedAt = e.updatedAt
+                    updatedAt = e.updatedAt,
+                    pinned = e.pinned,
+                    knowledgeSource = e.knowledgeSource
                 )
             }
     }
@@ -150,9 +161,61 @@ object NoteStorage {
                 title = entry?.title ?: "",
                 content = content,
                 createdAt = entry?.createdAt ?: 0L,
-                updatedAt = entry?.updatedAt ?: 0L
+                updatedAt = entry?.updatedAt ?: 0L,
+                pinned = entry?.pinned ?: false,
+                knowledgeSource = entry?.knowledgeSource ?: true
             )
         }.getOrNull()
+    }
+
+    /** 置顶/取消置顶 */
+    fun setPinned(context: Context, id: String, pinned: Boolean) {
+        runCatching {
+            val entries = readIndex(context)
+            val idx = entries.indexOfFirst { it.id == id }
+            if (idx >= 0) {
+                entries[idx] = entries[idx].copy(pinned = pinned)
+                writeIndex(context, entries)
+            }
+        }
+    }
+
+    /** 设置是否作为 AI 搜题知识来源 */
+    fun setKnowledgeSource(context: Context, id: String, enabled: Boolean) {
+        runCatching {
+            val entries = readIndex(context)
+            val idx = entries.indexOfFirst { it.id == id }
+            if (idx >= 0) {
+                entries[idx] = entries[idx].copy(knowledgeSource = enabled)
+                writeIndex(context, entries)
+            }
+        }
+    }
+
+    /**
+     * 构建笔记知识索引(渐进披露):只注入标题 + 前 [excerptLen] 字摘要,
+     * 用于搜题系统提示词,把 token 影响压到最低(类似 Skills 的索引注入)。
+     *
+     * @param maxNotes 最多注入的笔记数(按置顶/更新时间取前 N 条)
+     */
+    fun buildIndexPrompt(context: Context, maxNotes: Int = 12, excerptLen: Int = 60): String {
+        val notes = listNotes(context)
+            .filter { it.knowledgeSource }
+            .take(maxNotes)
+        if (notes.isEmpty()) return ""
+        val sb = StringBuilder()
+        sb.append("\n\n## 笔记知识库(渐进披露)\n")
+        sb.append("以下是用户笔记的标题与摘要。当题目与某条笔记相关时,优先参考该笔记的摘要作答;如需全文,可提示用户打开笔记查看:\n")
+        notes.forEachIndexed { i, n ->
+            val excerpt = loadNote(context, n.id)?.content
+                ?.replace(Regex("\\s+"), " ")
+                ?.trim()
+                ?.take(excerptLen)
+                ?: ""
+            val title = n.title.ifEmpty { "无标题" }
+            sb.append("${i + 1}. ${title}：${excerpt}\n")
+        }
+        return sb.toString()
     }
 
     /** 复制资源到 notes/assets/ 目录,返回相对路径 "assets/<filename>" */
@@ -191,3 +254,54 @@ object NoteStorage {
         return if (dot >= 0) path.substring(dot).lowercase() else ""
     }
 }
+
+/**
+ * 笔记显示偏好 — 仅作用于笔记模块(列表 + 编辑器)。
+ *  - layoutMode:外显布局(0=卡片式, 1=列表式)
+ *  - previewTheme:Markdown 预览渲染主题(默认/新闻/学术/等宽)
+ */
+object NotePrefs {
+    const val PREFS = "note_prefs"
+    const val KEY_LAYOUT_MODE = "layout_mode"
+    const val KEY_PREVIEW_THEME = "preview_theme"
+    const val KEY_PREVIEW_MODE = "preview_mode"  // 读写切换状态:0=编辑, 1=预览
+
+    fun layoutMode(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_LAYOUT_MODE, 0)
+
+    fun setLayoutMode(context: Context, mode: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt(KEY_LAYOUT_MODE, mode).apply()
+    }
+
+    fun previewThemeIndex(context: Context): Int =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_PREVIEW_THEME, 0)
+
+    fun setPreviewTheme(context: Context, index: Int) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt(KEY_PREVIEW_THEME, index).apply()
+    }
+
+    /** 读取上次退出时的读/写状态(默认 false=编辑) */
+    fun previewMode(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_PREVIEW_MODE, false)
+
+    /** 持久化读/写切换状态 */
+    fun setPreviewMode(context: Context, preview: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_PREVIEW_MODE, preview).apply()
+    }
+}
+
+/** Markdown 预览渲染主题定义 */
+data class NotePreviewTheme(
+    val name: String,
+    val fontFamily: androidx.compose.ui.text.font.FontFamily?,
+    val fontSize: Int,
+    val lineHeightExtra: Int
+)
+
+/** 可选预览主题:默认 / 新闻 / 学术 / 等宽 */
+val NOTE_PREVIEW_THEMES = listOf(
+    NotePreviewTheme("默认", null, 15, 6),
+    NotePreviewTheme("新闻", androidx.compose.ui.text.font.FontFamily.Serif, 16, 8),
+    NotePreviewTheme("学术", androidx.compose.ui.text.font.FontFamily.Serif, 14, 7),
+    NotePreviewTheme("等宽", androidx.compose.ui.text.font.FontFamily.Monospace, 13, 6)
+)

@@ -2,305 +2,298 @@ package go.examate.hyp.meschat
 
 import android.content.Context
 import android.net.wifi.WifiManager
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import org.json.JSONObject
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.NetworkInterface
+import java.util.Collections
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * UDP 局域网传输层 — MesChat 的第三种传输通道。
+ * 局域网 UDP 广播传输 — Wi-Fi Aware 的替代通道。
  *
- * 在 BLE 与 Wi-Fi Aware 之上,新增 UDP 广播作为同 Wi-Fi 下的高速通道:
- * - 协议端口与旧版 LanChatTransport 一致(19876),便于与旧版 UDP 聊天互通
- * - 承载 MesChat 的 JSON 消息格式(hello/announce/leave/message),与 BLE/Wi-Fi Aware 协议一致
- * - 设备发现:UDP 广播 hello/heartbeat,被动接收 + 超时清理
- * - 消息收发:广播方式,所有同网段设备均可收到(频道广播语义天然契合)
+ * 原理:同一 Wi-Fi 局域网内的设备向子网广播地址的固定端口收发 UDP 数据报。
+ * - 发现:周期性广播 hello,对端首次收到即视为上线,超时未续约即离线
+ * - 数据:消息以 JSON 信封广播;定向消息在已知对端地址时单播 + 广播双发
+ *   (部分路由器的 AP 隔离只拦客户端间单播、放行广播,双发保证私聊可达,
+ *    接收端按信封 pid 去重,不会出现重复消息)
+ * - 多子网:动态枚举所有网络接口的广播地址(含 Wi-Fi 子网与 Wi-Fi Direct
+ *   P2P 组子网),P2P 组建立后无需任何额外配置即可互通
+ * - 大消息由 [MesChatController] 预先分片(2048B/片),每片独立成包,UDP 无需再分片
  *
- * 与 BLE/Wi-Fi Aware 的差异:
- * - 无需配对/连接握手,延迟极低
- * - 仅适用于同一 Wi-Fi 网段,无法跨网络
- * - 广播包无法定向到单一 peer(私聊仍靠 recipientPeerId 字段校验)
- *
- * 与 [BleMeshTransport] 共享 [Callback] 接口,上层 [MesChatController] 可透明接入。
- *
- * @param context 应用上下文
- * @param myPeerId 本机 Peer ID(与 BLE/Wi-Fi Aware 共用,确保跨通道身份一致)
- * @param callback 传输层回调(主线程触发)
+ * 基础收发无需任何运行时权限(仅普通权限 CHANGE_WIFI_MULTICAST_STATE 用于
+ * 组播锁,提高休眠状态下收到广播包的可靠性)。
  */
 class UdpLanTransport(
     context: Context,
-    private val myPeerId: String,
-    private val callback: BleMeshTransport.Callback
-) {
+    private val peerId: String,
+    private val callback: MeshTransport.Callback
+) : MeshTransport {
+
     companion object {
+        /** 局域网广播端口(沿用旧版 UDP 实现的端口) */
+        const val PORT = 19876
+
+        /** hello 广播周期(毫秒) */
+        private const val HELLO_INTERVAL_MS = 4_000L
+
+        /** 对端超时:超过该时长未收到任何包视为离线 */
+        private const val PEER_TIMEOUT_MS = 15_000L
+
+        /** UDP 数据报安全上限(控制器分片 2048B,信封远小于此) */
+        private const val MAX_DATAGRAM_BYTES = 60_000
+
+        /** 包级去重:LRU 上限与过期时间(双发兜底的兜底) */
+        private const val DEDUP_MAX_ENTRIES = 2048
+        private const val DEDUP_TTL_MS = 120_000L
+
         private const val TAG = "UdpLanTransport"
-        /** UDP 端口(与旧版 LanChatTransport 一致,便于互通) */
-        private const val PORT = 19876
-        /** 广播地址 */
-        private const val BROADCAST_ADDR = "255.255.255.255"
-        /** 心跳间隔 */
-        private const val HEARTBEAT_INTERVAL_MS = 10_000L
-        /** 设备超时清理阈值 */
-        private const val DEVICE_TIMEOUT_MS = 30_000L
-        /** UDP 单包最大字节数(留足余量避免 IP 分片) */
-        private const val MAX_PACKET_BYTES = 4096
     }
 
-    private val context = context.applicationContext
+    override val type: TransportType = TransportType.LAN_UDP
 
-    /** 已发现的 UDP peer:peerId -> PeerInfo */
-    private data class PeerInfo(val nickname: String, val address: String, val lastSeen: Long)
-    private val udpPeers = ConcurrentHashMap<String, PeerInfo>()
-
+    private val appContext = context.applicationContext
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val running = AtomicBoolean(false)
     private var socket: DatagramSocket? = null
-    private var receiveThread: Thread? = null
-    private var heartbeatThread: Thread? = null
-    private var executor = Executors.newSingleThreadExecutor()
-    @Volatile private var running = false
-
     private var multicastLock: WifiManager.MulticastLock? = null
-    /** WifiLock:防止 Wi-Fi 休眠导致收不到广播包 */
-    private var wifiLock: WifiManager.WifiLock? = null
-    /** 子网定向广播地址(基于本机 DHCP 信息计算,优先于 255.255.255.255) */
-    private var broadcastAddress: String = BROADCAST_ADDR
+    private var receiveThread: Thread? = null
+    private val scheduler = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "meschat-udp-scheduler").apply { isDaemon = true }
+    }
 
-    /** 传输层是否在运行 */
-    val isRunning: Boolean get() = running
+    /** 已知对端:peerId -> (地址, 最后活跃时间) */
+    private data class PeerEntry(var address: InetAddress, var lastSeen: Long)
+    private val knownPeers = ConcurrentHashMap<String, PeerEntry>()
 
-    /** 启动 UDP 传输层(开 socket、收发线程、心跳),并发送 hello */
-    fun start(): Boolean {
+    /** 双发去重:pid -> 首次收到时间(访问需 synchronized) */
+    private val recentPacketIds = LinkedHashMap<String, Long>()
+
+    // ════════════════════════════════════════
+    //  生命周期
+    // ════════════════════════════════════════
+
+    override fun start(): Boolean {
+        if (running.get()) return true
         return try {
-            // 重建 executor(上次 stop 可能已 shutdown)
-            if (executor.isShutdown) {
-                executor = Executors.newSingleThreadExecutor()
-            }
+            val s = DatagramSocket(null)
+            s.reuseAddress = true
+            s.broadcast = true
+            // 绑定通配地址:P2P 组接口上到达的包同样能收到
+            s.bind(InetSocketAddress(PORT))
+            socket = s
             acquireMulticastLock()
-            acquireWifiLock()
-            updateBroadcastAddress()
-            socket = DatagramSocket(null).apply {
-                reuseAddress = true
-                bind(InetSocketAddress(PORT))
-                broadcast = true
+            running.set(true)
+
+            receiveThread = Thread({ receiveLoop() }, "meschat-udp-receive").apply {
+                isDaemon = true
+                start()
             }
-            running = true
-            receiveThread = Thread({ receiveLoop() }, "udp-meschat-recv").also { it.start() }
-            heartbeatThread = Thread({ heartbeatLoop() }, "udp-meschat-hb").also { it.start() }
-            // 发送 hello,携带 peerId 让对端学习本机身份
-            sendUdp(buildHelloPacket())
-            Log.i(TAG, "UDP transport started on port $PORT, peerId=$myPeerId, broadcast=$broadcastAddress")
+            scheduler.scheduleWithFixedDelay({ sendHello() }, 0, HELLO_INTERVAL_MS, TimeUnit.MILLISECONDS)
+            // 超时扫描:离线对端回调到主线程
+            scheduler.scheduleWithFixedDelay({ sweepStalePeers() }, PEER_TIMEOUT_MS, PEER_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            Log.i(TAG, "UDP LAN transport started on port $PORT")
             true
         } catch (e: Exception) {
-            Log.e(TAG, "UDP transport start failed", e)
-            running = false
-            try { socket?.close() } catch (_: Exception) {}
-            socket = null
-            try { multicastLock?.release() } catch (_: Exception) {}
-            multicastLock = null
-            try { wifiLock?.release() } catch (_: Exception) {}
-            wifiLock = null
+            Log.w(TAG, "UDP start failed: ${e.message}")
+            release()
             false
         }
     }
 
-    /** 停止:发送 leave,中断线程,关闭 socket */
-    fun stop() {
-        if (!running) return
-        running = false
-        try { sendUdp(buildLeavePacket()) } catch (e: Exception) { Log.w(TAG, "send leave failed", e) }
-        executor.shutdown()
-        try { executor.awaitTermination(300, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (_: InterruptedException) {}
-        receiveThread?.interrupt()
-        heartbeatThread?.interrupt()
-        try { socket?.close() } catch (e: Exception) { Log.w(TAG, "socket close failed", e) }
+    override fun stop() {
+        if (!running.getAndSet(false)) return
+        release()
+        val offline = knownPeers.keys.toList()
+        knownPeers.clear()
+        mainHandler.post {
+            offline.forEach { callback.onPeerDisconnected(it, type) }
+        }
+        Log.i(TAG, "UDP LAN transport stopped")
+    }
+
+    private fun release() {
+        runCatching { scheduler.shutdownNow() }
+        runCatching { socket?.close() }
         socket = null
-        try { multicastLock?.release() } catch (e: Exception) { Log.w(TAG, "multicastLock release failed", e) }
+        runCatching { multicastLock?.takeIf { it.isHeld }?.release() }
         multicastLock = null
-        try { wifiLock?.release() } catch (e: Exception) { Log.w(TAG, "wifiLock release failed", e) }
-        wifiLock = null
-        // 通知所有 UDP peer 断开
-        udpPeers.keys.toList().forEach { callback.onPeerDisconnected(it) }
-        udpPeers.clear()
+        receiveThread = null
     }
 
-    /**
-     * 发送 JSON 消息。
-     * - targetPeerId == null:广播(频道消息),所有 UDP peer 都能收到
-     * - targetPeerId != null:私聊(仍用广播发送,由对端 recipientPeerId 校验过滤)
-     *
-     * 注:UDP 广播无法定向到单一设备,私聊靠应用层 recipientPeerId 字段校验。
-     * 这与 BLE/Wi-Fi Aware 的单播语义不同,但 MesChatController 已统一处理校验。
-     */
-    fun sendMessage(json: String, targetPeerId: String? = null) {
-        if (!running) return
-        sendUdp(json)
-    }
+    override fun isRunning(): Boolean = running.get()
+
+    /** UDP 广播无特殊前置条件,连接 Wi-Fi 即可用(未连网时发广播静默失败,不算错误) */
+    override fun isAvailable(): Boolean = true
 
     // ════════════════════════════════════════
-    //  内部实现
+    //  发送
     // ════════════════════════════════════════
 
-    private fun acquireMulticastLock() {
-        try {
-            val wifi = context.getSystemService(Context.WIFI_SERVICE) as WifiManager
-            multicastLock = wifi.createMulticastLock("meschat_udp").apply {
-                setReferenceCounted(false); acquire()
+    override fun sendMessage(json: String, targetPeerId: String?) {
+        val s = socket ?: return
+        val envelope = JSONObject()
+            .put("_udp", "d")
+            .put("id", peerId)
+            .put("pid", UUID.randomUUID().toString())
+            .put("d", json)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+        if (envelope.size > MAX_DATAGRAM_BYTES) {
+            mainHandler.post { callback.onError("消息过大,超出 UDP 单包上限") }
+            return
+        }
+        // 定向消息:已知地址先单播,再向所有子网广播兜底(AP 隔离常只拦单播),
+        // 两次投递携带同一 pid,接收端去重
+        if (targetPeerId != null) {
+            knownPeers[targetPeerId]?.address?.let { addr ->
+                runCatching {
+                    s.send(DatagramPacket(envelope, envelope.size, addr, PORT))
+                }.onFailure { Log.d(TAG, "unicast failed: ${it.message}") }
             }
-        } catch (e: Exception) { Log.w(TAG, "acquireMulticastLock failed", e) }
-    }
-
-    /** 获取 WifiLock,防止 Wi-Fi 休眠导致收不到广播包 */
-    private fun acquireWifiLock() {
-        try {
-            val wifi = context.getSystemService(Context.WIFI_SERVICE) as WifiManager
-            wifiLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "meschat_udp_recv").apply {
-                setReferenceCounted(false); acquire()
-            }
-        } catch (e: Exception) { Log.w(TAG, "acquireWifiLock failed", e) }
-    }
-
-    /**
-     * 基于本机 DHCP 信息计算子网定向广播地址。
-     *
-     * 255.255.255.255(限定广播)在部分 Android 版本/路由器上被阻止发送,
-     * 改用子网定向广播(如 192.168.1.255)可显著提升到达率。
-     * 计算失败时回退到 255.255.255.255。
-     */
-    private fun updateBroadcastAddress() {
-        try {
-            val wifi = context.getSystemService(Context.WIFI_SERVICE) as WifiManager
-            val dhcp = wifi.dhcpInfo ?: return
-            if (dhcp.netmask == 0) return
-            // dhcp.ipAddress / netmask 均为 little-endian int,直接位运算结果同序
-            val broadcast = (dhcp.ipAddress and dhcp.netmask) or (dhcp.netmask.inv())
-            val addr = "${broadcast and 0xFF}.${(broadcast shr 8) and 0xFF}." +
-                "${(broadcast shr 16) and 0xFF}.${(broadcast shr 24) and 0xFF}"
-            if (addr != "0.0.0.0") {
-                broadcastAddress = addr
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "updateBroadcastAddress failed", e)
+        }
+        val broadcasts = broadcastAddresses()
+        if (broadcasts.isEmpty()) {
+            mainHandler.post { callback.onError("无法确定局域网广播地址,请检查 Wi-Fi 连接") }
+            return
+        }
+        broadcasts.forEach { dest ->
+            runCatching {
+                s.send(DatagramPacket(envelope, envelope.size, dest, PORT))
+            }.onFailure { Log.d(TAG, "broadcast failed: ${it.message}") }
         }
     }
 
-    /** 构造 hello 包(携带 peerId,用于身份广播) */
-    private fun buildHelloPacket(): String = JSONObject().apply {
-        put("_type", "hello")
-        put("peerId", myPeerId)
-    }.toString()
+    /** 存活广播:对端据此发现本机 */
+    private fun sendHello() {
+        val s = socket ?: return
+        val hello = JSONObject()
+            .put("_udp", "hello")
+            .put("id", peerId)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+        broadcastAddresses().forEach { dest ->
+            runCatching {
+                s.send(DatagramPacket(hello, hello.size, dest, PORT))
+            }.onFailure { Log.d(TAG, "hello failed: ${it.message}") }
+        }
+    }
 
-    /** 构造 leave 包 */
-    private fun buildLeavePacket(): String = JSONObject().apply {
-        put("_type", "leave")
-        put("peerId", myPeerId)
-    }.toString()
-
-    /** 构造 heartbeat 包 */
-    private fun buildHeartbeatPacket(): String = JSONObject().apply {
-        put("_type", "heartbeat")
-        put("peerId", myPeerId)
-    }.toString()
+    // ════════════════════════════════════════
+    //  接收
+    // ════════════════════════════════════════
 
     private fun receiveLoop() {
-        val buf = ByteArray(MAX_PACKET_BYTES)
-        while (running && !Thread.currentThread().isInterrupted) {
+        val buf = ByteArray(MAX_DATAGRAM_BYTES + 64)
+        while (running.get()) {
             try {
+                val s = socket ?: break
                 val packet = DatagramPacket(buf, buf.size)
-                socket?.receive(packet) ?: break
-                val text = String(packet.data, 0, packet.length)
-                val sourceAddress = packet.address.hostAddress ?: ""
-                onPacketReceived(text, sourceAddress)
+                s.receive(packet)
+                handlePacket(packet, buf)
             } catch (e: Exception) {
-                if (!running) break
-                Log.w(TAG, "receiveLoop error", e)
+                if (running.get()) Log.d(TAG, "receive error: ${e.message}")
             }
         }
     }
 
-    private fun heartbeatLoop() {
-        while (running && !Thread.currentThread().isInterrupted) {
-            try { Thread.sleep(HEARTBEAT_INTERVAL_MS) } catch (e: InterruptedException) { break }
-            if (!running) break
-            try {
-                val now = System.currentTimeMillis()
-                // 清理超时 peer
-                val expired = udpPeers.entries.filter { now - it.value.lastSeen > DEVICE_TIMEOUT_MS }.map { it.key }
-                expired.forEach { peerId ->
-                    udpPeers.remove(peerId)
-                    callback.onPeerDisconnected(peerId)
-                }
-                // 发送心跳
-                sendUdp(buildHeartbeatPacket())
-            } catch (e: Exception) {
-                Log.w(TAG, "heartbeatLoop error", e)
-                if (!running) break
+    private fun handlePacket(packet: DatagramPacket, buf: ByteArray) {
+        val text = String(buf, 0, packet.length, Charsets.UTF_8)
+        val obj = runCatching { JSONObject(text) }.getOrNull() ?: return
+        val from = obj.optString("id")
+        if (from.isBlank() || from == peerId) return
+
+        // 包级去重(单播+广播双发会收到两次)
+        val pid = obj.optString("pid")
+        if (pid.isNotEmpty() && !markPacketSeen(pid)) return
+
+        val isNew = knownPeers[from] == null
+        val entry = knownPeers.getOrPut(from) { PeerEntry(packet.address, 0L) }
+        entry.address = packet.address
+        entry.lastSeen = System.currentTimeMillis()
+
+        val kind = obj.optString("_udp")
+        if (isNew && kind == "hello") {
+            mainHandler.post { callback.onPeerConnected(from, from, type, 0) }
+        }
+        if (kind == "d") {
+            val data = obj.optString("d")
+            if (data.isNotBlank()) {
+                mainHandler.post { callback.onDataReceived(data, from, type, 0) }
             }
         }
     }
 
-    private fun onPacketReceived(text: String, sourceAddress: String) {
-        try {
-            val obj = JSONObject(text)
-            val type = obj.optString("_type", "message")
-            val peerId = obj.optString("peerId", obj.optString("senderPeerId", ""))
-            // 忽略自己的广播回环
-            if (peerId == myPeerId || peerId.isEmpty()) return
-
-            val now = System.currentTimeMillis()
-            when (type) {
-                "hello", "heartbeat" -> {
-                    val existing = udpPeers[peerId]
-                    val nickname = obj.optString("nickname", existing?.nickname ?: "")
-                    if (existing == null) {
-                        // 新 peer 上线
-                        udpPeers[peerId] = PeerInfo(nickname, sourceAddress, now)
-                        // 收到 hello 回应一次 hello(双向交换 peerId)
-                        if (type == "hello") sendUdp(buildHelloPacket())
-                        // 通知上层 peer 连接(昵称为空时上层会通过 announce 补全)
-                        callback.onPeerConnected(peerId, nickname)
-                    } else {
-                        udpPeers[peerId] = existing.copy(lastSeen = now)
-                    }
-                }
-                "leave" -> {
-                    udpPeers.remove(peerId)
-                    callback.onPeerDisconnected(peerId)
-                }
-                else -> {
-                    // 聊天消息/announce 等,更新 peer 最后活跃时间
-                    udpPeers[peerId]?.let { udpPeers[peerId] = it.copy(lastSeen = now) }
-                    callback.onDataReceived(text, peerId)
-                }
+    /** 记录 pid;已见过则返回 false(丢弃重复包),并顺手清理过期项 */
+    private fun markPacketSeen(pid: String): Boolean = synchronized(recentPacketIds) {
+        val now = System.currentTimeMillis()
+        if (recentPacketIds.containsKey(pid)) return false
+        // 过期清理(懒式,超阈值时才扫描)
+        if (recentPacketIds.size > DEDUP_MAX_ENTRIES) {
+            recentPacketIds.entries.removeAll { now - it.value > DEDUP_TTL_MS }
+            // 仍超限(极高频场景)则按插入序丢弃最旧的一半
+            val iter = recentPacketIds.entries.iterator()
+            while (recentPacketIds.size > DEDUP_MAX_ENTRIES / 2 && iter.hasNext()) {
+                iter.next()
+                iter.remove()
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "onPacketReceived parse error", e)
+        }
+        recentPacketIds[pid] = now
+        true
+    }
+
+    /** 回收超时对端 */
+    private fun sweepStalePeers() {
+        val now = System.currentTimeMillis()
+        val stale = knownPeers.entries.filter { now - it.value.lastSeen > PEER_TIMEOUT_MS }.map { it.key }
+        stale.forEach { knownPeers.remove(it) }
+        if (stale.isNotEmpty()) {
+            mainHandler.post { stale.forEach { callback.onPeerDisconnected(it, type) } }
         }
     }
 
-    private fun sendUdp(json: String) {
-        if (executor.isShutdown) return
-        try {
-            executor.execute {
-                try {
-                    val data = json.toByteArray(Charsets.UTF_8)
-                    if (data.size > MAX_PACKET_BYTES) {
-                        Log.w(TAG, "packet too large (${data.size}B), drop")
-                        return@execute
-                    }
-                    // 优先发送子网定向广播(255.255.255.255 在部分 Android/路由器被阻止发送)
-                    socket?.send(DatagramPacket(data, data.size, InetAddress.getByName(broadcastAddress), PORT))
-                    // 子网广播与限定广播不同时,额外发一次限定广播提高可靠性
-                    if (broadcastAddress != BROADCAST_ADDR) {
-                        socket?.send(DatagramPacket(data, data.size, InetAddress.getByName(BROADCAST_ADDR), PORT))
-                    }
-                } catch (e: Exception) { Log.w(TAG, "sendUdp failed", e) }
+    // ════════════════════════════════════════
+    //  网络辅助
+    // ════════════════════════════════════════
+
+    /** 组播锁:部分设备休眠时丢弃广播包,持锁提高接收可靠性(尽力而为) */
+    private fun acquireMulticastLock() {
+        runCatching {
+            val wifi = appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return
+            multicastLock = wifi.createMulticastLock("meschat_udp").apply {
+                setReferenceCounted(false)
+                acquire()
             }
-        } catch (e: java.util.concurrent.RejectedExecutionException) {
-            Log.w(TAG, "sendUdp rejected: executor stopped")
         }
+    }
+
+    /**
+     * 枚举所有可用接口的子网广播地址:涵盖 Wi-Fi 子网、Wi-Fi Direct P2P 组子网、
+     * 以太网等。P2P 组建立后其接口(p2p-wlan0-0)自动纳入,广播即可直达组内成员。
+     */
+    private fun broadcastAddresses(): List<InetAddress> {
+        val result = mutableListOf<InetAddress>()
+        runCatching {
+            val interfaces = Collections.list(NetworkInterface.getNetworkInterfaces())
+            for (ni in interfaces) {
+                if (!ni.isUp || ni.isLoopback || ni.interfaceAddresses.isEmpty()) continue
+                ni.interfaceAddresses.forEach { ia ->
+                    ia.broadcast?.let { result.add(it) }
+                }
+            }
+        }
+        if (result.isEmpty()) {
+            runCatching { result.add(InetAddress.getByName("255.255.255.255")) }
+        }
+        return result.distinctBy { it.hostAddress }
     }
 }

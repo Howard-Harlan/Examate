@@ -14,4 +14,10 @@
     <color name="text_hint">#FF9CA3AF</color>
     <!-- 功能色 -->
     <color name="warning">#FFF59E0B</color>
+
+    <!-- 深色模式(跟随系统):纯黑窗口背景 + 白色系文字 -->
+    <color name="bg_night">#FF000000</color>
+    <color name="text_night_primary">#FFFFFFFF</color>
+    <color name="text_night_secondary">#99FFFFFF</color>
+    <color name="text_night_hint">#66FFFFFF</color>
 </resources>

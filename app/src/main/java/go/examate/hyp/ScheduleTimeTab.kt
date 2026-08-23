@@ -49,7 +49,6 @@ import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.components.LiquidGlassIconButton
-import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
@@ -88,7 +87,7 @@ internal fun TimeSettingsTab(onEditTimeTable: (String) -> Unit) {
                             if (meta.isCurrent) {
                                 Spacer(Modifier.width(8.dp))
                                 Box(
-                                    Modifier.clip(RoundedCornerShape(4.dp)).background(Primary).padding(horizontal = 6.dp, vertical = 2.dp)
+                                    Modifier.clip(RoundedCornerShape(4.dp)).background(go.examate.hyp.ui.theme.SelectedBg).padding(horizontal = 6.dp, vertical = 2.dp)
                                 ) {
                                     Text("当前", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Medium)
                                 }

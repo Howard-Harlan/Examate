@@ -52,7 +52,10 @@ import go.examate.hyp.ui.components.PlainDialog
 import go.examate.hyp.ui.components.PlainDialogButtons
 import go.examate.hyp.ui.components.PlainDialogContent
 import go.examate.hyp.ui.components.PlainDialogTitle
+import go.examate.hyp.ui.theme.SelectedBg
 import go.examate.hyp.ui.theme.AccentBlue
+import go.examate.hyp.ui.theme.GlassChipTint
+import go.examate.hyp.ui.theme.IsDark
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.SurfaceVariant
 import go.examate.hyp.ui.theme.TextHint
@@ -79,6 +82,8 @@ fun BookshelfScreen(
     onAiWriter: () -> Unit
 ) {
     val context = LocalContext.current
+    // 深色模式降白:顶栏玻璃 40%→12%
+    val isDark = IsDark
     var localTick by remember { mutableIntStateOf(0) }
     val allBooks = remember(refreshTick, localTick) { BookshelfStore.loadAll(context) }
     var removeTarget by remember { mutableStateOf<ShelfBook?>(null) }
@@ -154,10 +159,10 @@ fun BookshelfScreen(
                             backdrop = backdrop,
                             shape = { Capsule() },
                             effects = { vibrancy(); blur(14f) },
-                            onDrawSurface = { drawRect(Color.White.copy(0.4f)) }
+                            onDrawSurface = { drawRect(Color.White.copy(if (isDark) 0.12f else 0.4f)) }
                         )
                     } else {
-                        Modifier.clip(RoundedCornerShape(24.dp)).background(Color.White.copy(0.88f))
+                        Modifier.clip(RoundedCornerShape(24.dp)).background(GlassChipTint)
                     }
                 )
             ) {
@@ -165,7 +170,7 @@ fun BookshelfScreen(
                     listOf("书架" to 0, "最近在看" to 1).forEach { (label, idx) ->
                         Box(
                             Modifier.clip(RoundedCornerShape(18.dp))
-                                .background(if (tab == idx) Primary else Color.Transparent)
+                                .background(if (tab == idx) SelectedBg else Color.Transparent)
                                 .clickable { tab = idx }.padding(horizontal = 24.dp, vertical = 9.dp),
                             contentAlignment = Alignment.Center
                         ) {
@@ -175,8 +180,12 @@ fun BookshelfScreen(
                     }
                 }
             }
-            Spacer(Modifier.size(12.dp))
-            // 右侧:AI 写作胶囊悬浮按钮(液态玻璃,文字样式,与左侧 Tab 统一)
+        }
+
+        // ═══ 右下角悬浮按钮:AI 写作(上移避开底部 Tab 栏) ═══
+        Box(
+            Modifier.align(Alignment.BottomEnd).padding(end = 20.dp, bottom = 88.dp)
+        ) {
             Box(
                 Modifier.then(
                     if (backdrop != null) {
@@ -184,19 +193,19 @@ fun BookshelfScreen(
                             backdrop = backdrop,
                             shape = { Capsule() },
                             effects = { vibrancy(); blur(14f) },
-                            onDrawSurface = { drawRect(Color.White.copy(0.4f)) }
+                            onDrawSurface = { drawRect(Color.White.copy(if (isDark) 0.14f else 0.5f)) }
                         )
                     } else {
-                        Modifier.clip(RoundedCornerShape(24.dp)).background(Color.White.copy(0.88f))
+                        Modifier.clip(RoundedCornerShape(26.dp)).background(GlassChipTint)
                     }
                 ).clickable { onAiWriter() }
-                    .padding(horizontal = 24.dp, vertical = 15.dp),
+                    .padding(horizontal = 22.dp, vertical = 15.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     "AI写作",
                     color = Primary,
-                    fontSize = 13.sp,
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.Medium
                 )
             }

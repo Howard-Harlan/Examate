@@ -5,10 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.runtime.getValue
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.viewmodel.compose.viewModel
 import go.examate.hyp.ui.MainScreenRoot
 import go.examate.hyp.ui.theme.ExamateTheme
 
@@ -49,29 +46,20 @@ class MainActivity : ComponentActivity() {
         updatePermissionStatus()
 
         setContent {
-            val viewModel = viewModel<MainViewModel>()
-            val overlayGranted by viewModel.overlayGrantedState.collectAsStateWithLifecycle()
-            val accessibilityGranted by viewModel.accessibilityGrantedState.collectAsStateWithLifecycle()
-            val batteryGranted by viewModel.batteryGrantedState.collectAsStateWithLifecycle()
-            val shizukuGranted by viewModel.shizukuGrantedState.collectAsStateWithLifecycle()
-
             ExamateTheme {
                 MainScreenRoot(
-                    overlayGranted = overlayGranted,
-                    accessibilityGranted = accessibilityGranted,
-                    batteryGranted = batteryGranted,
-                    shizukuGranted = shizukuGranted,
-                    onLaunchClick = { permissionHelper.startManualMode() },
-                    onScreenshotClick = { permissionHelper.startScreenshotMode() },
+                    onDeepLearningClick = { navigator.gotoDeepLearning() },
                     onChatClick = { navigator.gotoChat() },
-                    onLanChatClick = { navigator.gotoLanChat() },
+                    onMesChatClick = { navigator.gotoMesChat() },
                     onCampusServiceClick = { navigator.gotoCampusService() },
                     onWaterCardClick = { navigator.gotoWaterCard() },
                     onScheduleClick = { navigator.gotoSchedule() },
-                    onNotesClick = { navigator.gotoNotes() },
                     onDownloaderClick = { navigator.gotoDownloader() },
                     onReadingClick = { navigator.gotoReading() },
                     onMusicClick = { navigator.gotoMusic() },
+                    onMemoClick = { navigator.gotoMemo() },
+                    onOpenTodo = { navigator.gotoTodo() },
+                    onOpenNotes = { noteId -> navigator.gotoNote(noteId) },
                     onUserSettingsClick = { navigator.gotoUserSettings() },
                     onApiConfigClick = { navigator.gotoApiConfig() },
                     onAgentSettingsClick = { navigator.gotoAgentSettings() },

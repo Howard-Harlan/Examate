@@ -72,6 +72,9 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
+/** 正文段落行距增量(相对字号),供「预览主题」全局注入,默认 6 */
+private val LocalLineHeightExtra = androidx.compose.runtime.staticCompositionLocalOf { 6 }
+
 @Composable
 fun MarkdownText(
     markdown: String,
@@ -79,7 +82,8 @@ fun MarkdownText(
     textColor: Color = TextPrimary,
     fontSize: Int = 14,
     fontFamily: androidx.compose.ui.text.font.FontFamily? = null,
-    isStreaming: Boolean = false
+    isStreaming: Boolean = false,
+    lineHeightExtra: Int = 6
 ) {
     // ★ 统一用 Compose 原生渲染(参考 rikkahub 的纯 AST 路径)。
     //   全部走 parseBlocks + 各 Block 组件,不会丢内容。
@@ -108,7 +112,8 @@ fun MarkdownText(
     androidx.compose.runtime.CompositionLocalProvider(
         androidx.compose.material3.LocalTextStyle provides
             (if (fontFamily != null) androidx.compose.material3.LocalTextStyle.current.copy(fontFamily = fontFamily)
-             else androidx.compose.material3.LocalTextStyle.current)
+             else androidx.compose.material3.LocalTextStyle.current),
+        LocalLineHeightExtra provides lineHeightExtra
     ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         blocks.forEach { block ->
@@ -413,7 +418,8 @@ private fun parseBlocks(md: String): List<MdBlock> {
         val sb = StringBuilder(trimmed)
         i++
         while (i < lines.size && lines[i].trim().isNotEmpty() && !startsNewBlock(lines, i)) {
-            sb.append("\n").append(lines[i].trim())
+            // 保留行首缩进(用户写下的对齐/缩进格式),仅去除行尾空白
+            sb.append("\n").append(lines[i].trimEnd())
             i++
         }
         blocks.add(MdBlock.Paragraph(sb.toString()))
@@ -507,7 +513,7 @@ private fun InlineContent(text: String, textColor: Color, fontSize: Int, isStrea
                             text = renderInline(seg.text, textColor),
                             color = textColor,
                             fontSize = fontSize.sp,
-                            lineHeight = (fontSize + 6).sp
+                            lineHeight = (fontSize + LocalLineHeightExtra.current).sp
                         )
                     }
                 }
@@ -540,7 +546,7 @@ private fun RichInlineText(
     if (!hasMath || isStreaming || !KatexRenderer.fontsAvailable(context)) {
         Text(
             renderInline(text, textColor), color = textColor, fontSize = fontSize.sp,
-            fontWeight = fontWeight, fontStyle = fontStyle, lineHeight = (fontSize + 6).sp
+            fontWeight = fontWeight, fontStyle = fontStyle, lineHeight = (fontSize + LocalLineHeightExtra.current).sp
         )
         return
     }
@@ -588,7 +594,7 @@ private fun RichInlineText(
     }
     Text(
         annotated, inlineContent = inlineContent, color = textColor, fontSize = fontSize.sp,
-        fontWeight = fontWeight, fontStyle = fontStyle, lineHeight = (fontSize + 6).sp
+        fontWeight = fontWeight, fontStyle = fontStyle, lineHeight = (fontSize + LocalLineHeightExtra.current).sp
     )
 }
 

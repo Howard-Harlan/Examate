@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<!-- player-theme-mode=player:导入时识别为「网页播放器」,替换原生播放页内容 -->
+<meta name="player-theme-mode" content="player">
+<!-- 原生兜底收起按钮位置:右上(避让本页左上标题区;规范见 PLAYER_THEME_SPEC.md) -->
+<meta name="player-theme-close" content="top-right">
+<title>流光 · 网页播放器</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: transparent;
+               font-family: system-ui, sans-serif; user-select: none; }
+  #stage { position: fixed; inset: 0; display: flex; flex-direction: column;
+           padding: 64px 26px 30px; color: #fff; }
+  /* 主题区:标题 + 进度 */
+  #meta { margin-bottom: 8px; }
+  #title { font-size: 22px; font-weight: 700; letter-spacing: -0.4px;
+           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #artist { font-size: 14px; opacity: 0.72; margin-top: 4px;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* 切歌过渡:标题/艺术家上移淡入(ease-out 280ms,规范强曲线) */
+  #title.swap, #artist.swap { animation: swapIn 280ms cubic-bezier(0.23,1,0.32,1); }
+  @keyframes swapIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  /* 进度条:跟手拖动,松手 seek */
+  #bar { position: relative; height: 26px; display: flex; align-items: center; margin-top: 14px; }
+  #track { width: 100%; height: 5px; border-radius: 3px; background: rgba(255,255,255,0.24); overflow: hidden; }
+  #fill { width: 0%; height: 100%; border-radius: 3px; background: #fff;
+          box-shadow: 0 0 8px var(--accent, rgba(255,255,255,0.6)); transition: none; }
+  #thumb { position: absolute; top: 50%; width: 14px; height: 14px; border-radius: 50%;
+           background: #fff; transform: translate(-50%, -50%); left: 0%;
+           transition: transform 150ms cubic-bezier(0.23,1,0.32,1); }
+  #bar.dragging #thumb { transform: translate(-50%, -50%) scale(1.35); }
+  #times { display: flex; justify-content: space-between; font-size: 11px; opacity: 0.6; margin-top: 2px; }
+  /* 控制区 */
+  #controls { display: flex; justify-content: space-evenly; align-items: center; margin-top: 16px; }
+  .btn { width: 46px; height: 46px; border-radius: 50%; background: rgba(255,255,255,0.20);
+         display: flex; align-items: center; justify-content: center; font-size: 19px;
+         transition: transform 120ms cubic-bezier(0.23,1,0.32,1); }
+  .btn:active { transform: scale(0.92); }
+  .btn.small { width: 40px; height: 40px; font-size: 15px; }
+  .btn.active { box-shadow: inset 0 0 0 2px rgba(255,255,255,0.65); }
+  #play { width: 68px; height: 68px; background: #fff; color: #1a1a2e; font-size: 26px; }
+  /* 播放中主键呼吸辉光(环境动效,极微;减弱动态偏好时关闭) */
+  #play.playing { animation: glow 2.6s ease-in-out infinite; }
+  @keyframes glow {
+    0%, 100% { box-shadow: 0 0 0 rgba(255,255,255,0); }
+    50%      { box-shadow: 0 0 22px var(--accent, rgba(255,255,255,0.35)); }
+  }
+  /* 工具区:模式/倍速/收藏/列表 */
+  #tools { display: flex; justify-content: space-evenly; align-items: center; margin-top: 14px; }
+  .tool { font-size: 12px; padding: 7px 13px; border-radius: 12px; background: rgba(255,255,255,0.14);
+          transition: transform 120ms cubic-bezier(0.23,1,0.32,1), background 200ms; }
+  .tool:active { transform: scale(0.94); }
+  .tool.on { background: rgba(255,255,255,0.34); font-weight: 600; }
+  /* 歌词区(Apple Music 式:当前行放大提亮,其余梯度淡化) */
+  #lyrics { flex: 1; overflow: hidden; margin: 18px 0 6px; position: relative;
+            -webkit-mask-image: linear-gradient(transparent, #000 18%, #000 82%, transparent); }
+  #lyricList { position: absolute; width: 100%; transition: transform 350ms cubic-bezier(0.23,1,0.32,1); }
+  .line { text-align: center; font-size: 17px; font-weight: 600; padding: 9px 12px;
+          transform: scale(0.82); opacity: 0.35;
+          transition: transform 350ms cubic-bezier(0.23,1,0.32,1), opacity 350ms; }
+  .line.cur { transform: scale(1); opacity: 1; font-weight: 700; }
+  /* 歌词首次载入:逐行 stagger 淡入(30ms 间隔,规范入场手法) */
+  .line.in { animation: lineIn 320ms cubic-bezier(0.23,1,0.32,1) backwards; }
+  @keyframes lineIn {
+    from { opacity: 0; transform: scale(0.9) translateY(8px); }
+  }
+  .empty { text-align: center; opacity: 0.55; font-size: 14px; margin-top: 40%; }
+  /* 减弱动态:保留透明度变化,去掉位移/辉光/循环动效 */
+  @media (prefers-reduced-motion: reduce) {
+    #title.swap, #artist.swap, .line.in { animation: none; }
+    #play.playing { animation: none; }
+    #lyricList { transition: none; }
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="meta">
+    <div id="title">未在播放</div>
+    <div id="artist">点一首歌开始</div>
+    <div id="bar">
+      <div id="track"><div id="fill"></div></div>
+      <div id="thumb"></div>
+    </div>
+    <div id="times"><span id="tCur">0:00</span><span id="tDur">0:00</span></div>
+  </div>
+
+  <div id="controls">
+    <div class="btn small" id="mode" title="播放模式">🔁</div>
+    <div class="btn" id="prev">⏮</div>
+    <div class="btn" id="play">▶</div>
+    <div class="btn" id="next">⏭</div>
+    <div class="btn small" id="queue" title="播放列表">☰</div>
+  </div>
+
+  <div id="tools">
+    <div class="tool" id="speed">1x</div>
+    <div class="tool" id="fav">♡ 收藏</div>
+  </div>
+
+  <div id="lyrics">
+    <div id="lyricList"><div class="empty">暂无歌词</div></div>
+  </div>
+</div>
+
+<script>
+/**
+ * 内置网页播放器示例预设 — PLAYER_THEME_SPEC.md 的完整参考实现:
+ *  - __onPlayerEvent 接收原生状态(进度/模式/收藏/歌词/主题色)
+ *  - PlayerBridge.action 回调原生控制(toggle/seek/mode/speed/favorite/queue)
+ *  - 歌词自渲染(Apple Music 式缩放提亮 + 平滑居中 + 点击跳播)
+ */
+(function () {
+  var st = { pos: 0, dur: 1, playing: false, mode: 'list_loop', speed: 1,
+             fav: false, lyrics: [], li: -1 };
+  var MODES = { list_loop: '🔁', single_loop: '🔂', shuffle: '🔀', order: '➡' };
+  var MODE_ORDER = ['list_loop', 'single_loop', 'shuffle', 'order'];
+  var SPEEDS = [1, 1.25, 1.5, 0.75];
+
+  function act(a, v) {
+    try { PlayerBridge.action(JSON.stringify(v === undefined ? { a: a } : { a: a, v: v })); } catch (e) {}
+  }
+  function fmt(ms) {
+    var s = Math.max(0, Math.floor(ms / 1000));
+    return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2);
+  }
+  function $(id) { return document.getElementById(id); }
+
+  // ── 渲染 ──
+  function render() {
+    var newTitle = $('title').dataset.v || '未在播放';
+    if ($('title').textContent !== newTitle) {
+      $('title').textContent = newTitle;
+      swapAnim($('title')); swapAnim($('artist'));   // 切歌过渡:上移淡入
+    }
+    var p = st.dur > 0 ? (st.pos / st.dur) : 0;
+    if (!drag) {
+      $('fill').style.width = (p * 100) + '%';
+      $('thumb').style.left = (p * 100) + '%';
+    }
+    $('tCur').textContent = fmt(st.pos);
+    $('tDur').textContent = fmt(st.dur);
+    $('play').textContent = st.playing ? '⏸' : '▶';
+    $('play').classList.toggle('playing', st.playing);
+    $('mode').textContent = MODES[st.mode] || '🔁';
+    $('speed').textContent = (st.speed === 1 ? '1x' : st.speed + 'x');
+    $('speed').classList.toggle('on', st.speed !== 1);
+    $('fav').textContent = st.fav ? '♥ 已收藏' : '♡ 收藏';
+    $('fav').classList.toggle('on', st.fav);
+    renderLyric();
+  }
+  // 重播 swap 动画:移除类 → 强制重排 → 加回(CSS animation 重触发手法)
+  function swapAnim(el) {
+    el.classList.remove('swap');
+    void el.offsetWidth;
+    el.classList.add('swap');
+  }
+  function renderLyric() {
+    var box = $('lyricList');
+    if (!box.dataset.key || box.dataset.key !== lyricKey()) {
+      box.dataset.key = lyricKey();
+      if (!st.lyrics.length) { box.innerHTML = '<div class="empty">暂无歌词</div>'; return; }
+      var html = '';
+      st.lyrics.forEach(function (l, i) {
+        html += '<div class="line in" data-i="' + i + '" data-t="' + l.t + '">' + esc(l.text) + '</div>';
+      });
+      box.innerHTML = html;
+      box.querySelectorAll('.line').forEach(function (el, i) {
+        // 逐行 stagger 淡入:30ms 间隔,封顶 14 行后的行直接出现(避免长列表尾部等待)
+        el.style.animationDelay = (Math.min(i, 14) * 30) + 'ms';
+        el.addEventListener('click', function () { act('seek', parseInt(el.dataset.t)); });
+      });
+    }
+    var lines = box.querySelectorAll('.line');
+    lines.forEach(function (el, i) { el.classList.toggle('cur', i === st.li); });
+    if (st.li >= 0 && lines[st.li]) {
+      var h = $('lyrics').clientHeight;
+      var y = lines[st.li].offsetTop - h / 2 + lines[st.li].clientHeight / 2;
+      box.style.transform = 'translateY(' + (-Math.max(0, y)) + 'px)';
+    }
+  }
+  function lyricKey() { return st.lyrics.length + '|' + (st.lyrics[0] ? st.lyrics[0].text : ''); }
+  function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+  // ── 原生 → 页面 ──
+  window.__onPlayerEvent = function (jsonStr) {
+    try {
+      var e = JSON.parse(jsonStr);
+      if (typeof e.isPlaying === 'boolean') st.playing = e.isPlaying;
+      if (typeof e.positionMs === 'number') st.pos = e.positionMs;
+      if (typeof e.durationMs === 'number') st.dur = Math.max(1, e.durationMs);
+      if (typeof e.title === 'string') $('title').dataset.v = e.title || '未在播放';
+      if (typeof e.artist === 'string') $('artist').textContent = e.artist || '未知';
+      if (typeof e.playMode === 'string') st.mode = e.playMode;
+      if (typeof e.speed === 'number') st.speed = e.speed;
+      if (typeof e.isFavorite === 'boolean') st.fav = e.isFavorite;
+      if (typeof e.lyricIndex === 'number') st.li = e.lyricIndex;
+      if (Array.isArray(e.lyrics)) st.lyrics = e.lyrics;
+      if (e.colors && e.colors.accent) {
+        document.body.style.setProperty('--accent', e.colors.accent);  // 进度/辉光强调色
+      }
+      render();
+    } catch (err) {}
+  };
+
+  // ── 页面 → 原生 ──
+  $('play').addEventListener('click', function () { act('toggle'); });
+  $('prev').addEventListener('click', function () { act('prev'); });
+  $('next').addEventListener('click', function () { act('next'); });
+  $('queue').addEventListener('click', function () { act('queue'); });
+  $('fav').addEventListener('click', function () { act('favorite'); });
+  $('mode').addEventListener('click', function () {
+    var i = (MODE_ORDER.indexOf(st.mode) + 1) % MODE_ORDER.length;
+    act('mode', MODE_ORDER[i]);
+  });
+  $('speed').addEventListener('click', function () {
+    var i = (SPEEDS.indexOf(st.speed) + 1) % SPEEDS.length;
+    act('speed', SPEEDS[i]);
+  });
+
+  // ── 进度条:1:1 跟手拖动,松手 seek ──
+  var drag = false;
+  var bar = $('bar');
+  function posOf(ev) {
+    var r = bar.getBoundingClientRect();
+    var x = (ev.touches ? ev.touches[0].clientX : ev.clientX) - r.left;
+    return Math.min(1, Math.max(0, x / r.width));
+  }
+  function startDrag(ev) { drag = true; bar.classList.add('dragging'); moveDrag(ev); }
+  function moveDrag(ev) {
+    if (!drag) return;
+    var p = posOf(ev);
+    $('fill').style.width = (p * 100) + '%';
+    $('thumb').style.left = (p * 100) + '%';
+    $('tCur').textContent = fmt(p * st.dur);
+  }
+  function endDrag(ev) {
+    if (!drag) return;
+    drag = false;
+    bar.classList.remove('dragging');
+    var p = posOf(ev.changedTouches ? ev.changedTouches[0] : ev);
+    act('seek', Math.floor(p * st.dur));
+  }
+  bar.addEventListener('touchstart', startDrag, { passive: true });
+  bar.addEventListener('touchmove', moveDrag, { passive: true });
+  bar.addEventListener('touchend', endDrag);
+  bar.addEventListener('mousedown', startDrag);
+  window.addEventListener('mousemove', moveDrag);
+  window.addEventListener('mouseup', endDrag);
+
+  render();
+})();
+</script>
+</body>
+</html>

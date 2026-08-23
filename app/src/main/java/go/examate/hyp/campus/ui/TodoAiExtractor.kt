@@ -127,7 +127,7 @@ object TodoAiExtractor {
         }
     }
 
-    /** 日期解析:支持 yyyy-MM-dd / 今天 / 明天 / 后天,失败回退今天 */
+    /** 日期解析:支持 yyyy-MM-dd / 昨天 / 今天 / 明天 / 后天,失败回退今天 */
     private fun parseDate(s: String): String {
         val t = s.trim()
         if (t.isEmpty()) return LocalDate.now().toString()
@@ -136,6 +136,7 @@ object TodoAiExtractor {
         } catch (_: Exception) {
             val today = LocalDate.now()
             when (t) {
+                "昨天", "昨日", "yesterday" -> today.minusDays(1).toString()
                 "今天", "今日", "today" -> today.toString()
                 "明天", "明日", "tomorrow" -> today.plusDays(1).toString()
                 "后天" -> today.plusDays(2).toString()

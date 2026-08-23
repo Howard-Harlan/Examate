@@ -43,6 +43,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
@@ -67,6 +68,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -285,7 +287,7 @@ private fun TodoTopBar(
 }
 
 // ════════════════════════════════════════
-//  日期选择条(前后7天,显示待办数量标记)
+//  日期选择条(前后 7 / 14 天 + 月份分割 + 自定义跳转,显示待办数量标记)
 // ════════════════════════════════════════
 
 @Composable
@@ -296,10 +298,21 @@ private fun DateStrip(
 ) {
     val today = LocalDate.now()
     val dates = remember(today) {
-        (-3..10).map { today.plusDays(it.toLong()) }
+        (-7..21).map { today.plusDays(it.toLong()) }
     }
     val todosByDate = remember(todos) { todos.groupBy { it.date } }
     val scrollState = rememberScrollState()
+    var showDatePicker by remember { mutableStateOf(false) }
+
+    // 进入页面时,把"今天"滚到靠左的位置(便于看到未来日历)
+    val density = LocalDensity.current
+    LaunchedEffect(scrollState.maxValue) {
+        if (scrollState.maxValue > 0) {
+            // 每个 chip ≈ 52dp(44 宽 + 8 间距),7 个 chip ≈ 364dp
+            val px = with(density) { 364.dp.toPx().toInt() }
+            scrollState.scrollTo(px.coerceAtMost(scrollState.maxValue))
+        }
+    }
 
     Row(
         Modifier
@@ -311,7 +324,26 @@ private fun DateStrip(
         dates.forEach { date ->
             val isSelected = date == selectedDate
             val isToday = date == today
+            val isPast = date.isBefore(today)
             val dayTodoCount = todosByDate[date.toString()]?.count { !it.done } ?: 0
+            // 月初插入月份标签
+            val showMonthLabel = date.dayOfMonth == 1
+
+            if (showMonthLabel) {
+                Box(
+                    Modifier
+                        .width(36.dp)
+                        .padding(vertical = 4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "${date.monthValue}月",
+                        color = TextHint,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
 
             FrostedGlassCard(
                 modifier = Modifier
@@ -322,25 +354,33 @@ private fun DateStrip(
             ) {
                 Column(
                     Modifier
-                        .width(48.dp)
+                        .width(44.dp)
                         .clip(RoundedCornerShape(16.dp))
                         .clickable { onSelect(date) }
-                        .padding(vertical = 10.dp),
+                        .padding(vertical = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
                         date.dayOfWeek.getDisplayName(java.time.format.TextStyle.NARROW, java.util.Locale.CHINESE),
-                        color = if (isSelected) AccentBlue else TextHint,
+                        color = when {
+                            isSelected -> AccentBlue
+                            isPast -> TextHint.copy(0.5f)
+                            else -> TextHint
+                        },
                         fontSize = 10.sp
                     )
                     Spacer(Modifier.height(2.dp))
                     Text(
                         date.dayOfMonth.toString(),
-                        color = if (isSelected) AccentBlue else TextPrimary,
-                        fontSize = 16.sp,
+                        color = when {
+                            isSelected -> AccentBlue
+                            isPast -> TextHint.copy(0.7f)
+                            else -> TextPrimary
+                        },
+                        fontSize = 15.sp,
                         fontWeight = if (isToday || isSelected) FontWeight.Bold else FontWeight.Medium
                     )
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(3.dp))
                     // 未完成待办数量标记
                     Box(
                         Modifier.size(16.dp).clip(CircleShape)
@@ -363,6 +403,39 @@ private fun DateStrip(
                 }
             }
         }
+
+        // 末尾的"自定义日期"入口
+        FrostedGlassCard(
+            modifier = Modifier.clickable { showDatePicker = true }
+        ) {
+            Column(
+                Modifier
+                    .width(44.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .padding(vertical = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(
+                    Icons.Filled.DateRange,
+                    contentDescription = "选择日期",
+                    tint = TextHint,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.height(8.dp))
+                Text("更多", color = TextHint, fontSize = 9.sp)
+            }
+        }
+    }
+
+    if (showDatePicker) {
+        DatePickerDialog(
+            initialDate = selectedDate,
+            onDismiss = { showDatePicker = false },
+            onConfirm = {
+                onSelect(it)
+                showDatePicker = false
+            }
+        )
     }
 }
 
@@ -409,13 +482,22 @@ private fun TodoCard(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 优先级色条
+            // 优先级色条 + 标签
             if (todo.priority > 0) {
-                Box(
-                    Modifier.width(3.dp).height(32.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(priorityColor)
-                )
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(
+                        Modifier.width(3.dp).height(20.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(priorityColor)
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        PriorityLabels[todo.priority],
+                        color = priorityColor,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
                 Spacer(Modifier.width(8.dp))
             }
             TaskCheckbox(checked = todo.done, onToggle = onToggle)
@@ -562,6 +644,7 @@ private fun ManualAddPanel(
     var date by remember { mutableStateOf(defaultDate) }
     var time by remember { mutableStateOf("") }
     var priority by remember { mutableIntStateOf(0) }
+    var showDatePicker by remember { mutableStateOf(false) }
 
     Column(
         Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp)
@@ -569,18 +652,19 @@ private fun ManualAddPanel(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("添加待办", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
-            // AI 提取入口
+            // AI 提取入口(与项目 chip 风格统一:边框 + 半透明底)
             Row(
                 Modifier
                     .clip(RoundedCornerShape(10.dp))
-                    .background(AccentBlue.copy(0.08f))
+                    .border(1.dp, AccentBlue, RoundedCornerShape(10.dp))
+                    .background(AccentBlue.copy(0.10f))
                     .clickable { onSwitchAi() }
-                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                    .padding(horizontal = 12.dp, vertical = 7.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Text("AI 提取", color = AccentBlue, fontSize = 11.sp, fontWeight = FontWeight.Medium)
-                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(13.dp))
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(14.dp))
+                Text("AI 提取", color = AccentBlue, fontSize = 12.sp, fontWeight = FontWeight.Medium)
             }
         }
         Spacer(Modifier.height(16.dp))
@@ -618,18 +702,27 @@ private fun ManualAddPanel(
         )
         Spacer(Modifier.height(12.dp))
 
-        // 日期选择(快捷按钮)
+        // 日期选择(快捷按钮 + 自定义日历)
         Text("日期", color = TextHint, fontSize = 12.sp)
         Spacer(Modifier.height(6.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             val today = LocalDate.now()
-            listOf(
+            val quickDates = listOf(
+                "昨天" to today.minusDays(1),
                 "今天" to today,
                 "明天" to today.plusDays(1),
                 "后天" to today.plusDays(2)
-            ).forEach { (label, d) ->
+            )
+            quickDates.forEach { (label, d) ->
                 DateChip(label = label, selected = date == d) { date = d }
             }
+            // 自定义日期 chip:显示当前选中日期(非快捷),或"选择日期"
+            val isQuick = quickDates.any { it.second == date }
+            val customLabel = if (!isQuick) "${date.monthValue}/${date.dayOfMonth}" else "选择日期"
+            DateChip(label = customLabel, selected = !isQuick) { showDatePicker = true }
         }
         Spacer(Modifier.height(16.dp))
 
@@ -671,14 +764,27 @@ private fun ManualAddPanel(
             modifier = Modifier.fillMaxWidth()
         )
     }
+
+    if (showDatePicker) {
+        DatePickerDialog(
+            initialDate = date,
+            onDismiss = { showDatePicker = false },
+            onConfirm = {
+                date = it
+                showDatePicker = false
+            }
+        )
+    }
 }
 
 /**
  * AI 提取面板(借鉴 Cresto AiInputBox + AiTodoReviewContainer):
  * 文字输入或选图 → AI 提取 → 预览确认 → 批量入库
+ *
+ * 供 TodoScreen 与课表日视图的添加待办弹窗共用。
  */
 @Composable
-private fun AiExtractPanel(
+internal fun AiExtractPanel(
     onDismiss: () -> Unit,
     onConfirm: (List<ScheduleTodo>) -> Unit
 ) {

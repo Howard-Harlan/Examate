@@ -64,7 +64,10 @@ import go.examate.hyp.ui.components.PlainDialog
 import go.examate.hyp.ui.components.PlainDialogButtons
 import go.examate.hyp.ui.components.PlainDialogContent
 import go.examate.hyp.ui.components.PlainDialogTitle
+import go.examate.hyp.ui.theme.SelectedBg
 import go.examate.hyp.ui.theme.BgPrimary
+import go.examate.hyp.ui.theme.GlassChipTint
+import go.examate.hyp.ui.theme.GlassInputTint
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.SurfaceVariant
 import go.examate.hyp.ui.theme.TextHint
@@ -374,7 +377,8 @@ private fun ApiConfigTopBar(
             fontWeight = FontWeight.Medium,
             modifier = Modifier.align(Alignment.Center)
         )
-        // 教程按钮:液态玻璃胶囊
+        // 教程按钮:液态玻璃胶囊(主题色在组合上下文读取,供 onDrawSurface 使用)
+        val tutorialTint = GlassChipTint
         Box(
             Modifier
                 .align(Alignment.CenterEnd)
@@ -386,10 +390,10 @@ private fun ApiConfigTopBar(
                             shape = { Capsule() },
                             effects = { vibrancy(); blur(8f.dp.toPx()) },
                             highlight = { Highlight.Plain },
-                            onDrawSurface = { drawRect(Color.White.copy(0.5f)) }
+                            onDrawSurface = { drawRect(tutorialTint) }
                         )
                     } else {
-                        Modifier.background(Color.White.copy(0.7f))
+                        Modifier.background(tutorialTint)
                     }
                 )
                 .clickable { onTutorial() }
@@ -584,7 +588,7 @@ private fun ApiConfigBottomBar(
                         onDrawSurface = { drawRect(containerColor) }
                     )
                 } else {
-                    Modifier.background(Color.White.copy(0.92f), Capsule())
+                    Modifier.background(GlassInputTint, Capsule())
                 }
             ),
         verticalAlignment = Alignment.CenterVertically,
@@ -776,7 +780,7 @@ private fun EditProviderDialog(
                     Box(
                         Modifier
                             .clip(RoundedCornerShape(8.dp))
-                            .background(if (on) Primary else SurfaceVariant)
+                            .background(if (on) SelectedBg else SurfaceVariant)
                             .clickable { caps = if (on) caps - cap else caps + cap }
                             .padding(horizontal = 16.dp, vertical = 8.dp)
                     ) {

@@ -2,6 +2,7 @@ package go.examate.hyp
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Bundle
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
@@ -10,6 +11,9 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.Toast
+import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewFeature
+import go.examate.hyp.config.PrefsManager
 import go.examate.hyp.util.ToastUtil
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -68,6 +72,17 @@ class ScheduleWebImportActivity : ComponentActivity() {
 
     internal var webView: WebView? = null
     private var extractedJson: String? = null
+
+    /** 当前是否深色模式(与应用主题一致):0跟随系统/1浅色/2深色 */
+    fun isDarkModeActive(): Boolean {
+        val mode = PrefsManager.getInstance(this).themeMode
+        return when (mode) {
+            1 -> false
+            2 -> true
+            else -> (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+                    Configuration.UI_MODE_NIGHT_YES
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -285,6 +300,17 @@ private fun WebImportScreen(
                             settings.domStorageEnabled = true
                             settings.userAgentString = settings.userAgentString.replace("wv", "")
                             webViewClient = WebViewClient()
+                            // WebView 内容跟随深色模式
+                            if ((context as ScheduleWebImportActivity).isDarkModeActive()) {
+                                if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
+                                    WebSettingsCompat.setAlgorithmicDarkeningAllowed(settings, true)
+                                } else if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK)) {
+                                    WebSettingsCompat.setForceDark(settings, WebSettingsCompat.FORCE_DARK_ON)
+                                }
+                                setBackgroundColor(android.graphics.Color.rgb(28, 28, 30))
+                            } else {
+                                setBackgroundColor(android.graphics.Color.WHITE)
+                            }
                             // 注入 JS 接口
                             addJavascriptInterface(
                                 (context as ScheduleWebImportActivity).AndroidBridge(),

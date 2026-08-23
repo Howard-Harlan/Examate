@@ -39,6 +39,7 @@ import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.components.LiquidGlassIconButton
+import go.examate.hyp.ui.theme.SelectedBg
 import go.examate.hyp.ui.theme.Error
 import go.examate.hyp.ui.theme.ErrorBg
 import go.examate.hyp.ui.theme.Primary
@@ -137,7 +138,7 @@ fun GlassTabBar(
                 val active = index == selectedIndex
                 Box(
                     Modifier.weight(1f).clip(RoundedCornerShape(10.dp))
-                        .background(if (active) Primary else Color.Transparent)
+                        .background(if (active) SelectedBg else Color.Transparent)
                         .clickable { onSelect(index) }
                         .padding(vertical = 8.dp),
                     contentAlignment = Alignment.Center

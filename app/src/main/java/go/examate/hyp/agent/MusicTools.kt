@@ -58,11 +58,11 @@ object MusicTools {
             val keyword = args.optString("keyword", "").trim()
                 .ifEmpty { return ToolRegistry.Result(false, "缺少 keyword 参数") }
             val platform = args.optString("platform", "wy").trim().ifEmpty { "wy" }
-            if (platform !in listOf("wy", "kg", "kw")) {
-                return ToolRegistry.Result(false, "不支持的平台: $platform(可选: wy/kg/kw)")
+            if (platform !in listOf("wy", "kg", "kw", "tx", "mg", "bili")) {
+                return ToolRegistry.Result(false, "不支持的平台: $platform(可选: wy/kg/kw/tx/bili)")
             }
             return try {
-                val songs: List<LxSong> = PlatformSearcher.search(platform, keyword)
+                val songs: List<LxSong> = PlatformSearcher.search(context, platform, keyword)
                 if (songs.isEmpty()) {
                     return ToolRegistry.Result(true, "未找到「$keyword」相关歌曲(${platformName(platform)})。")
                 }
@@ -95,7 +95,8 @@ object MusicTools {
             val songmid = args.optString("songmid", "").trim()
                 .ifEmpty { return ToolRegistry.Result(false, "缺少 songmid 参数") }
             return try {
-                val lyric = LxManager(context).resolveLyric(platform, songmid)
+                val song = go.examate.hyp.music.lx.LxSong(platform, songmid, "", "", 0L)
+                val lyric = LxManager(context).resolveLyric(song)
                 if (lyric.isBlank()) {
                     ToolRegistry.Result(true, "未找到歌词")
                 } else {
@@ -203,11 +204,11 @@ object MusicTools {
             val keyword = args.optString("keyword", "").trim()
                 .ifEmpty { return ToolRegistry.Result(false, "缺少 keyword 参数") }
             val platform = args.optString("platform", "wy").trim().ifEmpty { "wy" }
-            if (platform !in listOf("wy", "kg", "kw")) {
-                return ToolRegistry.Result(false, "不支持的平台: $platform(可选: wy/kg/kw)")
+            if (platform !in listOf("wy", "kg", "kw", "tx", "mg", "bili")) {
+                return ToolRegistry.Result(false, "不支持的平台: $platform(可选: wy/kg/kw/tx/bili)")
             }
             return try {
-                val songs: List<LxSong> = PlatformSearcher.search(platform, keyword)
+                val songs: List<LxSong> = PlatformSearcher.search(context, platform, keyword)
                 if (songs.isEmpty()) {
                     return ToolRegistry.Result(false, "未找到「$keyword」相关歌曲(${platformName(platform)})")
                 }

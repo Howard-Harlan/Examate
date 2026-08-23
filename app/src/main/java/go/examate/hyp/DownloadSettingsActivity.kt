@@ -50,6 +50,7 @@ import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.Divider
 import go.examate.hyp.ui.theme.ExamateTheme
+import go.examate.hyp.ui.theme.IsDark
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
@@ -256,8 +257,9 @@ private fun StepperButton(symbol: String, enabled: Boolean, onClick: () -> Unit)
 
 @Composable
 private fun textFieldColors() = TextFieldDefaults.colors(
-    focusedContainerColor = Color.White.copy(0.7f),
-    unfocusedContainerColor = Color.White.copy(0.5f),
+    // 深色模式降白,避免输入框在纯黑背景上过亮
+    focusedContainerColor = Color.White.copy(if (IsDark) 0.12f else 0.7f),
+    unfocusedContainerColor = Color.White.copy(if (IsDark) 0.08f else 0.5f),
     focusedIndicatorColor = AccentBlue,
     unfocusedIndicatorColor = Divider,
     focusedTextColor = TextPrimary,

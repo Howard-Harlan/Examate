@@ -45,6 +45,7 @@ import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.components.LiquidGlassIconButton
+import go.examate.hyp.ui.theme.SelectedBg
 import go.examate.hyp.ui.theme.Error
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.CardBg
@@ -297,7 +298,7 @@ fun AddCoursePage(
                                 val selected = slot.dayOfWeek == d
                                 Box(
                                     Modifier.size(28.dp).clip(RoundedCornerShape(6.dp))
-                                        .background(if (selected) Primary else ScheduleCellBg)
+                                        .background(if (selected) SelectedBg else ScheduleCellBg)
                                         .clickable {
                                             timeSlots = timeSlots.toMutableList().also {
                                                 it[index] = it[index].copy(dayOfWeek = d)
@@ -434,7 +435,7 @@ private fun AddTimeSlotDialog(
                     val selected = day == d
                     Box(
                         Modifier.size(32.dp).clip(RoundedCornerShape(6.dp))
-                            .background(if (selected) Primary else ScheduleCellBg)
+                            .background(if (selected) SelectedBg else ScheduleCellBg)
                             .clickable { day = d },
                         contentAlignment = Alignment.Center
                     ) {

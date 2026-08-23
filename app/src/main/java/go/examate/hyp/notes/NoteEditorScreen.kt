@@ -3,6 +3,8 @@ package go.examate.hyp.notes
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.Crossfade
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -14,12 +16,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -38,13 +45,18 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
@@ -52,31 +64,39 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
+import go.examate.hyp.config.MyConfig
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.components.MarkdownText
+import go.examate.hyp.ui.components.PlainDialog
+import go.examate.hyp.ui.components.PlainDialogButtons
+import go.examate.hyp.ui.components.PlainDialogContent
+import go.examate.hyp.ui.components.PlainDialogTitle
 import go.examate.hyp.ui.theme.AccentBlue
+import go.examate.hyp.ui.theme.Divider
+import go.examate.hyp.ui.theme.GlassChipTint
+import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.SelectedBg
+import go.examate.hyp.ui.theme.SurfaceVariant
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
+import go.examate.hyp.util.HttpUtils
 import go.examate.hyp.util.ToastUtil
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
- * 笔记编辑器 — 标题 + 正文(Markdown) + 顶栏预览切换 + 底部 Markdown 快捷工具栏。
+ * 笔记编辑器(重做版) — 顶栏分段切换(编辑/预览)+ 纸张感编辑区 + 沉浸阅读预览。
  *
- * 设计参考 Bear / Obsidian 等优秀笔记软件:
- * - 顶栏:返回 + 动态标题 + 保存 + 编辑/预览切换
- * - 编辑区:无边框标题(大字) + 无边框正文,视觉干净专注内容
- * - 底部工具栏:可横向滚动的 Markdown 快捷键(标题/加粗/斜体/列表/引用/代码/链接/图片/音频)
- *
- * - 插入图片:OpenDocument(image) → copyAsset → 光标处插入 `![](assets/xxx)`
- * - 插入音频:OpenDocument(audio) → copyAsset → 光标处插入 `[audio](assets/xxx)`
- * - 预览模式:MarkdownText 渲染正文;图片用 AsyncImage,音频显示可点击播放条
- * - 保存:新建用 [NoteStorage.createNote],编辑用 [NoteStorage.saveNote];返回时自动保存
- *
- * @param noteId 笔记 id;null 表示新建
- * @param onBack 返回回调(已自动保存)
+ * - 顶栏:返回 + 中央"编辑/预览"分段控件(Crossfade 过渡)+ 保存
+ * - 编辑:标题 + 正文落在带横线的纸张卡片上,底部 Markdown 快捷工具栏 + AI
+ * - 预览:大标题 + 元信息(时间/字数/阅读时长)+ 排版化 Markdown 正文,图片圆角带说明
  */
 @Composable
 fun NoteEditorScreen(
@@ -86,9 +106,74 @@ fun NoteEditorScreen(
     val context = LocalContext.current
     var title by remember { mutableStateOf("") }
     var content by remember { mutableStateOf(TextFieldValue("")) }
-    var previewMode by remember { mutableStateOf(false) }
+    // 读写切换:记住上次退出时的状态(读/写)
+    var previewMode by remember { mutableStateOf(NotePrefs.previewMode(context)) }
     var loaded by remember { mutableStateOf(noteId == null) }
     var originalNote by remember { mutableStateOf<NoteStorage.Note?>(null) }
+
+    // ═══ AI 优化/总结 ═══
+    val scope = rememberCoroutineScope()
+    var showAiDialog by remember { mutableStateOf(false) }
+    var aiBusy by remember { mutableStateOf(false) }
+
+    /** 调用第一个可用 provider 对笔记内容做 AI 处理 */
+    fun runAi(mode: String) {
+        val provider = MyConfig.loadProviders(context).firstOrNull {
+            it.visible && it.apiKey.isNotEmpty() && it.requestUrl.isNotEmpty()
+        }
+        if (provider == null) {
+            ToastUtil.show(context, "请先在 API 设置里配置可用的模型")
+            return
+        }
+        if (content.text.isBlank()) {
+            ToastUtil.show(context, "先写点内容再让 AI 处理吧")
+            return
+        }
+        aiBusy = true
+        val systemPrompt = when (mode) {
+            "summarize" -> "你是笔记助手。请把用户笔记总结为简洁的要点(保留 Markdown 格式),直接输出总结内容,不要客套话。"
+            else -> "你是笔记助手。请优化用户笔记的表述与结构,使其更清晰、更有条理(保留 Markdown 格式)。直接输出优化后的完整笔记内容,不要客套话。"
+        }
+        val userInput = if (mode == "summarize") {
+            "请总结以下笔记:\n\n${content.text}"
+        } else {
+            "请优化以下笔记:\n\n${content.text}"
+        }
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                HttpUtils.sendPostRequestResult(
+                    provider.requestUrl,
+                    provider.modelId,
+                    userInput,
+                    provider.apiKey,
+                    systemPrompt,
+                    provider.enableThinking,
+                    provider.endpointType ?: "chat"
+                )
+            }
+            aiBusy = false
+            val text = when (result) {
+                is go.examate.hyp.util.ApiResult.Success ->
+                    HttpUtils.extractContent(result.data, provider.endpointType ?: "chat")
+                else -> ""
+            }
+            if (text.isBlank()) {
+                ToastUtil.show(context, "AI 处理失败,请检查网络或模型配置")
+            } else if (mode == "summarize") {
+                val block = "\n\n## AI 总结\n$text\n"
+                content = if (content.text.contains("## AI 总结")) {
+                    content
+                } else {
+                    insertAtCursor(content, block)
+                }
+                ToastUtil.show(context, "AI 总结已插入")
+            } else {
+                content = TextFieldValue(text.trim())
+                ToastUtil.show(context, "AI 优化完成,可预览或继续编辑")
+            }
+            showAiDialog = false
+        }
+    }
 
     // 加载已有笔记内容
     LaunchedEffect(noteId) {
@@ -132,7 +217,6 @@ fun NoteEditorScreen(
     fun saveAndBack() {
         val t = title.trim()
         val c = content.text
-        // 内容全空:直接返回,不创建空笔记
         if (t.isEmpty() && c.isBlank()) {
             onBack(); return
         }
@@ -147,7 +231,7 @@ fun NoteEditorScreen(
     }
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        // ═══ 顶栏:返回 + 标题 + 预览切换 + 保存 ═══
+        // ═══ 顶栏:返回 + 分段切换 + 保存 ═══
         Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)) {
             LiquidGlassIconButton(
                 icon = Icons.AutoMirrored.Filled.ArrowBack,
@@ -155,33 +239,21 @@ fun NoteEditorScreen(
                 onClick = { saveAndBack() },
                 modifier = Modifier.size(40.dp).align(Alignment.CenterStart)
             )
-            Text(
-                if (noteId == null) "新建笔记" else title.ifEmpty { "编辑笔记" },
-                color = TextPrimary,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            // 中央分段控件:编辑 / 预览
+            ModeSegment(
+                previewMode = previewMode,
+                onToggle = {
+                    previewMode = it
+                    NotePrefs.setPreviewMode(context, it)
+                },
                 modifier = Modifier.align(Alignment.Center)
             )
-            Row(
-                Modifier.align(Alignment.CenterEnd),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                LiquidGlassIconButton(
-                    icon = if (previewMode) Icons.Filled.Edit else Icons.Filled.Visibility,
-                    contentDescription = if (previewMode) "编辑" else "预览",
-                    onClick = { previewMode = !previewMode },
-                    modifier = Modifier.size(40.dp)
-                )
-                LiquidGlassIconButton(
-                    icon = Icons.Filled.Save,
-                    contentDescription = "保存",
-                    onClick = { saveAndBack() },
-                    modifier = Modifier.size(40.dp)
-                )
-            }
+            LiquidGlassIconButton(
+                icon = Icons.Filled.Save,
+                contentDescription = "保存",
+                onClick = { saveAndBack() },
+                modifier = Modifier.size(40.dp).align(Alignment.CenterEnd)
+            )
         }
 
         if (!loaded) {
@@ -191,129 +263,307 @@ fun NoteEditorScreen(
             return@Column
         }
 
-        // ═══ 正文区:编辑 / 预览 ═══
-        if (previewMode) {
-            NotePreview(
-                title = title,
-                content = content.text,
-                modifier = Modifier.weight(1f).fillMaxWidth()
-            )
-        } else {
-            Column(
-                Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // 标题:无边框大字,视觉突出
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    placeholder = { Text("标题", color = TextHint, fontSize = 20.sp, fontWeight = FontWeight.Bold) },
-                    singleLine = true,
-                    textStyle = androidx.compose.ui.text.TextStyle(
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = TextPrimary
-                    ),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = Color.Transparent,
-                        unfocusedContainerColor = Color.Transparent,
-                        focusedBorderColor = Color.Transparent,
-                        unfocusedBorderColor = Color.Transparent
-                    ),
-                    modifier = Modifier.fillMaxWidth()
+        // ═══ 正文区:编辑 / 预览(Crossfade 过渡) ═══
+        Crossfade(targetState = previewMode, label = "note_mode") { isPreview ->
+            if (isPreview) {
+                NotePreview(
+                    title = title,
+                    content = content.text,
+                    updatedAt = originalNote?.updatedAt ?: System.currentTimeMillis(),
+                    modifier = Modifier.fillMaxSize()
                 )
-                // 正文:无边框,占满剩余空间
-                OutlinedTextField(
-                    value = content,
-                    onValueChange = { content = it },
-                    placeholder = { Text("开始书写…（支持 Markdown）", color = TextHint, fontSize = 15.sp) },
-                    textStyle = androidx.compose.ui.text.TextStyle(
-                        fontSize = 15.sp,
-                        lineHeight = 22.sp,
-                        color = TextPrimary
-                    ),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = Color.Transparent,
-                        unfocusedContainerColor = Color.Transparent,
-                        focusedBorderColor = Color.Transparent,
-                        unfocusedBorderColor = Color.Transparent
-                    ),
-                    modifier = Modifier.fillMaxWidth().weight(1f)
+            } else {
+                NoteEditPaper(
+                    title = title,
+                    onTitleChange = { title = it },
+                    content = content,
+                    onContentChange = { content = it },
+                    modifier = Modifier.fillMaxSize()
                 )
             }
         }
 
-        // ═══ 底部 Markdown 快捷工具栏(仅编辑模式显示,可横向滚动) ═══
+        // ═══ 底部 Markdown 快捷工具栏(仅编辑模式显示) ═══
         if (!previewMode) {
             MarkdownShortcutBar(
                 onInsert = { insertion -> content = insertAtCursor(content, insertion) },
                 onWrap = { prefix, suffix -> content = wrapSelection(content, prefix, suffix) },
                 onInsertImage = { imagePicker.launch(arrayOf("image/*")) },
-                onInsertAudio = { audioPicker.launch(arrayOf("audio/*")) }
+                onInsertAudio = { audioPicker.launch(arrayOf("audio/*")) },
+                onAi = { showAiDialog = true }
+            )
+        }
+    }
+
+    // ═══ AI 优化/总结弹窗 ═══
+    if (showAiDialog) {
+        PlainDialog(onDismissRequest = { if (!aiBusy) showAiDialog = false }) {
+            PlainDialogTitle("AI 笔记助手")
+            PlainDialogContent(
+                if (aiBusy) "正在处理笔记,请稍候…"
+                else "总结:提炼笔记要点,插入到正文末尾。\n优化:润色表述与结构,覆盖正文。"
+            )
+            if (aiBusy) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    CircularProgressIndicator(color = AccentBlue, modifier = Modifier.size(28.dp))
+                }
+            }
+            PlainDialogButtons(
+                buttons = listOf(
+                    Triple("AI 总结", true) { runAi("summarize") },
+                    Triple("AI 优化", true) { runAi("optimize") },
+                    Triple("取消", false) { showAiDialog = false }
+                )
             )
         }
     }
 }
 
-// ═══ 预览模式 ═══
+// ═══ 顶栏分段控件 ═══
 
-/** 预览页:标题 + Markdown 正文(图片用 AsyncImage,音频显示可点击播放条) */
+/** "编辑/预览"分段切换:胶囊底 + 选中高亮 */
 @Composable
-private fun NotePreview(title: String, content: String, modifier: Modifier = Modifier) {
+private fun ModeSegment(
+    previewMode: Boolean,
+    onToggle: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(SurfaceVariant)
+            .padding(3.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        SegmentOption(
+            icon = Icons.Filled.Edit,
+            label = "编辑",
+            selected = !previewMode,
+            onClick = { onToggle(false) }
+        )
+        SegmentOption(
+            icon = Icons.Filled.Visibility,
+            label = "预览",
+            selected = previewMode,
+            onClick = { onToggle(true) }
+        )
+    }
+}
+
+@Composable
+private fun SegmentOption(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(17.dp))
+            .background(if (selected) SelectedBg else Color.Transparent)
+            .clickable { onClick() }
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Icon(
+            icon,
+            contentDescription = label,
+            tint = if (selected) Color.White else TextSecondary,
+            modifier = Modifier.size(14.dp)
+        )
+        Text(
+            label,
+            color = if (selected) Color.White else TextSecondary,
+            fontSize = 12.sp,
+            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal
+        )
+    }
+}
+
+// ═══ 编辑模式:纸张感编辑区 ═══
+
+/** 编辑纸张:标题 + 正文,浅横线作行参照 */
+@Composable
+private fun NoteEditPaper(
+    title: String,
+    onTitleChange: (String) -> Unit,
+    content: TextFieldValue,
+    onContentChange: (TextFieldValue) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val lineColor = TextPrimary.copy(alpha = 0.045f)
+    Box(modifier) {
+        // 纸张横线:装饰性行参照,固定间距
+        Canvas(Modifier.fillMaxSize()) {
+            val spacing = 28.dp.toPx()
+            var y = spacing
+            while (y < size.height) {
+                drawLine(lineColor, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
+                y += spacing
+            }
+        }
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 22.dp)
+                .padding(top = 8.dp, bottom = 24.dp)
+        ) {
+            BasicTextField(
+                value = title,
+                onValueChange = onTitleChange,
+                textStyle = TextStyle(
+                    fontSize = 24.sp,
+                    lineHeight = 34.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TextPrimary
+                ),
+                cursorBrush = SolidColor(AccentBlue),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                decorationBox = { inner ->
+                    Box {
+                        if (title.isEmpty()) {
+                            Text("标题", color = TextHint, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                        }
+                        inner()
+                    }
+                }
+            )
+            Spacer(Modifier.height(10.dp))
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Divider))
+            Spacer(Modifier.height(12.dp))
+            BasicTextField(
+                value = content,
+                onValueChange = onContentChange,
+                textStyle = TextStyle(
+                    fontSize = 16.sp,
+                    lineHeight = 28.sp,
+                    color = TextPrimary
+                ),
+                cursorBrush = SolidColor(AccentBlue),
+                modifier = Modifier.fillMaxWidth(),
+                decorationBox = { inner ->
+                    Box {
+                        if (content.text.isEmpty()) {
+                            Text("开始书写…（支持 Markdown，右下工具栏可插入图片与音频）", color = TextHint, fontSize = 15.sp, lineHeight = 28.sp)
+                        }
+                        inner()
+                    }
+                }
+            )
+        }
+    }
+}
+
+// ═══ 预览模式:沉浸阅读 ═══
+
+/** 预览页:大标题 + 元信息 + 排版化正文(图片圆角带说明,音频播放条) */
+@Composable
+private fun NotePreview(
+    title: String,
+    content: String,
+    updatedAt: Long,
+    modifier: Modifier = Modifier
+) {
     val context = LocalContext.current
     val segments = remember(content) { parsePreviewSegments(content) }
+    val previewTheme = remember {
+        NOTE_PREVIEW_THEMES[NotePrefs.previewThemeIndex(context).coerceIn(0, NOTE_PREVIEW_THEMES.size - 1)]
+    }
+    val charCount = content.replace(Regex("\\s"), "").length
+    val readMinutes = (charCount / 400 + 1).coerceAtLeast(1)
+    val metaTime = remember(updatedAt) {
+        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(updatedAt))
+    }
+
     Column(
         modifier
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(horizontal = 24.dp)
+            .padding(top = 12.dp, bottom = 48.dp)
     ) {
         if (title.isNotBlank()) {
-            Text(title, color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Text(title, color = TextPrimary, fontSize = 26.sp, lineHeight = 34.sp, fontWeight = FontWeight.Bold)
+        } else {
+            Text("无标题", color = TextHint, fontSize = 26.sp, fontWeight = FontWeight.Bold)
         }
-        segments.forEach { seg ->
-            when (seg) {
-                is PreviewSegment.Image -> {
-                    val file = File(context.filesDir, "notes/${seg.path}")
-                    if (file.exists()) {
-                        AsyncImage(
-                            model = file,
-                            contentDescription = seg.alt,
-                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
-                        )
-                    } else {
-                        Text("📷 图片缺失: ${seg.path}", color = TextHint, fontSize = 12.sp)
-                    }
-                }
-                is PreviewSegment.Audio -> {
-                    val file = File(context.filesDir, "notes/${seg.path}")
-                    AudioBar(filename = file.name, playable = file.exists(), onClick = {
-                        if (file.exists()) {
-                            runCatching {
-                                val uri = FileProvider.getUriForFile(
-                                    context,
-                                    "${context.packageName}.fileprovider",
-                                    file
-                                )
-                                val intent = Intent(Intent.ACTION_VIEW).apply {
-                                    setDataAndType(uri, "audio/*")
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        Spacer(Modifier.height(10.dp))
+        Text(
+            "$metaTime · $charCount 字 · 约 $readMinutes 分钟",
+            color = TextHint,
+            fontSize = 11.sp
+        )
+        Spacer(Modifier.height(14.dp))
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Divider))
+        Spacer(Modifier.height(18.dp))
+
+        if (segments.isEmpty() || content.isBlank()) {
+            Text("这里还是空的,切到编辑开始书写吧 ✍️", color = TextHint, fontSize = 13.sp)
+        } else {
+            SelectionContainer {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    segments.forEach { seg ->
+                        when (seg) {
+                            is PreviewSegment.Image -> {
+                                val file = File(context.filesDir, "notes/${seg.path}")
+                                if (file.exists()) {
+                                    AsyncImage(
+                                        model = file,
+                                        contentDescription = seg.alt,
+                                        contentScale = ContentScale.Fit,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(max = 360.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                    )
+                                    if (seg.alt.isNotBlank()) {
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(seg.alt, color = TextHint, fontSize = 11.sp, lineHeight = 16.sp)
+                                    }
+                                } else {
+                                    Text("📷 图片缺失: ${seg.path}", color = TextHint, fontSize = 12.sp)
                                 }
-                                context.startActivity(Intent.createChooser(intent, "播放音频"))
-                            }.onFailure {
-                                ToastUtil.show(context, "无法打开音频文件")
                             }
-                        } else {
-                            ToastUtil.show(context, "音频文件不存在")
+                            is PreviewSegment.Audio -> {
+                                val file = File(context.filesDir, "notes/${seg.path}")
+                                AudioBar(filename = file.name, playable = file.exists(), onClick = {
+                                    if (file.exists()) {
+                                        runCatching {
+                                            val uri = FileProvider.getUriForFile(
+                                                context,
+                                                "${context.packageName}.fileprovider",
+                                                file
+                                            )
+                                            val intent = Intent(Intent.ACTION_VIEW).apply {
+                                                setDataAndType(uri, "audio/*")
+                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            }
+                                            context.startActivity(Intent.createChooser(intent, "播放音频"))
+                                        }.onFailure {
+                                            ToastUtil.show(context, "无法打开音频文件")
+                                        }
+                                    } else {
+                                        ToastUtil.show(context, "音频文件不存在")
+                                    }
+                                })
+                            }
+                            is PreviewSegment.Text -> {
+                                if (seg.text.isNotBlank()) {
+                                    MarkdownText(
+                                        markdown = seg.text,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        fontSize = previewTheme.fontSize,
+                                        fontFamily = previewTheme.fontFamily,
+                                        lineHeightExtra = previewTheme.lineHeightExtra
+                                    )
+                                }
+                            }
                         }
-                    })
-                }
-                is PreviewSegment.Text -> {
-                    if (seg.text.isNotBlank()) {
-                        MarkdownText(
-                            markdown = seg.text,
-                            modifier = Modifier.fillMaxWidth()
-                        )
                     }
                 }
             }
@@ -373,46 +623,45 @@ private fun wrapSelection(
     val selText = current.text.substring(start, end)
     val newText = current.text.substring(0, start) + prefix + selText + suffix + current.text.substring(end)
     return if (selText.isEmpty()) {
-        // 无选中:光标放 prefix 后,方便直接输入
         TextFieldValue(text = newText, selection = TextRange(start + prefix.length))
     } else {
-        // 有选中:光标选中包裹后的整段
         TextFieldValue(text = newText, selection = TextRange(start, end + prefix.length + suffix.length))
     }
 }
 
 // ════════════════════════════════════════
-//  Markdown 快捷工具栏
+//  Markdown 快捷工具栏(含 AI)
 // ════════════════════════════════════════
 
-/**
- * Markdown 快捷工具栏 — 可横向滚动的按钮组,参考 Bear / Obsidian 的格式栏设计。
- *
- * 按钮分两类:
- * - [onInsert]:直接在光标处插入文本(标题/列表/引用/链接/分割线等块级格式)
- * - [onWrap]:用前后缀包裹选中文本(加粗/斜体/行内代码等内联格式)
- * - 图片/音频:走系统文件选择器,插入对应 Markdown 语法
- *
- * @param onInsert (插入文本) -> Unit
- * @param onWrap (前缀, 后缀) -> Unit
- * @param onInsertImage 启动图片选择器
- * @param onInsertAudio 启动音频选择器
- */
 @Composable
 private fun MarkdownShortcutBar(
     onInsert: (String) -> Unit,
     onWrap: (String, String) -> Unit,
     onInsertImage: () -> Unit,
-    onInsertAudio: () -> Unit
+    onInsertAudio: () -> Unit,
+    onAi: () -> Unit
 ) {
     Row(
         Modifier
             .fillMaxWidth()
             .horizontalScroll(rememberScrollState())
+            .navigationBarsPadding()
             .padding(horizontal = 12.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        // AI 助手(与格式操作同排)
+        Box(
+            Modifier
+                .height(38.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(AccentBlue.copy(alpha = 0.12f))
+                .clickable { onAi() }
+                .padding(horizontal = 12.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("AI", color = AccentBlue, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        }
         // 标题 H1 / H2 / H3
         MarkdownShortcutButton(text = "H1", onClick = { onInsert("\n# ") })
         MarkdownShortcutButton(text = "H2", onClick = { onInsert("\n## ") })
@@ -456,7 +705,7 @@ private fun MarkdownShortcutButton(
         Modifier
             .size(38.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(Color.White.copy(alpha = 0.6f))
+            .background(GlassChipTint)
             .clickable { onClick() },
         contentAlignment = Alignment.Center
     ) {
@@ -481,7 +730,7 @@ private fun ShortcutIconButton(
         Modifier
             .size(38.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(Color.White.copy(alpha = 0.6f))
+            .background(GlassChipTint)
             .clickable { onClick() },
         contentAlignment = Alignment.Center
     ) {
@@ -501,7 +750,6 @@ private sealed class PreviewSegment {
  */
 private fun parsePreviewSegments(content: String): List<PreviewSegment> {
     val segments = mutableListOf<PreviewSegment>()
-    // 匹配:![alt](path) 图片 | [audio](path) 音频 | ::audio[](path) 音频
     val regex = Regex("!?\\[[^]]*\\]\\([^)]+\\)|::audio\\[[^]]*\\]\\([^)]+\\)")
     var lastEnd = 0
     regex.findAll(content).forEach { match ->

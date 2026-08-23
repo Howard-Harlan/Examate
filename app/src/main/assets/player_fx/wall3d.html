@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<meta name="player-theme-mode" content="player"/>
+<meta name="player-theme-close" content="none"/>
+<title>3D 歌单墙</title>
+<link rel="stylesheet" href="wall3d_style.css"/>
+</head>
+<body>
+
+<div id="bg"></div>
+<canvas id="stars"></canvas>
+<div id="bg-custom" style="position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;"></div>
+<div id="bg-dim"></div>
+<div id="grain"></div>
+<div id="vignette"></div>
+<div id="wall">
+  <div id="bigcard" style="display:none">
+    <div id="lyrics" style="display:none">
+      <div class="ly-top"></div>
+      <div class="ly-bottom"></div>
+    </div>
+    <button id="bc-x" aria-label="close" title="关闭">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+    <div class="bc-inner">
+      <div class="bc-cover"><img id="bc-img" alt="" draggable="false"/></div>
+      <div class="bc-meta">
+        <div class="bc-title" id="bc-title"></div>
+        <div class="bc-artist" id="bc-artist"></div>
+      </div>
+      <div class="bc-controls">
+        <div class="bc-g1">
+          <button type="button" class="bc-ctrl" id="bc-prev" aria-label="prev">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+          <button type="button" class="bc-play" id="bc-play" aria-label="play"></button>
+          <button type="button" class="bc-ctrl" id="bc-next" aria-label="next">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+          </button>
+        </div>
+        <div class="bc-g2">
+          <button type="button" class="bc-ctrl" id="bc-like" aria-label="like">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+          </button>
+          <button type="button" class="bc-ctrl" id="bc-lyrics" aria-label="歌词" title="歌词" aria-pressed="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 8-9.04 9.06a2.82 2.82 0 1 0 3.98 3.98L16 12"/><circle cx="17" cy="7" r="5"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="hint">拖拽平移 · 滚轮浏览 · 点击卡片展开</div>
+
+<button id="close-btn" aria-label="关闭" style="position:fixed;top:max(16px,env(safe-area-inset-top));right:16px;z-index:60;width:40px;height:40px;border:0;border-radius:50%;background:rgba(255,255,255,.1);color:rgba(255,255,255,.85);cursor:pointer;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:grid;place-items:center;transition:background .15s,color .15s;">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+</button>
+
+<div id="empty">
+  <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15V6"/><path d="M18.5 18a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"/><path d="M12 12H3"/><path d="M16 6H3"/><path d="M12 18H3"/></svg>
+  <div class="e-t">还没有歌曲</div>
+  <div class="e-s">在播放页加入歌曲后,点亮你的 3D 音乐墙</div>
+</div>
+
+<div id="player">
+  <img id="p-cover" alt=""/>
+  <div class="pmeta">
+    <div class="pt" id="p-title"></div>
+    <div class="pa" id="p-artist"></div>
+  </div>
+  <div class="ptime" id="p-time">0:00 / 0:00</div>
+  <div class="pbar" id="p-bar"><i id="p-bar-fill"></i></div>
+  <button id="p-toggle" aria-label="pause">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+  </button>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+ * 3D 歌单墙 — 桥接版(原 style-reference-empty.html 移植)
+ * 数据/播放/歌词/收藏均走原生桥接,本页只负责 3D 布局与样式。
+ * Native→Page: window.__setTracks / __setCover / __onPlayerEvent
+ * Page→Native: PlayerBridge.action(JSON.stringify({a,v}))
+ * ═══════════════════════════════════════════════════════════════ */
+
+const wallEl = document.getElementById("wall");
+const bgEl = document.getElementById("bg");
+const bgDimEl = document.getElementById("bg-dim");
+const playerEl = document.getElementById("player");
+const bigcardEl = document.getElementById("bigcard");
+const emptyEl = document.getElementById("empty");
+emptyEl.style.display = "none";
+
+let TRACKS = [];
+const playState = { current: null, playing: false, duration: 0, time: 0, currentId: null };
+let lyricsLines = null;
+let lyricsEnabled = true;
+const likedSet = new Set();
+
+function act(a, v) {
+  try { PlayerBridge.action(JSON.stringify(v === undefined ? { a: a } : { a: a, v: v })); } catch (e) {}
+}
+
+/* ============ Native → Page 接口 ============ */
+window.__setTracks = function (jsonStr) {
+  try {
+    TRACKS = JSON.parse(jsonStr) || [];
+    for (const t of TRACKS) {
+      if (t.hue == null) t.hue = (Math.random() * 360) | 0;
+      if (t.span == null) t.span = 1;
+      if (!t.cover) t.cover = "";
+      if (!t.artist) t.artist = "未知";
+    }
+    rebuildWall();
+    updateEmptyHint();
+    if (playState.currentId) playState.current = TRACKS.find(t => t.id === playState.currentId) || null;
+    syncAll();
+  } catch (e) {}
+};
+
+window.__setCover = function (id, dataUri) {
+  if (!dataUri) return;
+  const t = TRACKS.find(x => x.id === id);
+  if (t) t.cover = dataUri;
+  for (const [key, el] of dom) {
+    if (el.dataset.track === id) {
+      const img = el.querySelector(".cover img");
+      if (img) img.src = dataUri;
+    }
+  }
+  if (bigOpen && playState.current && playState.current.id === id) {
+    const bcImg = document.getElementById("bc-img");
+    if (bcImg) bcImg.src = dataUri;
+  }
+  if (playState.current && playState.current.id === id) {
+    const pCover = document.getElementById("p-cover");
+    if (pCover) pCover.src = dataUri;
+  }
+};
+
+window.__setLiked = function (id, liked) {
+  if (!id) return;
+  if (liked) likedSet.add(id); else likedSet.delete(id);
+  syncAll();
+};
+
+window.__onPlayerEvent = function (jsonStr) {
+  try {
+    const e = JSON.parse(jsonStr);
+    if (typeof e.isPlaying === "boolean") playState.playing = e.isPlaying;
+    if (typeof e.currentId === "string") {
+      playState.currentId = e.currentId;
+      playState.current = TRACKS.find(t => t.id === e.currentId) || null;
+    }
+    if (typeof e.positionMs === "number") playState.time = e.positionMs / 1000;
+    if (typeof e.durationMs === "number") playState.duration = Math.max(0.001, e.durationMs / 1000);
+    if (typeof e.isFavorite === "boolean" && playState.current) {
+      if (e.isFavorite) likedSet.add(playState.current.id); else likedSet.delete(playState.current.id);
+    }
+    if (Array.isArray(e.lyrics)) {
+      lyricsLines = e.lyrics.map(l => ({ time: (l.t || 0) / 1000, text: l.text || "" }));
+      if (bigOpen) showLyrics();
+    }
+    if (typeof e.lyricsEnabled === "boolean") lyricsEnabled = e.lyricsEnabled;
+    syncAll();
+  } catch (err) {}
+};
+
+/* ============ 播放控制(走原生) ============ */
+function playTrack(track) {
+  if (playState.current && playState.current.id === track.id) { act("toggle"); return; }
+  act("play", track.id);
+}
+function togglePlay() { act("toggle"); }
+function next(dir) { act(dir > 0 ? "next" : "prev"); }
+
+/* ============ 环境识别 ============ */
+const isMobile = matchMedia("(pointer: coarse) and (max-width: 1024px)").matches ||
+  /Android/i.test(navigator.userAgent) ||
+  new URLSearchParams(location.search).get("force") === "mobile";
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const liteMode = isMobile || reducedMotion;
+const isAndroid = /Android/i.test(navigator.userAgent);
+if (reducedMotion) document.getElementById("grain").style.display = "none";
+
+const COLS = 8, GAP = 10, PAD = 80;
+let UNIT = innerWidth < 768 ? 144 : 184;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const m = (v, a, b) => clamp(Math.round(v), a, b);
+const fmt = (s) => {
+  if (!isFinite(s) || s <= 0) return "0:00";
+  const min = Math.floor(s / 60), sec = Math.floor(s % 60);
+  return min + ":" + String(sec).padStart(2, "0");
+};
+
+/* ============ 背景呼吸遮罩(随播放状态,无 analyser) ============ */
+function bgDimFrame() {
+  const I = playState.playing ? 0.55 + 0.2 * Math.sin(performance.now() * 0.0015) : 0.1;
+  bgDimEl.style.opacity = (0.22 + (1 - I) * 0.44).toFixed(3);
+  requestAnimationFrame(bgDimFrame);
+}
+requestAnimationFrame(bgDimFrame);
+
+/* ============ 布局 ============ */
+function buildLayout() {
+  const heights = new Array(COLS).fill(0);
+  const cards = [];
+  for (const t of TRACKS) {
+    let col, w;
+    if (t.span === 1) {
+      col = 0;
+      for (let i = 1; i < COLS; i++) if (heights[i] < heights[col]) col = i;
+      w = UNIT - GAP;
+    } else {
+      col = 0;
+      let best = Math.max(heights[0], heights[1]);
+      for (let i = 1; i < COLS - 1; i++) {
+        const mm = Math.max(heights[i], heights[i + 1]);
+        if (mm < best) { best = mm; col = i; }
+      }
+      w = 2 * UNIT - GAP;
+    }
+    const h = Math.round(1.3 * w);
+    const x = col * UNIT, y = t.span === 2 ? Math.max(heights[col], heights[col + 1]) : heights[col];
+    cards.push({ track: t, col, w, h, x, y });
+    const bottom = y + h + GAP;
+    heights[col] = bottom;
+    if (t.span === 2) heights[col + 1] = bottom;
+  }
+  return { cards, tileW: COLS * UNIT, tileH: Math.max(...heights) };
+}
+let layout = buildLayout();
+
+const view = { w: innerWidth, h: innerHeight, cx: innerWidth / 2, cy: innerHeight / 2, a: 0.42 * Math.min(innerWidth, innerHeight) };
+const cam = { nx: 0, ny: 0, ex: 0, ey: 0, vel: { x: 0, y: 0 }, dragging: false, lastX: 0, lastY: 0, lastT: 0, mouse: { x: 0, y: 0 } };
+window.__cam = cam;
+
+function rebuildWall() {
+  layout = buildLayout();
+  cam.nx = cam.ex = -layout.tileW / 2 + view.w / 2;
+  cam.ny = cam.ey = -layout.tileH / 2 + view.h / 2;
+  refreshCards();
+  updateEmptyHint();
+}
+function updateEmptyHint() {
+  emptyEl.style.display = TRACKS.length ? "none" : "flex";
+}
+
+function visibleKeys() {
+  const keys = [];
+  const { cards, tileW, tileH } = layout;
+  for (const c of cards) {
+    const col0 = Math.floor((-c.x - cam.ex - c.w - PAD) / tileW);
+    const col1 = Math.floor((view.w - cam.ex + PAD) / tileW);
+    const row0 = Math.floor((-c.y - cam.ey - c.h - PAD) / tileH);
+    const row1 = Math.floor((view.h - cam.ey + PAD) / tileH);
+    for (let cc = col0; cc <= col1; cc++)
+      for (let rr = row0; rr <= row1; rr++)
+        keys.push({ key: c.track.id + "_" + cc + "_" + rr, card: c, wx: c.x + cc * tileW, wy: c.y + rr * tileH });
+  }
+  return keys;
+}
+
+const SVG = {
+  prev: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
+  next: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>',
+  play: '<svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.8c0-1 1.1-1.6 2-1.1l12 7.2c.9.5.9 1.7 0 2.2L9 20.3c-.9.5-2-.1-2-1.1V4.8z"/></svg>',
+  pause: '<svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>'
+};
+const BC_SIDE = isMobile ? 23 : 16;
+const BC_PLAY = isMobile ? 53 : 35;
+const bcSvg = (name) => {
+  const s = name === "play" || name === "pause" ? Math.round(0.44 * BC_PLAY) : BC_SIDE;
+  const inner = name === "play"
+    ? '<path d="M7 4.8c0-1 1.1-1.6 2-1.1l12 7.2c.9.5.9 1.7 0 2.2L9 20.3c-.9.5-2-.1-2-1.1V4.8z"/>'
+    : name === "pause"
+      ? '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>'
+      : name === "prev"
+        ? '<path d="M15 18l-6-6 6-6"/>'
+        : name === "next"
+          ? '<path d="M9 18l6-6-6-6"/>'
+          : '<path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>';
+  return '<svg width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="' + (name === "heart" ? "none" : "currentColor") + '" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + inner + "</svg>";
+};
+
+const dom = new Map();
+function mountCard(ck) {
+  const t = ck.card.track;
+  const w = ck.card.w;
+  const el = document.createElement("div");
+  el.className = "card" + (liteMode ? " lite" : "");
+  el.style.width = w + "px";
+  el.style.height = ck.card.h + "px";
+  el.style.setProperty("--hue", t.hue);
+  const pad = m(0.055 * w, 8, 14);
+  el.style.setProperty("--pad", pad + "px");
+  el.style.setProperty("--cr", m(pad + 2, 9, 14) + "px");
+  el.style.setProperty("--pb", m(0.2 * w, 30, 44) + "px");
+  el.style.padding = pad + "px";
+  el.style.gap = (pad - 2) + "px";
+  if (isAndroid) {
+    el.style.boxShadow = "0 8px 22px -10px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.45)" + (liteMode ? "" : ", inset 0 1px 0 rgba(255,255,255,.28)");
+  }
+  const icW = m(0.092 * w, 14, 19);
+  const icP = Math.round(0.44 * m(0.2 * w, 30, 44));
+  const ic = (d) => '<svg width="' + icW + '" height="' + icW + '" viewBox="0 0 24 24" fill="' + (d.fill || "none") + '" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' + d.body + "</svg>";
+  const icPlay = '<svg width="' + icP + '" height="' + icP + '" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.8c0-1 1.1-1.6 2-1.1l12 7.2c.9.5.9 1.7 0 2.2L9 20.3c-.9.5-2-.1-2-1.1V4.8z"/></svg>';
+  const icPrev = ic({ body: '<path d="M15 18l-6-6 6-6"/>' });
+  const icNext = ic({ body: '<path d="M9 18l6-6-6-6"/>' });
+  const icHeart = ic({ fill: "none", body: '<path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>' });
+  el.innerHTML =
+    '<div class="cover"><img src="' + (t.cover || "") + '" alt="" loading="lazy" draggable="false" referrerPolicy="no-referrer"/></div>' +
+    '<div class="meta"><div class="title"></div><div class="artist"></div></div>' +
+    '<div class="controls">' +
+      '<button class="ctrl" data-act="prev" aria-label="prev">' + icPrev + '</button>' +
+      '<button class="play" data-act="toggle" aria-label="play">' + icPlay + '</button>' +
+      '<button class="ctrl" data-act="next" aria-label="next">' + icNext + '</button>' +
+      '<button class="ctrl like" data-act="like" aria-label="like">' + icHeart + '</button>' +
+    '</div>';
+  const title = el.querySelector(".title");
+  title.textContent = t.title;
+  title.style.fontSize = m(0.092 * w, 12, 16) + "px";
+  el.querySelector(".artist").textContent = t.artist;
+  el.querySelector(".artist").style.fontSize = m(0.072 * w, 10, 13) + "px";
+  el.querySelector(".cover img").onerror = (e) => { e.target.style.display = "none"; };
+  el.dataset.key = ck.key;
+  el.dataset.track = t.id;
+  applyStyle(el, computeStyle(ck));
+  dom.set(ck.key, el);
+  wallEl.appendChild(el);
+  return el;
+}
+
+function refreshCards() {
+  const keys = visibleKeys();
+  const wanted = new Set();
+  for (const k of keys) {
+    wanted.add(k.key);
+    if (!dom.has(k.key)) mountCard(k);
+  }
+  for (const [key, el] of dom) {
+    if (!wanted.has(key)) { dom.delete(key); el.remove(); }
+  }
+}
+
+function computeStyle(ck) {
+  const cx = ck.wx + cam.ex + ck.card.w / 2;
+  const cy = ck.wy + cam.ey + ck.card.h / 2;
+  const dx = cx - view.cx, dy = cy - view.cy;
+  const d = Math.hypot(dx, dy);
+  const a = view.a;
+  const l = Math.exp(-(d / a) * (d / a));
+  return {
+    x: ck.wx + cam.ex,
+    y: ck.wy + cam.ey,
+    z: -330 + 580 * l,
+    rotX: clamp((dy / a) * 44, -46, 46),
+    rotY: clamp(-(dx / a) * 44, -46, 46),
+    scale: 0.45 + 0.55 * l,
+    blur: (1 - l) * 3.5,
+    opacity: 0.35 + 0.65 * Math.exp(-(d / (2.5 * a)) * (d / (2.5 * a))),
+    lite: l < 0.15
+  };
+}
+
+function applyStyle(el, st) {
+  el.style.transform = "translate3d(" + st.x.toFixed(2) + "px," + st.y.toFixed(2) + "px," + st.z.toFixed(1) + "px) rotateX(" + st.rotX.toFixed(2) + "deg) rotateY(" + st.rotY.toFixed(2) + "deg) scale(" + st.scale.toFixed(3) + ")";
+  el.style.opacity = st.opacity.toFixed(3);
+  el.style.zIndex = Math.round(st.z + 330);
+}
+
+/* ============ UI 同步 ============ */
+const bcImg = document.getElementById("bc-img");
+const bcTitle = document.getElementById("bc-title");
+const bcArtist = document.getElementById("bc-artist");
+const bcPlayBtn = document.getElementById("bc-play");
+const bcLikeBtn = document.getElementById("bc-like");
+const bcLyricsBtn = document.getElementById("bc-lyrics");
+document.getElementById("bc-prev").innerHTML = bcSvg("prev");
+document.getElementById("bc-next").innerHTML = bcSvg("next");
+
+function syncAll() {
+  const cur = playState.current;
+  for (const [key, el] of dom) {
+    const isCur = cur && el.dataset.track === cur.id;
+    const btn = el.querySelector(".play");
+    if (isCur) {
+      btn.classList.add("playing");
+      btn.setAttribute("aria-label", playState.playing ? "pause" : "play");
+      btn.innerHTML = playState.playing ? SVG.pause : SVG.play;
+    } else {
+      btn.classList.remove("playing");
+      btn.setAttribute("aria-label", "play");
+      btn.innerHTML = SVG.play;
+    }
+    const like = el.querySelector(".like");
+    like.classList.toggle("liked", likedSet.has(el.dataset.track));
+  }
+  if (cur) {
+    playerEl.classList.add("visible");
+    playerEl.style.setProperty("--hue", cur.hue);
+    if (cur.cover) document.getElementById("p-cover").src = cur.cover;
+    document.getElementById("p-title").textContent = cur.title;
+    document.getElementById("p-artist").textContent = cur.artist;
+    document.getElementById("p-toggle").innerHTML = playState.playing ? SVG.pause : SVG.play;
+    syncBigCard();
+  } else {
+    playerEl.classList.remove("visible");
+  }
+  syncTime();
+}
+
+function syncBigCard() {
+  const cur = playState.current;
+  if (!cur) return;
+  bigcardEl.style.setProperty("--bc-play", BC_PLAY + "px");
+  if (bcImg.getAttribute("src") !== (cur.cover || "") && cur.cover) bcImg.src = cur.cover;
+  bcTitle.textContent = cur.title;
+  bcArtist.textContent = cur.artist;
+  bcPlayBtn.innerHTML = playState.playing ? bcSvg("pause") : bcSvg("play");
+  bcPlayBtn.setAttribute("aria-label", playState.playing ? "pause" : "play");
+  bcLikeBtn.classList.toggle("liked", likedSet.has(cur.id));
+  bcLikeBtn.innerHTML = bcSvg("heart");
+  bcLyricsBtn.classList.toggle("on", lyricsEnabled);
+  bcLyricsBtn.setAttribute("aria-pressed", lyricsEnabled ? "true" : "false");
+  bcLyricsBtn.style.color = lyricsEnabled ? "hsl(" + cur.hue + " 80% 65%)" : "";
+}
+
+function syncTime() {
+  const t = playState.time, d = playState.duration;
+  document.getElementById("p-time").textContent = fmt(t) + " / " + fmt(d);
+  const p = d > 0 ? Math.max(0, Math.min(1, t / d)) : 0;
+  document.getElementById("p-bar-fill").style.width = (p * 100).toFixed(1) + "%";
+}
+
+/* ============ 歌词(lyricsLines 由原生推送) ============ */
+const lyricsEl = document.getElementById("lyrics");
+const lyTopEl = lyricsEl.querySelector(".ly-top");
+const lyBottomEl = lyricsEl.querySelector(".ly-bottom");
+const LYRIC_GAP = isMobile ? 26 : 30;
+
+function lyricRow(text, u, side) {
+  const row = document.createElement("div");
+  row.className = "ly-row";
+  row.textContent = text;
+  if (isMobile) row.style.fontSize = "16px";
+  row.style.opacity = String(Math.max(0, 1 - 0.22 * u));
+  if (u > 0) {
+    row.style.transform = "translateY(" + (side * u * LYRIC_GAP) + "px) scaleX(" + (1 - 0.06 * u) + ") scaleY(" + (1 - 0.16 * u) + ")";
+    row.style.filter = "blur(" + (0.8 * u) + "px)";
+  }
+  return row;
+}
+
+function renderLyrics() {
+  lyTopEl.textContent = "";
+  lyBottomEl.textContent = "";
+  lyricsEl.style.display = "none";
+  if (!bigOpen || !lyricsEnabled || !lyricsLines || !lyricsLines.length) return;
+  const t = playState.time + 0.12;
+  let d = -1;
+  for (let i = 0; i < lyricsLines.length && lyricsLines[i].time <= t; i++) d = i;
+  if (d < 0) return;
+  const items = [];
+  for (let n = 0; n < 5; n++) {
+    const i = d - n;
+    if (i < 0) break;
+    items.push({ text: lyricsLines[i].text, u: n });
+  }
+  for (const it of items) {
+    lyTopEl.appendChild(lyricRow(it.text, it.u, -1));
+    lyBottomEl.appendChild(lyricRow(it.text, it.u, 1));
+  }
+  lyricsEl.style.display = "";
+}
+function showLyrics() {
+  if (!bigOpen || !lyricsEnabled) { lyricsEl.style.display = "none"; return; }
+  renderLyrics();
+}
+function lyricsTick() {
+  if (bigOpen && lyricsEnabled && lyricsLines && lyricsLines.length) renderLyrics();
+  requestAnimationFrame(lyricsTick);
+}
+requestAnimationFrame(lyricsTick);
+
+/* ============ 展开大卡 ============ */
+let bigOpen = false;
+function bigTarget() { return Math.min(0.85 * view.w, 428); }
+function openBigCard(track, fromRect) {
+  bigOpen = true;
+  syncBigCard();
+  showLyrics();
+  const w = bigTarget(), h = w * 1.3;
+  const cx = view.w / 2, cy = view.h / 2;
+  bigcardEl.style.width = w + "px";
+  bigcardEl.style.height = h + "px";
+  bigcardEl.classList.toggle("lite", liteMode);
+  if (fromRect) {
+    const s0 = fromRect.width / w;
+    bigcardEl.style.transition = "none";
+    bigcardEl.style.opacity = "0.001";
+    bigcardEl.style.transform = "translate3d(" + (fromRect.x + fromRect.width / 2 - w / 2) + "px," + (fromRect.y + fromRect.height / 2 - h / 2) + "px,0) scale(" + Math.max(0.1, s0) + ")";
+    bigcardEl.style.display = "";
+    void bigcardEl.offsetWidth;
+    bigcardEl.style.transition = "";
+    bigcardEl.style.opacity = "1";
+    bigcardEl.style.transform = "translate3d(" + (cx - w / 2) + "px," + (cy - h / 2) + "px,0) scale(1)";
+  } else {
+    bigcardEl.style.transition = "none";
+    bigcardEl.style.opacity = "1";
+    bigcardEl.style.transform = "translate3d(" + (cx - w / 2) + "px," + (cy - h / 2) + "px,0) scale(1)";
+    bigcardEl.style.display = "";
+  }
+}
+function closeBigCard() {
+  if (!bigOpen) return;
+  bigOpen = false;
+  lyricsEl.style.display = "none";
+  const w = bigTarget(), h = w * 1.3;
+  const cx = view.w / 2, cy = view.h / 2;
+  bigcardEl.style.opacity = "0";
+  bigcardEl.style.transform = "translate3d(" + (cx - w / 2) + "px," + (cy - h / 2) + "px,0) scale(0.6)";
+  setTimeout(() => { if (!bigOpen) bigcardEl.style.display = "none"; }, 500);
+}
+
+/* ============ 交互 ============ */
+let press = null;
+let tapHandled = false;
+wallEl.addEventListener("pointerdown", (e) => {
+  if (bigOpen || e.target.closest("button") || e.target.closest("#bigcard")) return;
+  press = { x: e.clientX, y: e.clientY, t: performance.now() };
+  cam.dragging = true;
+  cam.lastX = e.clientX; cam.lastY = e.clientY;
+  cam.lastT = performance.now();
+  cam.vel.x = 0; cam.vel.y = 0;
+  wallEl.classList.add("dragging");
+  wallEl.setPointerCapture(e.pointerId);
+});
+window.addEventListener("pointermove", (e) => {
+  cam.mouse.x = e.clientX / view.w * 2 - 1;
+  cam.mouse.y = e.clientY / view.h * 2 - 1;
+  if (!cam.dragging) return;
+  const dx = e.clientX - cam.lastX, dy = e.clientY - cam.lastY;
+  cam.lastX = e.clientX; cam.lastY = e.clientY;
+  const dt = Math.max(1, performance.now() - cam.lastT);
+  cam.vel.x = dx / dt; cam.vel.y = dy / dt;
+  cam.lastT = performance.now();
+  cam.nx += dx; cam.ny += dy;
+});
+window.addEventListener("pointerup", (e) => {
+  if (!cam.dragging) return;
+  cam.dragging = false;
+  wallEl.classList.remove("dragging");
+  cam.vel.x *= 16; cam.vel.y *= 16;
+  const tap = press && Math.hypot(e.clientX - press.x, e.clientY - press.y) <= 5 && performance.now() - press.t <= 500;
+  press = null;
+  if (tap && !bigOpen) {
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const cardEl = el ? el.closest(".card") : null;
+    if (cardEl) {
+      const track = TRACKS.find((t) => t.id === cardEl.dataset.track);
+      if (track) { tapHandled = true; playTrack(track); openBigCard(track, cardEl.getBoundingClientRect()); }
+    }
+  }
+});
+window.addEventListener("wheel", (e) => {
+  if (bigOpen) return;
+  cam.ny -= e.deltaY; cam.nx -= e.deltaX;
+}, { passive: true });
+
+wallEl.addEventListener("click", (e) => {
+  if (tapHandled && e.detail > 0) { tapHandled = false; return; }
+  const cardEl = e.target.closest(".card");
+  if (!cardEl) return;
+  const track = TRACKS.find((t) => t.id === cardEl.dataset.track);
+  if (!track) return;
+  const btn = e.target.closest("button");
+  if (btn) {
+    if (btn.dataset.act === "toggle") playTrack(track);
+    else if (btn.dataset.act === "like") {
+      const id = cardEl.dataset.track;
+      act("favorite", id);
+    }
+    else if (btn.dataset.act === "prev") act("prev");
+    else if (btn.dataset.act === "next") act("next");
+    return;
+  }
+  if (press && (Math.hypot(e.clientX - press.x, e.clientY - press.y) > 5 || performance.now() - press.t > 500)) return;
+  const rect = cardEl.getBoundingClientRect();
+  if (!playState.current || playState.current.id !== track.id) act("play", track.id);
+  openBigCard(track, rect);
+});
+
+document.getElementById("bc-x").addEventListener("click", closeBigCard);
+bcLyricsBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  lyricsEnabled = !lyricsEnabled;
+  bcLyricsBtn.setAttribute("aria-pressed", lyricsEnabled ? "true" : "false");
+  syncBigCard();
+  showLyrics();
+});
+window.addEventListener("keydown", (e) => { if (e.key === "Escape") closeBigCard(); });
+
+bcPlayBtn.addEventListener("click", (e) => { e.stopPropagation(); togglePlay(); });
+document.getElementById("bc-prev").addEventListener("click", (e) => { e.stopPropagation(); next(-1); });
+document.getElementById("bc-next").addEventListener("click", (e) => { e.stopPropagation(); next(1); });
+bcLikeBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const cur = playState.current;
+  if (!cur) return;
+  act("favorite", cur.id);
+});
+playerEl.addEventListener("click", (e) => {
+  if (e.target.closest("button") || e.target.closest("#p-bar")) return;
+  if (!playState.current) return;
+  openBigCard(playState.current, playerEl.getBoundingClientRect());
+});
+document.getElementById("p-toggle").addEventListener("click", togglePlay);
+document.getElementById("p-bar").addEventListener("click", (e) => {
+  if (!playState.duration) return;
+  const r = e.currentTarget.getBoundingClientRect();
+  act("seek", Math.floor(((e.clientX - r.left) / r.width) * playState.duration * 1000));
+});
+
+window.addEventListener("resize", () => {
+  const w0 = view.w;
+  view.w = innerWidth; view.h = innerHeight;
+  view.cx = innerWidth / 2; view.cy = innerHeight / 2;
+  view.a = 0.42 * Math.min(innerWidth, innerHeight);
+  if ((w0 < 768) !== (innerWidth < 768)) {
+    UNIT = innerWidth < 768 ? 144 : 184;
+    rebuildWall();
+  } else {
+    cam.nx = cam.ex = -layout.tileW / 2 + view.w / 2;
+    cam.ny = cam.ey = -layout.tileH / 2 + view.h / 2;
+  }
+  if (bigOpen) {
+    const w2 = bigTarget(), h2 = w2 * 1.3;
+    bigcardEl.style.width = w2 + "px";
+    bigcardEl.style.height = h2 + "px";
+    bigcardEl.style.transform = "translate3d(" + (view.w / 2 - w2 / 2) + "px," + (view.h / 2 - h2 / 2) + "px,0) scale(1)";
+  }
+});
+
+/* ============ 主循环 ============ */
+function frame() {
+  if (!cam.dragging) {
+    if (Math.abs(cam.vel.x) > 0.05 || Math.abs(cam.vel.y) > 0.05) {
+      cam.nx += cam.vel.x; cam.ny += cam.vel.y;
+      cam.vel.x *= 0.92; cam.vel.y *= 0.92;
+    } else { cam.vel.x = 0; cam.vel.y = 0; }
+  }
+  cam.ex += (cam.nx - cam.ex) * 0.15;
+  cam.ey += (cam.ny - cam.ey) * 0.15;
+  bgEl.style.transform = "translate3d(" + ((-24 * cam.mouse.x).toFixed(2)) + "px," + ((-24 * cam.mouse.y).toFixed(2)) + "px,0)";
+  for (const item of viewCache) {
+    const el = dom.get(item.key);
+    if (el) applyStyle(el, computeStyle(item));
+  }
+  requestAnimationFrame(frame);
+}
+let viewCache = [];
+let refreshAcc = 0;
+function refreshLoop() {
+  if (++refreshAcc >= 3) { refreshAcc = 0; viewCache = visibleKeys(); refreshCards(); }
+  requestAnimationFrame(refreshLoop);
+}
+requestAnimationFrame(frame);
+requestAnimationFrame(refreshLoop);
+
+/* ============ 背景预设/自定义(原生推送) ============ */
+window.__setBgPreset = function (preset) {
+  const bg = document.getElementById("bg");
+  document.getElementById("bg-custom").innerHTML = "";
+  const map = {
+    space: "radial-gradient(120% 90% at 50% 40%, rgba(40,80,160,0.18), rgba(0,0,0,0.95) 70%)",
+    black: "#000000",
+    navy: "radial-gradient(120% 90% at 50% 40%, rgba(27,58,107,0.35), rgba(5,11,22,0.98) 70%)",
+    plum: "radial-gradient(120% 90% at 50% 40%, rgba(107,27,90,0.30), rgba(15,5,18,0.98) 70%)"
+  };
+  bg.style.background = map[preset] || map.space;
+};
+window.__setBg = function (jsonStr) {
+  try {
+    const e = JSON.parse(jsonStr);
+    const c = document.getElementById("bg-custom");
+    if (e.type === "image") {
+      c.innerHTML = '<img src="' + e.src + '" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;"/>';
+    } else if (e.type === "video") {
+      c.innerHTML = '<video src="' + e.src + '" autoplay muted loop playsinline webkit-playsinline style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;"/>';
+    } else {
+      c.innerHTML = "";
+    }
+  } catch (err) {}
+};
+
+document.getElementById("close-btn").addEventListener("click", () => act("close"));
+
+/* ============ 粒子星空背景 ============ */
+(function () {
+  var cv = document.getElementById("stars");
+  if (!cv) return;
+  var ctx = cv.getContext("2d");
+  var stars = [];
+  function resize() {
+    cv.width = window.innerWidth;
+    cv.height = window.innerHeight;
+    stars = [];
+    var n = Math.min(140, Math.floor(cv.width * cv.height / 7000));
+    for (var i = 0; i < n; i++) {
+      stars.push({
+        x: Math.random() * cv.width, y: Math.random() * cv.height,
+        r: Math.random() * 1.3 + 0.3, a: Math.random() * Math.PI * 2,
+        s: Math.random() * 0.015 + 0.004, drift: Math.random() * 0.15 + 0.05
+      });
+    }
+  }
+  function draw() {
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    for (var i = 0; i < stars.length; i++) {
+      var st = stars[i];
+      st.a += st.s;
+      st.y += st.drift * 0.3;
+      if (st.y > cv.height + 5) { st.y = -5; st.x = Math.random() * cv.width; }
+      var alpha = 0.25 + Math.abs(Math.sin(st.a)) * 0.55;
+      ctx.beginPath();
+      ctx.arc(st.x, st.y, st.r, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255,255,255," + alpha + ")";
+      ctx.fill();
+    }
+    requestAnimationFrame(draw);
+  }
+  window.addEventListener("resize", resize);
+  resize();
+  draw();
+})();
+
+/* ============ 就绪:通知原生推数据 ============ */
+act("ready");
+</script>
+</body>
+</html>

@@ -59,7 +59,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalDensity
 import go.examate.hyp.ui.anim.Motion
@@ -91,6 +90,8 @@ import go.examate.hyp.ui.components.LocalGlassBackdrop
 import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.BgPrimary
 import go.examate.hyp.ui.theme.ExamateTheme
+import go.examate.hyp.ui.theme.GlassChipTint
+import go.examate.hyp.ui.theme.GlassInputTint
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.util.AvatarHelper
@@ -296,10 +297,11 @@ private fun ChatScreen(onBack: () -> Unit) {
                             onSaveToNote = { content ->
                                 val ctx = context
                                 kotlin.concurrent.thread {
-                                    val notesDir = java.io.File(ctx.filesDir, "notes").apply { mkdirs() }
-                                    val file = java.io.File(notesDir, "saved_${System.currentTimeMillis()}.md")
-                                    file.writeText(content)
-                                    go.examate.hyp.util.ToastUtil.show(ctx, "已保存到笔记: ${file.name}")
+                                    // 保存为真正的笔记(进入笔记页面),而非落一个孤立文件
+                                    val title = content.lineSequence().firstOrNull { it.isNotBlank() }
+                                        ?.trim()?.take(20) ?: "AI 对话笔记"
+                                    go.examate.hyp.notes.NoteStorage.createNote(ctx, title, content)
+                                    go.examate.hyp.util.ToastUtil.show(ctx, "已保存到笔记")
                                 }
                             },
                             onQiushi = { content ->
@@ -342,7 +344,9 @@ private fun ChatScreen(onBack: () -> Unit) {
                 ambientHighlight = true
             )
             Spacer(Modifier.width(6.dp))
-            // 模型选择(液态玻璃胶囊包裹)
+            // 模型选择(液态玻璃胶囊包裹;主题色在组合上下文读取,供 onDrawSurface 使用)
+            val chipTint = GlassChipTint
+            val inputTint = GlassInputTint
             Box(
                 Modifier.then(
                     if (backdrop != null) {
@@ -351,10 +355,10 @@ private fun ChatScreen(onBack: () -> Unit) {
                             shape = { Capsule() },
                             effects = { vibrancy(); blur(12f) },
                             highlight = { Highlight.Ambient },
-                            onDrawSurface = { drawRect(Color.White.copy(0.48f)) }
+                            onDrawSurface = { drawRect(chipTint) }
                         )
                     } else {
-                        Modifier.clip(RoundedCornerShape(20.dp)).background(Color.White.copy(0.88f))
+                        Modifier.clip(RoundedCornerShape(20.dp)).background(inputTint)
                     }
                 )
             ) {

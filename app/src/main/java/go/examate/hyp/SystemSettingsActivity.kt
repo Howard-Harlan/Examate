@@ -245,19 +245,22 @@ private fun SystemSettingsScreen(permissionHelper: PermissionHelper, onBack: () 
                     val subtitle = when {
                         clearing -> "正在清理…"
                         cacheSize == null -> "计算中…"
-                        else -> "浏览器缓存、图片缓存等 · ${formatBytes(cacheSize!!)}"
+                        else -> "音乐 / 阅读 / 下载 / 图片等 · ${formatBytes(cacheSize!!)}，点按分类管理"
                     }
                     FrostedGlassCard(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable(enabled = !clearing) { showClearDialog = true }
+                            .clickable(enabled = !clearing) {
+                                    // 分类缓存管理页:音乐/阅读/下载/图片/网页/其他 分门别类清理
+                                    context.startActivity(android.content.Intent(context, CacheManagerActivity::class.java))
+                                }
                     ) {
                         Row(
                             Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(Modifier.weight(1f)) {
-                                Text("清除缓存", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                Text("缓存管理", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                                 Spacer(Modifier.height(2.dp))
                                 Text(subtitle, color = TextHint, fontSize = 11.sp, lineHeight = 15.sp)
                             }
@@ -335,8 +338,8 @@ private fun SystemSettingsScreen(permissionHelper: PermissionHelper, onBack: () 
                                 prefs.themeMode = mode
                                 themeMode = mode
                                 showThemePicker = false
-                                // 重建 Activity 使新主题立即生效
-                                (context as? android.app.Activity)?.recreate()
+                                // 主题即时生效:ExamateTheme 监听 SharedPreferences,
+                                // 所有在栈中的 Activity 都会自动重组刷新,无需重建
                             }
                             .padding(horizontal = 20.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -348,27 +351,6 @@ private fun SystemSettingsScreen(permissionHelper: PermissionHelper, onBack: () 
                     }
                 }
             }
-        }
-    }
-    if (showClearDialog) {
-        PlainDialog(onDismissRequest = { showClearDialog = false }) {
-            PlainDialogTitle("清除缓存")
-            PlainDialogContent("将清除应用内浏览器缓存、图片缓存及临时缓存文件。不会影响你的账号、应用设置与已下载的文件。")
-            PlainDialogButtons(
-                buttons = listOf(
-                    Triple("取消", false) { showClearDialog = false },
-                    Triple("清除", true) {
-                        showClearDialog = false
-                        clearing = true
-                        scope.launch {
-                            CacheCleaner.clear(context)
-                            cacheSize = CacheCleaner.calculateSize(context)
-                            clearing = false
-                            ToastUtil.show(context, "缓存已清除")
-                        }
-                    }
-                )
-            )
         }
     }
 }

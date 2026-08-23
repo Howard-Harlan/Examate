@@ -76,6 +76,7 @@ import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.components.LiquidGlassIconButton
+import go.examate.hyp.ui.theme.SelectedBg
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.ChipBg
@@ -145,6 +146,8 @@ internal fun DayScheduleView(
 
     // 添加待办弹窗
     var showAddTodoDialog by remember { mutableStateOf(false) }
+    // 是否进入 AI 提取模式(借鉴 TodoScreen.AddTodoSheet 的双模式切换)
+    var aiExtractMode by remember { mutableStateOf(false) }
     var newTodoTitle by remember { mutableStateOf("") }
     // 时间用 TextFieldValue 以便控制光标位置(避免格式化后输入顺序错乱)
     var newTodoTime by remember { mutableStateOf(TextFieldValue("")) }
@@ -320,137 +323,182 @@ internal fun DayScheduleView(
         }
     }
 
-    // 添加待办弹窗(借鉴 Cresto:标题 + 时间 + 优先级 + 关联节次)
+    // 添加待办弹窗(借鉴 Cresto + TodoScreen.AddTodoSheet:手动 / AI 提取双模式)
     var newTodoPriority by remember { mutableIntStateOf(0) }
     if (showAddTodoDialog) {
-        Dialog(onDismissRequest = { showAddTodoDialog = false }) {
+        Dialog(onDismissRequest = {
+            showAddTodoDialog = false
+            aiExtractMode = false
+        }) {
             Column(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
                     .background(CardBg).padding(20.dp)
             ) {
-                Text(
-                    "添加待办 · ${date.monthValue}月${date.dayOfMonth}日",
-                    color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold
-                )
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = newTodoTitle,
-                    onValueChange = { newTodoTitle = it },
-                    label = { Text("待办内容", color = TextHint, fontSize = 12.sp) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(8.dp))
-                // 时间输入:用 TextFieldValue 固定光标到末尾,
-                // 否则格式化后光标回跳会导致输入 "25" 变成 "52"
-                OutlinedTextField(
-                    value = newTodoTime,
-                    onValueChange = { newValue ->
-                        val digits = newValue.text.filter { it.isDigit() }.take(4)
-                        val formatted = when (digits.length) {
-                            0, 1, 2 -> digits
-                            3 -> "${digits.take(2)}:${digits.takeLast(1)}"
-                            else -> "${digits.take(2)}:${digits.takeLast(2)}"
+                if (aiExtractMode) {
+                    // ═══ AI 提取模式:复用 TodoScreen 中的 AiExtractPanel ═══
+                    AiExtractPanel(
+                        onDismiss = { aiExtractMode = false },
+                        onConfirm = { items ->
+                            items.forEach { onAddTodo(it) }
+                            showAddTodoDialog = false
+                            aiExtractMode = false
                         }
-                        newTodoTime = TextFieldValue(formatted, TextRange(formatted.length))
-                    },
-                    label = { Text("时间(可不填,如 08:30)", color = TextHint, fontSize = 12.sp) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(10.dp),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                // 快捷选择节次:点击即把时间设为该节课的上课时间,便于"在某个时间段添加待办"
-                if (dayCourses.isNotEmpty()) {
-                    Spacer(Modifier.height(10.dp))
-                    Text("关联节次(可选)", color = TextHint, fontSize = 12.sp)
-                    Spacer(Modifier.height(6.dp))
+                    )
+                } else {
+                    // ═══ 手动添加模式 ═══
                     Row(
-                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        dayCourses.forEach { c ->
-                            val startT = PERIOD_TIMES.getOrNull(c.startSection - 1)?.first
-                            if (startT != null) {
-                                val selected = newTodoTime.text == startT
-                                Box(
-                                    Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(if (selected) Primary else ChipBg)
-                                        .clickable { newTodoTime = TextFieldValue(startT, TextRange(startT.length)) }
-                                        .padding(horizontal = 10.dp, vertical = 6.dp)
-                                ) {
-                                    Text(
-                                        "第${c.startSection}节 $startT",
-                                        color = if (selected) Color.White else Primary,
-                                        fontSize = 11.sp
-                                    )
+                        Text(
+                            "添加待办 · ${date.monthValue}月${date.dayOfMonth}日",
+                            color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold
+                        )
+                        // AI 提取入口(与 TodoScreen.ManualAddPanel 风格统一:边框 + 半透明底)
+                        Row(
+                            Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .border(1.dp, Primary, RoundedCornerShape(10.dp))
+                                .background(Primary.copy(0.10f))
+                                .clickable { aiExtractMode = true }
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = null,
+                                tint = Primary,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text("AI 提取", color = Primary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = newTodoTitle,
+                        onValueChange = { newTodoTitle = it },
+                        label = { Text("待办内容", color = TextHint, fontSize = 12.sp) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    // 时间输入:用 TextFieldValue 固定光标到末尾,
+                    // 否则格式化后光标回跳会导致输入 "25" 变成 "52"
+                    OutlinedTextField(
+                        value = newTodoTime,
+                        onValueChange = { newValue ->
+                            val digits = newValue.text.filter { it.isDigit() }.take(4)
+                            val formatted = when (digits.length) {
+                                0, 1, 2 -> digits
+                                3 -> "${digits.take(2)}:${digits.takeLast(1)}"
+                                else -> "${digits.take(2)}:${digits.takeLast(2)}"
+                            }
+                            newTodoTime = TextFieldValue(formatted, TextRange(formatted.length))
+                        },
+                        label = { Text("时间(可不填,如 08:30)", color = TextHint, fontSize = 12.sp) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    // 快捷选择节次:点击即把时间设为该节课的上课时间,便于"在某个时间段添加待办"
+                    if (dayCourses.isNotEmpty()) {
+                        Spacer(Modifier.height(10.dp))
+                        Text("关联节次(可选)", color = TextHint, fontSize = 12.sp)
+                        Spacer(Modifier.height(6.dp))
+                        Row(
+                            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            dayCourses.forEach { c ->
+                                val startT = PERIOD_TIMES.getOrNull(c.startSection - 1)?.first
+                                if (startT != null) {
+                                    val selected = newTodoTime.text == startT
+                                    Box(
+                                        Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(if (selected) SelectedBg else ChipBg)
+                                            .clickable { newTodoTime = TextFieldValue(startT, TextRange(startT.length)) }
+                                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Text(
+                                            "第${c.startSection}节 $startT",
+                                            color = if (selected) Color.White else Primary,
+                                            fontSize = 11.sp
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                // 优先级选择(借鉴 Cresto):无/低/中/高
-                Spacer(Modifier.height(12.dp))
-                Text("优先级", color = TextHint, fontSize = 12.sp)
-                Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    val opts = listOf(0 to "无", 1 to "低", 2 to "中", 3 to "高")
-                    val colors = listOf(
-                        Color(0xFF9CA3AF), Color(0xFF60A5FA),
-                        Color(0xFFFBBF24), Color(0xFFEF4444)
-                    )
-                    opts.forEach { (p, label) ->
-                        val sel = newTodoPriority == p
-                        Row(
-                            Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (sel) colors[p].copy(0.12f) else Color.Transparent)
-                                .border(
-                                    1.dp,
-                                    if (sel) colors[p] else TextHint.copy(0.2f),
-                                    RoundedCornerShape(8.dp)
+                    // 优先级选择(借鉴 Cresto):无/低/中/高
+                    Spacer(Modifier.height(12.dp))
+                    Text("优先级", color = TextHint, fontSize = 12.sp)
+                    Spacer(Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        val opts = listOf(0 to "无", 1 to "低", 2 to "中", 3 to "高")
+                        val colors = listOf(
+                            Color(0xFF9CA3AF), Color(0xFF60A5FA),
+                            Color(0xFFFBBF24), Color(0xFFEF4444)
+                        )
+                        opts.forEach { (p, label) ->
+                            val sel = newTodoPriority == p
+                            Row(
+                                Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (sel) colors[p].copy(0.12f) else Color.Transparent)
+                                    .border(
+                                        1.dp,
+                                        if (sel) colors[p] else TextHint.copy(0.2f),
+                                        RoundedCornerShape(8.dp)
+                                    )
+                                    .clickable { newTodoPriority = p }
+                                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Box(Modifier.size(7.dp).clip(CircleShape).background(colors[p]))
+                                Text(
+                                    label,
+                                    color = if (sel) colors[p] else TextHint,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium
                                 )
-                                .clickable { newTodoPriority = p }
-                                .padding(horizontal = 10.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(3.dp)
-                        ) {
-                            Box(Modifier.size(7.dp).clip(CircleShape).background(colors[p]))
-                            Text(
-                                label,
-                                color = if (sel) colors[p] else TextHint,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium
-                            )
+                            }
                         }
                     }
-                }
-                Spacer(Modifier.height(16.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    LiquidGlassButton(
-                        text = "取消", onClick = { showAddTodoDialog = false },
-                        style = ButtonStyle.Outline, height = 40.dp,
-                        modifier = Modifier.weight(1f)
-                    )
-                    LiquidGlassButton(
-                        text = "添加", onClick = {
-                            if (newTodoTitle.isNotBlank()) {
-                                onAddTodo(ScheduleTodo(
-                                    id = "todo_${System.currentTimeMillis()}",
-                                    title = newTodoTitle.trim(),
-                                    date = date.toString(),
-                                    time = newTodoTime.text.trim(),
-                                    priority = newTodoPriority
-                                ))
-                            }
-                            showAddTodoDialog = false
-                            newTodoPriority = 0
-                        },
-                        style = ButtonStyle.White, height = 40.dp,
-                        modifier = Modifier.weight(1f)
-                    )
+                    Spacer(Modifier.height(16.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        LiquidGlassButton(
+                            text = "取消", onClick = {
+                                showAddTodoDialog = false
+                                aiExtractMode = false
+                            },
+                            style = ButtonStyle.Outline, height = 40.dp,
+                            modifier = Modifier.weight(1f)
+                        )
+                        LiquidGlassButton(
+                            text = "添加", onClick = {
+                                if (newTodoTitle.isNotBlank()) {
+                                    onAddTodo(ScheduleTodo(
+                                        id = "todo_${System.currentTimeMillis()}",
+                                        title = newTodoTitle.trim(),
+                                        date = date.toString(),
+                                        time = newTodoTime.text.trim(),
+                                        priority = newTodoPriority
+                                    ))
+                                }
+                                showAddTodoDialog = false
+                                newTodoPriority = 0
+                                aiExtractMode = false
+                            },
+                            style = ButtonStyle.White, height = 40.dp,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
             }
         }

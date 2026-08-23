@@ -10,6 +10,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import go.examate.hyp.ui.theme.BgGradientTint
 import go.examate.hyp.ui.theme.BgPrimary
 
 /**
@@ -25,6 +26,7 @@ fun LiquidGlassBackground(
 ) {
     val bgBackdrop = rememberLayerBackdrop()
     val bgColor = BgPrimary  // 在 @Composable 上下文读取,传入 drawBehind
+    val bgGradient = BgGradientTint
     Box(modifier.fillMaxSize()) {
         // 背景层,被 bgBackdrop 捕获
         Box(
@@ -36,7 +38,7 @@ fun LiquidGlassBackground(
                         Brush.verticalGradient(
                             0f to Color.White.copy(0.04f),
                             0.6f to Color.White.copy(0.03f),
-                            1f to Color(0xFFE8EAF0).copy(0.18f)
+                            1f to bgGradient.copy(0.18f)
                         )
                     )
                 }

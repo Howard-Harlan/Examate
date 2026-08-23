@@ -3,7 +3,6 @@ package go.examate.hyp.ui.screens
 import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,6 +16,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -27,7 +29,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -36,12 +37,10 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import go.examate.hyp.config.MyConfig
 import go.examate.hyp.config.PrefsManager
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.theme.BgPrimary
-import go.examate.hyp.ui.theme.Primary
-import go.examate.hyp.ui.theme.Divider as DividerColor
+import go.examate.hyp.ui.theme.SurfaceVariant
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
@@ -86,7 +85,7 @@ fun SettingsScreen(
             .padding(top = 48.dp)
             .padding(bottom = 120.dp)
     ) {
-        // ═══ 顶部用户信息栏(logo 栏)═══
+        // ═══ 顶部用户信息栏(logo 栏,扩大版) ═══
         UserProfileBar(profileKey = profileKey, onClick = onUserSettingsClick)
         Spacer(Modifier.height(24.dp))
 
@@ -183,12 +182,9 @@ private fun UserProfileBar(profileKey: String, onClick: () -> Unit) {
     val context = LocalContext.current
     val prefs = PrefsManager.getInstance(context)
 
-    // 根据 profileKey 缓存:本地头像 + 首字母 + 待展示字段列表
+    // 根据 profileKey 缓存:本地头像 + 待展示字段列表
     val avatarBitmap = remember(profileKey) {
         go.examate.hyp.util.AvatarHelper.loadAvatar(context)
-    }
-    val avatarChar = remember(profileKey) {
-        prefs.nickname.firstOrNull()?.toString() ?: "学"
     }
     val displayEntries = remember(profileKey) {
         val fields = prefs.userDisplayFields
@@ -214,14 +210,14 @@ private fun UserProfileBar(profileKey: String, onClick: () -> Unit) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(20.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 头像:优先显示本地头像,否则 Primary 圆形背景 + 首字母
+            // 头像:优先显示本地头像,否则与用户设置内部一致的默认占位(浅色圆底 + 人形图标)
             Box(
                 Modifier
-                    .size(48.dp)
-                    .background(Primary, CircleShape)
+                    .size(60.dp)
+                    .background(SurfaceVariant, CircleShape)
                     .clip(CircleShape),
                 contentAlignment = Alignment.Center
             ) {
@@ -233,29 +229,29 @@ private fun UserProfileBar(profileKey: String, onClick: () -> Unit) {
                         contentScale = androidx.compose.ui.layout.ContentScale.Crop
                     )
                 } ?: run {
-                    Text(
-                        text = avatarChar,
-                        color = Color.White,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Medium
+                    Icon(
+                        Icons.Filled.Person,
+                        contentDescription = "头像",
+                        tint = TextHint,
+                        modifier = Modifier.size(30.dp)
                     )
                 }
             }
-            Spacer(Modifier.width(14.dp))
+            Spacer(Modifier.width(16.dp))
             // 资料字段:首行为主标题,其余为副标题
             Column(Modifier.weight(1f)) {
                 displayEntries.forEachIndexed { index, entry ->
-                    if (index > 0) Spacer(Modifier.height(2.dp))
+                    if (index > 0) Spacer(Modifier.height(3.dp))
                     Text(
                         text = entry.text,
                         color = if (entry.isHint) TextHint else if (index == 0) TextPrimary else TextSecondary,
-                        fontSize = if (index == 0) 16.sp else 13.sp,
+                        fontSize = if (index == 0) 18.sp else 13.sp,
                         fontWeight = if (index == 0) FontWeight.Medium else FontWeight.Normal
                     )
                 }
             }
             // 箭头指示可点击
-            Text("›", color = TextHint, fontSize = 22.sp, fontWeight = FontWeight.Light)
+            Text("›", color = TextHint, fontSize = 24.sp, fontWeight = FontWeight.Light)
         }
     }
 }

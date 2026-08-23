@@ -56,6 +56,9 @@ private suspend fun buildItemFromUri(context: Context, uri: Uri): QueueItem? {
 /**
  * 音乐 — 本地音乐播放器(原生 MediaPlayer + MediaStore + AudioEffect,零第三方播放库)。
  * 无顶栏、悬浮按钮;主页两卡 + 底部玻璃播放条 + 独立「我的」按钮。
+ *
+ * 播放器为应用级单例(ExamateApp.musicController):本页只是 UI 载体,
+ * 退出页面不停止播放,通知栏控制持续可用;整个应用退出才停止。
  */
 class MusicActivity : ComponentActivity() {
 
@@ -71,12 +74,38 @@ class MusicActivity : ComponentActivity() {
             ExamateTheme {
                 LiquidGlassBackground {
                     val context = LocalContext.current
-                    val fx = remember { AudioEffects(context).also { effects = it } }
+                    // 播放器/音效均为应用级单例:跨页面存活,退出音乐页不释放
+                    val fx = remember { (context.applicationContext as ExamateApp).musicEffects.also { effects = it } }
                     val ctrl = remember {
-                        MusicController(context).apply {
+                        (context.applicationContext as ExamateApp).musicController.apply {
                             effects = fx
                             this@MusicActivity.controller = this
+                            // MusicControllerHolder 已在 ExamateApp 创建时赋值,此处保持指向同一实例
                             MusicControllerHolder.controller = this
+                        }
+                    }
+
+                    // 通知栏控制(Android 13+):首次进入请求通知权限,否则前台服务通知不显示
+                    val notifPerm = rememberLauncherForActivityResult(
+                        ActivityResultContracts.RequestPermission()
+                    ) { }
+                    androidx.compose.runtime.LaunchedEffect(Unit) {
+                        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                            androidx.core.content.ContextCompat.checkSelfPermission(
+                                context, android.Manifest.permission.POST_NOTIFICATIONS
+                            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                        ) {
+                            notifPerm.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    }
+
+                    // 恢复上次播放状态:进入时若队列为空,加载最近播放历史(PlayerBar 显示上次曲目)
+                    androidx.compose.runtime.LaunchedEffect(Unit) {
+                        if (ctrl.current == null) {
+                            val history = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                go.examate.hyp.music.PlayHistoryStore.load(context)
+                            }
+                            if (history.isNotEmpty()) ctrl.restore(history, 0)
                         }
                     }
 
@@ -126,24 +155,16 @@ class MusicActivity : ComponentActivity() {
                         }
                     }
 
-                    // LX 音源导入(文件/链接二选一,复用通用组件);导入后跑一次回填声明平台
+                    // LX 音源导入(文件/链接二选一,复用通用组件);
+                    // 竞速验证模式:多通道候选到达一个验一个(服务端 sign 探针),
+                    // 第一个通过者入库 — 不等死通道,全程有进度提示
                     val lxImporter = go.examate.hyp.media.rememberSourceImporter(
                         title = "导入 LX 音源",
-                        linkHint = "https://…/lx_music.js"
-                    ) { text ->
-                        val src = go.examate.hyp.music.lx.LxSourceStore.importScript(context, text)
-                        if (src != null) {
-                            go.examate.hyp.util.ToastUtil.show(context, "已导入:${src.name}")
-                            kotlin.concurrent.thread { runCatching { go.examate.hyp.music.lx.LxManager(context).probeSources(src) } }
-                        } else {
-                            val msg = when {
-                                text.trimStart().startsWith("http") -> "导入失败:请粘贴脚本内容,不是链接地址(用「粘贴链接」功能下载)"
-                                text.contains("globalThis") || text.contains("lx.on(") -> "导入失败:脚本格式不正确"
-                                else -> "导入失败:非有效 LX 音源脚本(需含 lx.on 注册处理器)"
-                            }
-                            go.examate.hyp.util.ToastUtil.show(context, msg)
-                        }
-                    }
+                        linkHint = "https://…/lx_music.js",
+                        raceValidator = { text -> tryImportOneLx(context, text) },
+                        onProgress = { msg -> go.examate.hyp.util.ToastUtil.show(context, msg) },
+                        onText = { }
+                    )
 
                     MusicScreen(
                         controller = ctrl,
@@ -160,9 +181,6 @@ class MusicActivity : ComponentActivity() {
                             folder = null
                             folderTreeUri = null
                         },
-                        onBiliLogin = {
-                            context.startActivity(android.content.Intent(context, go.examate.hyp.music.bili.BiliLoginActivity::class.java))
-                        },
                         onLxImport = lxImporter.open,
                         folderTreeUri = folderTreeUri
                     )
@@ -172,11 +190,37 @@ class MusicActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        MusicControllerHolder.controller = null
-        effects?.release()
-        controller?.release()
+        // 播放器/音效为应用级单例,退出音乐页不释放、不停止播放;
+        // 音乐继续在后台(前台服务)播放,直到整个应用退出或用户主动停止。
         effects = null
         controller = null
         super.onDestroy()
+    }
+}
+
+/**
+ * LX 音源单候选导入验证(后台线程):入库 → 回填声明 → 服务端 sign 探针。
+ * 通过 → 保留并提示,true;拒签/无效 → 即时删除并给具体原因,false。
+ */
+private fun tryImportOneLx(context: android.content.Context, text: String): Boolean {
+    val src = go.examate.hyp.music.lx.LxSourceStore.importScript(context, text)
+    if (src == null) {
+        val msg = when {
+            text.trimStart().startsWith("http") -> "导入失败:请粘贴脚本内容,不是链接地址(用「粘贴链接」功能下载)"
+            text.contains("globalThis") || text.contains("lx.on(") -> "导入失败:脚本格式不正确"
+            else -> "导入失败:非有效 LX 音源脚本(需含 lx.on 注册处理器)"
+        }
+        go.examate.hyp.util.ToastUtil.show(context, msg)
+        return false
+    }
+    val mgr = go.examate.hyp.music.lx.LxManager(context)
+    runCatching { mgr.probeSources(src) }   // 回填声明平台(引擎留池复用)
+    return if (mgr.verifyAgainstServer(src)) {
+        go.examate.hyp.util.ToastUtil.show(context, "导入成功:${src.name}(已通过服务端校验)")
+        true
+    } else {
+        go.examate.hyp.music.lx.LxSourceStore.delete(context, src.id)
+        android.util.Log.w("MusicActivity", "LX 候选载荷被服务端拒签,已移除")
+        false
     }
 }

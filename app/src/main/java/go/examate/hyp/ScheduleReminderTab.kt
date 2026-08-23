@@ -43,6 +43,7 @@ import go.examate.hyp.campus.model.ScheduleStorage
 import go.examate.hyp.ui.components.ButtonStyle
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassButton
+import go.examate.hyp.ui.theme.SelectedBg
 import go.examate.hyp.ui.theme.Primary
 import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.ScheduleCellBg
@@ -112,7 +113,7 @@ internal fun ReminderSettingsTab() {
                         Box(
                             Modifier
                                 .clip(RoundedCornerShape(6.dp))
-                                .background(if (selected) Primary else ScheduleCellBg)
+                                .background(if (selected) SelectedBg else ScheduleCellBg)
                                 .clickable {
                                     reminderInput = min.toString()
                                     meta = meta.copy(reminderMinutes = min)

@@ -38,7 +38,10 @@ import com.kyant.backdrop.highlight.Highlight
 import com.kyant.shapes.RoundedRectangle
 import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.CardBg
-import go.examate.hyp.ui.theme.Primary
+import go.examate.hyp.ui.theme.ChipBg
+import go.examate.hyp.ui.theme.DialogBg
+import go.examate.hyp.ui.theme.TextPrimary
+import go.examate.hyp.ui.theme.TextSecondary
 
 /**
  * 液态玻璃弹窗(参考 AndroidLiquidGlass-2.0.0 DialogContent)
@@ -54,9 +57,11 @@ fun LiquidGlassDialog(
     content: @Composable ColumnScope.() -> Unit
 ) {
     if (!visible) return
-    val dimColor = Primary.copy(0.23f)
+    // 遮罩用黑色固定:深色模式下 Primary 会提亮成浅灰,导致遮罩泛白灰
+    val dimColor = Color.Black.copy(0.23f)
     val containerColor = CardBg.copy(0.6f)
-    val fallbackColor = Color.White.copy(0.92f)
+    // 无 backdrop 时的回退背景:主题化(浅色白/深色深灰),避免深色下弹窗过亮
+    val fallbackColor = DialogBg
     val backdrop = LocalGlassBackdrop.current
     val noRippleInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
 
@@ -134,7 +139,7 @@ fun LiquidGlassDialog(
 fun GlassDialogTitle(text: String) {
     Text(
         text = text,
-        color = Color.Black,
+        color = TextPrimary,
         fontSize = 20.sp,
         fontWeight = FontWeight.Medium,
         modifier = Modifier.padding(28.dp, 24.dp, 28.dp, 12.dp)
@@ -146,7 +151,7 @@ fun GlassDialogTitle(text: String) {
 fun GlassDialogContent(text: String) {
     Text(
         text = text,
-        color = Color.Black.copy(0.68f),
+        color = TextSecondary,
         fontSize = 14.sp,
         lineHeight = 20.sp,
         modifier = Modifier.padding(24.dp, 0.dp, 24.dp, 8.dp)
@@ -159,7 +164,7 @@ fun GlassDialogButtons(
     buttons: List<Triple<String, Boolean, () -> Unit>>
 ) {
     val accentColor = AccentBlue
-    val textColor = Color.Black
+    val textColor = TextPrimary
 
     Row(
         Modifier
@@ -173,7 +178,7 @@ fun GlassDialogButtons(
             Box(
                 Modifier
                     .clip(RoundedCornerShape(24.dp))
-                    .background(if (isAccent) accentColor else Color.White.copy(0.2f))
+                    .background(if (isAccent) accentColor else ChipBg)
                     .clickable { onClick() }
                     .padding(horizontal = 20.dp, vertical = 12.dp),
                 contentAlignment = Alignment.Center

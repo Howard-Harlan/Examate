@@ -111,6 +111,9 @@ const val MAX_SECTIONS = 12
 /** 默认学期总周数(可在课表设置中修改) */
 const val DEFAULT_TOTAL_WEEKS = 20
 
+/** 默认期末周周次(可在课表设置中修改) */
+const val DEFAULT_EXAM_WEEK = 18
+
 /**
  * 计算学期开学第一个星期一(用于推算周次和表头日期)
  *
@@ -291,6 +294,12 @@ object ScheduleStorage {
             put("savedAt", System.currentTimeMillis())
         }
         file(context, username).writeText(json.toString())
+        // 课表变更后重新调度课前提醒(仅当前激活的课表)
+        runCatching {
+            if (getCurrentScheduleMeta(context).id == username) {
+                go.examate.hyp.campus.ScheduleReminderScheduler.reschedule(context)
+            }
+        }
     }
 
     fun loadEntries(context: Context, username: String): List<ScheduleEntry> {
@@ -662,6 +671,7 @@ object ScheduleStorage {
      * @property showSunday 是否显示周日列
      * @property semesterStartDate 开学第一个星期一(ISO 格式 yyyy-MM-dd),用于推算当前周次;空则按默认推断
      * @property totalWeeks 学期总周数(周次选择器网格范围),默认 20
+     * @property examWeek 期末周周次(第几周考试),默认 18
      */
     data class ScheduleMeta(
         val id: String,
@@ -674,6 +684,7 @@ object ScheduleStorage {
         val showSunday: Boolean = true,
         val semesterStartDate: String? = null,
         val totalWeeks: Int = DEFAULT_TOTAL_WEEKS,
+        val examWeek: Int = DEFAULT_EXAM_WEEK,
         /** 课程卡片字体缩放档:0=小 1=标准 2=大 */
         val fontScale: Int = 1
     )
@@ -712,6 +723,7 @@ object ScheduleStorage {
                     showSunday = o.optBoolean("showSunday", true),
                     semesterStartDate = o.optString("semesterStartDate").takeIf { it.isNotBlank() },
                     totalWeeks = o.optInt("totalWeeks", DEFAULT_TOTAL_WEEKS),
+                    examWeek = o.optInt("examWeek", DEFAULT_EXAM_WEEK),
                     fontScale = o.optInt("fontScale", 1)
                 )
             }
@@ -735,6 +747,7 @@ object ScheduleStorage {
                         put("showSunday", m.showSunday)
                         put("semesterStartDate", m.semesterStartDate ?: "")
                         put("totalWeeks", m.totalWeeks)
+                        put("examWeek", m.examWeek)
                         put("fontScale", m.fontScale)
                     })
                 }
@@ -791,6 +804,10 @@ object ScheduleStorage {
             if (it.id == meta.id) meta else it
         }
         saveScheduleMetas(context, metas)
+        // 提醒设置变更后重新调度
+        if (meta.isCurrent) {
+            runCatching { go.examate.hyp.campus.ScheduleReminderScheduler.reschedule(context) }
+        }
     }
 
     // ════════════════════════════════════════

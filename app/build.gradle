@@ -15,6 +15,8 @@ android {
         props.load(new FileInputStream(propFile))
     }
 
+    experimentalProperties["android.experimental.enableArtProfiles"] = false
+
     signingConfigs {
         release {
             // keystore 文件统一放在 app/ 模块下,显式用 rootProject.file 避免歧义
@@ -29,8 +31,8 @@ android {
         applicationId "go.examate.hyp"
         minSdk 31
         targetSdk 36
-        versionCode 7
-        versionName "1.2"
+        versionCode 8
+        versionName "1.3"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
@@ -115,6 +117,12 @@ dependencies {
 
     // Coil: 图片加载(淮师心声等)
     implementation libs.coil.compose
+
+    // Palette: 封面主色提取(播放页动态主题)
+    implementation libs.palette.ktx
+
+    // MediaSessionCompat / MediaStyle: 音乐后台播放通知栏控制
+    implementation libs.media
 
     // 支付宝 SDK(水卡充值拉起支付宝 App/H5 网页支付)
     // POM 中传递依赖 group/artifact 为空(已知 bug),需关闭传递依赖

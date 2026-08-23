@@ -40,7 +40,7 @@ import go.examate.hyp.ui.theme.TextPrimary
  * 后续可继续在此追加快捷功能卡片,结构与校园服务主页一致。
  */
 @Composable
-fun QuickServiceScreen(onBack: () -> Unit, onClassContact: () -> Unit = {}) {
+fun QuickServiceScreen(onBack: () -> Unit, onClassContact: () -> Unit = {}, onTextbookList: () -> Unit = {}) {
     val context = LocalContext.current
     Column(
         Modifier
@@ -93,6 +93,23 @@ fun QuickServiceScreen(onBack: () -> Unit, onClassContact: () -> Unit = {}) {
             QuickServiceEntryCard(
                 title = "班级通讯录",
                 onClick = onClassContact
+            )
+            Spacer(Modifier.height(12.dp))
+            QuickServiceEntryCard(
+                title = "教材清单",
+                onClick = onTextbookList
+            )
+            Spacer(Modifier.height(12.dp))
+            QuickServiceEntryCard(
+                title = "校园全景",
+                onClick = {
+                    context.startActivity(
+                        Intent(context, WebViewActivity::class.java).apply {
+                            putExtra(WebViewActivity.EXTRA_URL, "file:///android_asset/campus_panorama.html")
+                            putExtra(WebViewActivity.EXTRA_TITLE, "校园全景")
+                        }
+                    )
+                }
             )
         }
     }

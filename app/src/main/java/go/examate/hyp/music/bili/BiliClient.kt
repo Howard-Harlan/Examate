@@ -2,6 +2,8 @@ package go.examate.hyp.music.bili
 
 import android.content.Context
 import android.util.Log
+import go.examate.hyp.music.MusicHttp
+import go.examate.hyp.music.MusicUtil
 import go.examate.hyp.music.PlayRequest
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -26,13 +28,17 @@ data class BiliTrack(
 /**
  * B站客户端 — 搜索视频 + 取 DASH 音频流。纯 OkHttp + WBI 签名,零第三方。
  *
+ * 播放链路(逻辑清晰化):
+ *   1. 登录(可选):WebView 抓取 Cookie(SESSDATA 等)经 BiliAuth 保存 — 未登录也可直接播放,
+ *      登录态 Cookie 存在时自动附带(可享更高质量/同步进度);
+ *   2. 请求:带登录态 Cookie(若有)调官方 playurl(fnval=16)获取视频 DASH 清单;
+ *   3. 取音频:仅从 dash.audio 选最高音质音频流,不取视频流,以音频形式播放。
+ *
  * 合规:不内置任何内容,依赖用户自己的B站账号(Cookie);仅取音频流用于个人播放。
  */
 class BiliClient(private val context: Context) {
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS)
-        .followRedirects(true).build()
+    private val client = MusicHttp.derived(15, 20)
 
     private fun cookie(): String = BiliAuth.cookie(context)
 
@@ -47,7 +53,6 @@ class BiliClient(private val context: Context) {
     }
 
     // ══════════ WBI 签名 ══════════
-    @Volatile private var mixinKey: String? = null
 
     private fun ensureMixinKey(): String? {
         mixinKey?.let { return it }
@@ -63,10 +68,6 @@ class BiliClient(private val context: Context) {
         }.getOrNull()
     }
 
-    private fun md5(s: String): String {
-        val d = MessageDigest.getInstance("MD5").digest(s.toByteArray())
-        return d.joinToString("") { "%02x".format(it) }
-    }
 
     private fun enc(s: String): String = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 
@@ -78,7 +79,7 @@ class BiliClient(private val context: Context) {
         val sorted = all.toSortedMap()
         val query = sorted.entries.joinToString("&") { "${it.key}=${enc(it.value)}" }
         if (mk == null) return query
-        val wrid = md5(query + mk)
+        val wrid = MusicUtil.md5(query + mk)
         return "$query&w_rid=$wrid"
     }
 
@@ -103,6 +104,34 @@ class BiliClient(private val context: Context) {
         }.getOrDefault(emptyList())
     }
 
+    /** 获取收藏夹视频列表(需登录态 Cookie;分页拉取,最多 200 个) */
+    fun fetchFavList(mediaId: String, maxCount: Int = 200): List<BiliTrack> {
+        val result = mutableListOf<BiliTrack>()
+        var pn = 1
+        val ps = 20
+        while (result.size < maxCount) {
+            val body = get("https://api.bilibili.com/x/v3/fav/resource/list?media_id=$mediaId&pn=$pn&ps=$ps&order=mtime&platform=web")
+                ?: break
+            val root = runCatching { JSONObject(body) }.getOrNull() ?: break
+            if (root.optInt("code") != 0) break
+            val medias = root.optJSONObject("data")?.optJSONArray("medias") ?: break
+            if (medias.length() == 0) break
+            for (i in 0 until medias.length()) {
+                val o = medias.optJSONObject(i) ?: continue
+                val bvid = o.optString("bvid")
+                if (bvid.isBlank()) continue
+                val title = o.optString("title").replace(Regex("<[^>]+>"), "")
+                val author = o.optJSONObject("upper")?.optString("name") ?: ""
+                val cover = o.optString("cover").let { if (it.startsWith("//")) "https:$it" else it }
+                val dur = o.optLong("duration")
+                result.add(BiliTrack(bvid, 0L, title, author, dur, cover))
+                if (result.size >= maxCount) break
+            }
+            pn++
+        }
+        return result
+    }
+
     /** 调 nav 验证登录态,返回用户名(未登录返回空) */
     fun fetchUserName(): String {
         val body = get("https://api.bilibili.com/x/web-interface/nav") ?: return ""
@@ -114,9 +143,71 @@ class BiliClient(private val context: Context) {
     }
 
     /** 取视频首个分P的 cid(播放前需要) */
-    fun firstCid(bvid: String): Long {
-        val body = get("https://api.bilibili.com/x/web-interface/view?bvid=$bvid") ?: return 0
-        return runCatching { JSONObject(body).getJSONObject("data").optLong("cid") }.getOrDefault(0)
+    fun firstCid(bvid: String): Long = viewInfo(bvid).second
+
+    /** 取视频信息 (aid, cid);失败返回 (0, 0) */
+    fun viewInfo(bvid: String): Pair<Long, Long> {
+        val body = get("https://api.bilibili.com/x/web-interface/view?bvid=$bvid") ?: return 0L to 0L
+        return runCatching {
+            val d = JSONObject(body).getJSONObject("data")
+            d.optLong("aid") to d.optLong("cid")
+        }.getOrDefault(0L to 0L)
+    }
+
+    /**
+     * 从账号观看历史取该视频的上次播放进度。
+     * @return (cid, 进度秒数);未登录/无记录返回 (0, 0)
+     */
+    fun historyProgress(bvid: String): Pair<Long, Int> {
+        if (!BiliAuth.isLoggedIn(context)) return 0L to 0
+        val body = get("https://api.bilibili.com/x/web-interface/history/cursor?type=archive&ps=20&view_at=0")
+            ?: return 0L to 0
+        return runCatching {
+            val list = JSONObject(body).getJSONObject("data").optJSONArray("list") ?: return 0L to 0
+            for (i in 0 until list.length()) {
+                val h = list.optJSONObject(i)?.optJSONObject("history") ?: continue
+                if (h.optString("bvid") == bvid) {
+                    return h.optLong("cid") to h.optInt("progress")
+                }
+            }
+            0L to 0
+        }.getOrDefault(0L to 0)
+    }
+
+    /**
+     * 上报播放进度到账号历史(x/v2/history/report)。
+     * 需要登录态 + bili_jct(csrf);返回是否上报成功。
+     */
+    fun reportProgress(bvid: String, cid: Long, aid: Long, progressSec: Int): Boolean {
+        val cookie = cookie()
+        val csrf = BiliAuth.value(cookie, "bili_jct")
+        if (!BiliAuth.isLoggedIn(context) || csrf.isEmpty() || progressSec <= 0) return false
+        val form = okhttp3.FormBody.Builder()
+            .add("aid", aid.toString())
+            .add("cid", cid.toString())
+            .add("progress", progressSec.toString())
+            .add("csrf", csrf)
+            .build()
+        val req = Request.Builder()
+            .url("https://api.bilibili.com/x/v2/history/report")
+            .header("User-Agent", UA)
+            .header("Referer", "https://www.bilibili.com/video/$bvid")
+            .header("Cookie", cookie)
+            .post(form)
+            .build()
+        return runCatching {
+            client.newCall(req).execute().use { resp ->
+                resp.isSuccessful && JSONObject(resp.body?.string() ?: "").optInt("code") == 0
+            }
+        }.getOrDefault(false)
+    }
+
+    /** 便捷上报:自动补全 aid/cid 后上报进度 */
+    fun reportProgressAuto(bvid: String, progressSec: Int): Boolean {
+        if (progressSec <= 0) return false
+        val (aid, cid) = viewInfo(bvid)
+        if (aid <= 0 || cid <= 0) return false
+        return reportProgress(bvid, cid, aid, progressSec)
     }
 
     /** 取 DASH 音频流最高音质 URL + 播放所需 headers(Referer) */
@@ -176,6 +267,8 @@ class BiliClient(private val context: Context) {
     }
 
     companion object {
+        @Volatile
+        private var mixinKey: String? = null
         private const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         // WBI mixin 置换表(B站固定)

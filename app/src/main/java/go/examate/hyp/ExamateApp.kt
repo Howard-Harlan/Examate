@@ -14,12 +14,32 @@ import java.util.Locale
  * 崩溃日志写入 filesDir/workspace/crash_logs/(即 AI 文件工具的沙箱内),
  * 闪退后可直接在聊天里让 AI 用 list_dir / read_file 查看堆栈。
  * 只保留最近 5 个崩溃文件。
+ *
+ * 同时持有应用级音乐播放器(controller + 音效):
+ * 音乐只是应用的一个模块 — 退出音乐页面不应停止播放,
+ * 只有整个应用退出(划掉最近任务/进程结束)才停止。
+ * 前台服务 MusicPlaybackService 与通知栏控制经 MusicControllerHolder
+ * 访问同一实例,不依赖音乐页是否存活。
  */
 class ExamateApp : Application() {
+
+    /** 应用级音乐播放控制器(懒加载,首次进入音乐页/首次播放时创建) */
+    val musicController: go.examate.hyp.music.MusicController by lazy {
+        go.examate.hyp.music.MusicController(this).also {
+            go.examate.hyp.music.MusicControllerHolder.controller = it
+        }
+    }
+
+    /** 应用级音效控制器(与播放器同生命周期,随播放器绑定) */
+    val musicEffects: go.examate.hyp.music.AudioEffects by lazy {
+        go.examate.hyp.music.AudioEffects(this)
+    }
 
     override fun onCreate() {
         super.onCreate()
         installCrashLogger()
+        // 启动时滚动调度未来 7 天的课表课前提醒
+        runCatching { go.examate.hyp.campus.ScheduleReminderScheduler.reschedule(this) }
     }
 
     private fun installCrashLogger() {

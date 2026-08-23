@@ -13,7 +13,18 @@ import java.util.concurrent.TimeUnit
  */
 object LegadoHttp {
 
-    data class StrResponse(val finalUrl: String, val body: String)
+    /**
+     * @param contentLength 服务端声明长度(-1=未声明/chunked)
+     * @param lengthVerified 长度硬校验通过(声明长度 == 实收字节) — 导入侧据此判断载荷完整性
+     */
+    data class StrResponse(val finalUrl: String, val body: String, val contentLength: Long = -1L, val lengthVerified: Boolean = false)
+
+    /**
+     * 字节级响应(Range 分块下载用):
+     * @param code HTTP 状态码(206=分块成功 / 200=服务端忽略 Range 返回整包)
+     * @param contentRange Content-Range 头(如 "bytes 0-65535/114852",可解析总长)
+     */
+    data class ByteResponse(val code: Int, val bytes: ByteArray, val contentLength: Long, val contentRange: String?)
 
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -22,6 +33,27 @@ object LegadoHttp {
             .followRedirects(true)
             .followSslRedirects(true)
             .build()
+    }
+
+    /**
+     * 字节级请求 — 支持 Range 头,返回原始字节(不做字符集解码)。
+     * 实收字节少于声明 Content-Length 即抛异常(传输截断);分块完整性由上层按区间长度再校验。
+     */
+    fun fetchBytes(req: AnalyzeUrl.UrlRequest): ByteResponse {
+        val builder = Request.Builder().url(req.url)
+        if (req.headers.keys.none { it.equals("User-Agent", true) || it.equals("UA", true) }) {
+            builder.header("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
+        }
+        req.headers.forEach { (k, v) -> builder.addHeader(k, v) }
+        builder.get()
+        client.newCall(builder.build()).execute().use { resp ->
+            val bytes = resp.body?.bytes() ?: ByteArray(0)
+            val declaredLen = resp.header("Content-Length")?.toLongOrNull() ?: -1L
+            if (declaredLen > 0 && bytes.size < declaredLen) {
+                throw java.io.IOException("下载不完整: 期望 $declaredLen 字节,实际 ${bytes.size} 字节")
+            }
+            return ByteResponse(resp.code, bytes, declaredLen, resp.header("Content-Range"))
+        }
     }
 
     /** 发起请求并按字符集解码为字符串。失败抛异常由上层收敛 */
@@ -40,10 +72,16 @@ object LegadoHttp {
         }
         client.newCall(builder.build()).execute().use { resp ->
             val finalUrl = resp.request.url.toString()
+            val declaredLen = resp.header("Content-Length")?.toLongOrNull() ?: -1L
             val bytes = resp.body?.bytes() ?: ByteArray(0)
+            // 完整性校验:服务端声明了 Content-Length 但实收字节不足 → 传输被截断,
+            // 抛异常由上层重试(音源脚本被截断导入后必然解析失败)
+            if (declaredLen > 0 && bytes.size < declaredLen) {
+                throw java.io.IOException("下载不完整: 期望 $declaredLen 字节,实际 ${bytes.size} 字节")
+            }
             val charset = req.charset ?: sniffCharset(bytes, resp.header("Content-Type"))
             val text = try { String(bytes, charset(charset)) } catch (_: Exception) { String(bytes) }
-            return StrResponse(finalUrl, text)
+            return StrResponse(finalUrl, text, declaredLen, declaredLen > 0 && bytes.size.toLong() == declaredLen)
         }
     }
 

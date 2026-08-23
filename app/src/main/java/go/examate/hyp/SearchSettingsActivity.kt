@@ -52,6 +52,7 @@ import go.examate.hyp.ui.components.LiquidGlassBackground
 import go.examate.hyp.ui.components.LiquidGlassButton
 import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.components.LiquidGlassToggle
+import go.examate.hyp.ui.theme.SelectedBg
 import go.examate.hyp.ui.theme.BgPrimary
 import go.examate.hyp.ui.theme.ChipBg
 import go.examate.hyp.ui.theme.Divider as DividerColor
@@ -175,7 +176,7 @@ private fun SearchSettingsScreen(onBack: () -> Unit) {
                         ) {
                             Box(
                                 Modifier.size(18.dp).clip(CircleShape)
-                                    .background(if (isSelected) Primary else ChipBg),
+                                    .background(if (isSelected) SelectedBg else ChipBg),
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (isSelected) Text("✓", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
