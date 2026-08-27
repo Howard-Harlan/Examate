@@ -20,6 +20,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.Edit
@@ -116,8 +117,8 @@ internal fun ScheduleManageTab(onEditSchedule: (String) -> Unit) {
                     if (!meta.isCurrent) {
                         Spacer(Modifier.width(4.dp))
                         LiquidGlassIconButton(
-                            icon = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "切换",
+                            icon = Icons.Filled.ArrowUpward,
+                            contentDescription = "置顶",
                             onClick = {
                                 ScheduleStorage.setCurrentSchedule(context, meta.id)
                                 metas = ScheduleStorage.loadScheduleMetas(context)
@@ -304,7 +305,10 @@ internal fun ScheduleEditPage(metaId: String, onBack: () -> Unit) {
                 LiquidGlassIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "返回",
-                    onClick = onBack,
+                    onClick = {
+                        ScheduleStorage.updateScheduleMeta(context, meta)
+                        onBack()
+                    },
                     modifier = Modifier.size(40.dp)
                 )
                 Text(
@@ -357,7 +361,6 @@ internal fun ScheduleEditPage(metaId: String, onBack: () -> Unit) {
                                     modifier = Modifier.clickable {
                                         if (meta.totalWeeks > 1) {
                                             meta = meta.copy(totalWeeks = meta.totalWeeks - 1)
-                                            ScheduleStorage.updateScheduleMeta(context, meta)
                                         }
                                     }.padding(4.dp))
                                 Text("${meta.totalWeeks}", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium,
@@ -366,7 +369,6 @@ internal fun ScheduleEditPage(metaId: String, onBack: () -> Unit) {
                                     modifier = Modifier.clickable {
                                         if (meta.totalWeeks < 30) {
                                             meta = meta.copy(totalWeeks = meta.totalWeeks + 1)
-                                            ScheduleStorage.updateScheduleMeta(context, meta)
                                         }
                                     }.padding(4.dp))
                             }
@@ -383,7 +385,6 @@ internal fun ScheduleEditPage(metaId: String, onBack: () -> Unit) {
                                     modifier = Modifier.clickable {
                                         if (meta.examWeek > 1) {
                                             meta = meta.copy(examWeek = meta.examWeek - 1)
-                                            ScheduleStorage.updateScheduleMeta(context, meta)
                                         }
                                     }.padding(4.dp))
                                 Text("第${meta.examWeek}周", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium,
@@ -392,7 +393,6 @@ internal fun ScheduleEditPage(metaId: String, onBack: () -> Unit) {
                                     modifier = Modifier.clickable {
                                         if (meta.examWeek < 30) {
                                             meta = meta.copy(examWeek = meta.examWeek + 1)
-                                            ScheduleStorage.updateScheduleMeta(context, meta)
                                         }
                                     }.padding(4.dp))
                             }
@@ -411,7 +411,7 @@ internal fun ScheduleEditPage(metaId: String, onBack: () -> Unit) {
                                 selected = meta.showSaturday,
                                 onSelect = {
                                     meta = meta.copy(showSaturday = it)
-                                    ScheduleStorage.updateScheduleMeta(context, meta)
+
                                 }
                             )
                         }
@@ -422,7 +422,7 @@ internal fun ScheduleEditPage(metaId: String, onBack: () -> Unit) {
                                 selected = meta.showSunday,
                                 onSelect = {
                                     meta = meta.copy(showSunday = it)
-                                    ScheduleStorage.updateScheduleMeta(context, meta)
+
                                 }
                             )
                         }
@@ -439,7 +439,7 @@ internal fun ScheduleEditPage(metaId: String, onBack: () -> Unit) {
                                             .background(if (selected) SelectedBg else ScheduleCellBg)
                                             .clickable {
                                                 meta = meta.copy(fontScale = scale)
-                                                ScheduleStorage.updateScheduleMeta(context, meta)
+
                                             }
                                             .padding(horizontal = 12.dp, vertical = 6.dp)
                                     ) {
@@ -538,7 +538,7 @@ internal fun ScheduleEditPage(metaId: String, onBack: () -> Unit) {
                         text = "保存", onClick = {
                             if (renameText.isNotBlank()) {
                                 meta = meta.copy(name = renameText.trim())
-                                ScheduleStorage.updateScheduleMeta(context, meta)
+
                             }
                             showRenameDialog = false
                         },
@@ -560,7 +560,7 @@ internal fun ScheduleEditPage(metaId: String, onBack: () -> Unit) {
             onDismiss = { showStartDatePicker = false },
             onConfirm = { date ->
                 meta = meta.copy(semesterStartDate = date.toString())
-                ScheduleStorage.updateScheduleMeta(context, meta)
+
                 showStartDatePicker = false
             }
         )

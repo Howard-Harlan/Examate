@@ -42,6 +42,8 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import go.examate.hyp.ui.theme.AccentBlue
+import go.examate.hyp.ui.theme.Divider
+import go.examate.hyp.ui.theme.Success
 import go.examate.hyp.ui.theme.BgPrimary
 import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.TextHint
@@ -129,7 +131,8 @@ fun ConversationGraph(
                         }
                         .size(canvasW.dp, canvasH.dp)
                 ) {
-                    // 连线(父→子)
+                    // 连线(父→子) — 未激活色在组合期读取令牌,供绘制作用域使用
+                    val inactiveLineColor = Divider
                     Canvas(Modifier.fillMaxSize()) {
                         val byId = nodes.associateBy { it.msg.id }
                         nodes.forEach { n ->
@@ -140,7 +143,7 @@ fun ConversationGraph(
                             val endY = (PAD + n.depth * ROW_H).dp.toPx()
                             val onActive = n.msg.id in activePathIds && parent.msg.id in activePathIds
                             drawLine(
-                                color = if (onActive) activeLineColor else Color(0x33000000),
+                                color = if (onActive) activeLineColor else inactiveLineColor,
                                 start = Offset(startX, startY),
                                 end = Offset(endX, endY),
                                 strokeWidth = (if (onActive) 2.5f else 1.5f).dp.toPx()
@@ -192,7 +195,7 @@ fun ConversationGraph(
 @Composable
 private fun GraphNode(node: GNode, active: Boolean, onClick: () -> Unit) {
     val isUser = node.msg.role == "user"
-    val accent = if (isUser) AccentBlue else Color(0xFF10B981)
+    val accent = if (isUser) AccentBlue else Success
     val label = node.msg.content.trim().replace("\n", " ").take(12)
         .ifEmpty { if (isUser) "提问" else if (node.msg.imageBase64 != null) "图片" else "回复" }
     Box(
@@ -203,7 +206,7 @@ private fun GraphNode(node: GNode, active: Boolean, onClick: () -> Unit) {
             .background(if (active) accent.copy(0.16f) else CardBg)
             .border(
                 width = if (active) 1.5.dp else 0.5.dp,
-                color = if (active) accent else Color(0x22000000),
+                color = if (active) accent else Divider,
                 shape = RoundedCornerShape(10.dp)
             )
             .clickable { onClick() }

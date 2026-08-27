@@ -20,6 +20,7 @@ fun MainScreen(
     onMesChatClick: () -> Unit,
     onCampusServiceClick: () -> Unit,
     onWaterCardClick: () -> Unit,
+    onLePaoClick: () -> Unit = {},
     onScheduleClick: () -> Unit,
     onDownloaderClick: () -> Unit,
     onReadingClick: () -> Unit,
@@ -48,12 +49,14 @@ fun MainScreen(
                 onChatClick = onChatClick,
                 onOpenTodo = onOpenTodo,
                 onOpenNotes = onOpenNotes,
-                onOpenSchedule = onScheduleClick
+                onOpenSchedule = onScheduleClick,
+                onMemoClick = onMemoClick
             )
             1 -> QiushiScreen(
                 onMesChatClick = onMesChatClick,
                 onCampusServiceClick = onCampusServiceClick,
                 onWaterCardClick = onWaterCardClick,
+                onLePaoClick = onLePaoClick,
                 onScheduleClick = onScheduleClick,
                 onDownloaderClick = onDownloaderClick,
                 onReadingClick = onReadingClick,
@@ -85,6 +88,7 @@ fun MainScreenRoot(
     onMesChatClick: () -> Unit,
     onCampusServiceClick: () -> Unit,
     onWaterCardClick: () -> Unit,
+    onLePaoClick: () -> Unit = {},
     onScheduleClick: () -> Unit,
     onDownloaderClick: () -> Unit,
     onReadingClick: () -> Unit,
@@ -105,6 +109,7 @@ fun MainScreenRoot(
         onMesChatClick = onMesChatClick,
         onCampusServiceClick = onCampusServiceClick,
         onWaterCardClick = onWaterCardClick,
+        onLePaoClick = onLePaoClick,
         onScheduleClick = onScheduleClick,
         onDownloaderClick = onDownloaderClick,
         onReadingClick = onReadingClick,
@@ -120,3 +125,4 @@ fun MainScreenRoot(
         onSystemSettingsClick = onSystemSettingsClick
     )
 }
+

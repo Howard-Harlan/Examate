@@ -33,15 +33,26 @@ object ImageTools {
         }
     }
 
-    /** 调用生图 API(OpenAI /v1/images/generations 格式) */
+    /**
+     * 生图公共入口(工具调用与聊天「生图模式」共用)。
+     * @return base64 图片数据或图片直链 URL;失败返回 null
+     */
+    fun generate(context: Context, prompt: String): String? = generateImage(context, prompt, "")
+
+    /** 调用生图 API(OpenAI /v1/images/generations 格式);地址/模型可用专属覆盖 */
     private fun generateImage(context: Context, prompt: String, model: String): String? {
         // 优先路由到标记「生图」能力的模型;未标记时退回首个有 Key 的厂商(向后兼容)
         val provider = MyConfig.providersFor(context, ModelProvider.CAP_IMAGE_GEN).firstOrNull()
             ?: MyConfig.loadProviders(context).firstOrNull { it.apiKey.isNotEmpty() }
             ?: return null
-        val baseUrl = ModelProvider.extractBaseUrl(provider.requestUrl)
-        val url = "$baseUrl/v1/images/generations"
-        val useModel = model.ifEmpty { provider.modelId.ifEmpty { "dall-e-3" } }
+        // 生图接口地址:厂商配置了覆盖地址则直接用,否则从聊天地址推导
+        val url = provider.imageGenUrl.ifBlank {
+            ModelProvider.extractBaseUrl(provider.requestUrl) + "/v1/images/generations"
+        }
+        // 生图模型:调用参数 > 厂商生图覆盖 > 当前模型 ID > dall-e-3
+        val useModel = model.ifEmpty {
+            provider.imageGenModel.ifBlank { provider.modelId.ifEmpty { "dall-e-3" } }
+        }
 
         val json = JSONObject()
         json.put("model", useModel)

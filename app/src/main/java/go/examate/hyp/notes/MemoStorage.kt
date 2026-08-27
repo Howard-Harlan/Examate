@@ -10,7 +10,8 @@ import java.io.File
  * 速记本地存储 — 画布版。
  *
  * 从"心情便利贴"升级为"灵感卡片":
- * - tag:轻量标签(想法/灵感/待办/学习/生活…),取代旧版心情系统,描述卡片性质而非情绪
+ * - tag:轻量分类(想法/记录),倒数日是独立卡片不在 tag 体系内;
+ *   旧版多标签(灵感/待办/学习/生活)读取时自动迁移:灵感→想法,其余→记录
  * - images:附图路径(相对 filesDir,如 "notes/memo_assets/x.jpg")
  * - colorIndex:用户自选背景色(0..7,兼容旧数据)
  * - pinned:置顶;offsetX/Y:自由画布上的拖动位置
@@ -21,27 +22,29 @@ import java.io.File
  */
 object MemoStorage {
 
-    /** 标签定义:id → (emoji, 中文名) */
+    /** 分类定义:id → (emoji, 中文名) — 少而准,输入零负担 */
     val Tags: List<Triple<String, String, String>> = listOf(
-        Triple("idea", "✨", "灵感"),
         Triple("thought", "💭", "想法"),
-        Triple("todo", "✅", "待办"),
-        Triple("study", "📚", "学习"),
-        Triple("life", "🌿", "生活"),
         Triple("record", "📝", "记录")
     )
+
+    /** 默认分类:不选择时按"记录"归档 */
+    const val DEFAULT_TAG = "record"
+
+    /** 旧标签迁移:灵感→想法;待办/学习/生活→记录;未知→记录 */
+    private fun migrateTag(raw: String): String = when (raw) {
+        "", "thought" -> raw.ifEmpty { "" }
+        "idea" -> "thought"
+        else -> "record"
+    }
 
     fun tagEmoji(id: String): String = Tags.firstOrNull { it.first == id }?.second ?: ""
 
     fun tagName(id: String): String = Tags.firstOrNull { it.first == id }?.third ?: ""
 
-    /** 标签展示色(用于统计图),低饱和色系 */
+    /** 分类展示色(用于统计图),低饱和色系 */
     fun tagColor(id: String): androidx.compose.ui.graphics.Color = when (id) {
-        "idea" -> androidx.compose.ui.graphics.Color(0xFFF4C542)
         "thought" -> androidx.compose.ui.graphics.Color(0xFF9B7BE8)
-        "todo" -> androidx.compose.ui.graphics.Color(0xFF6EC9B4)
-        "study" -> androidx.compose.ui.graphics.Color(0xFF5B8DEF)
-        "life" -> androidx.compose.ui.graphics.Color(0xFF8FBF7F)
         "record" -> androidx.compose.ui.graphics.Color(0xFFE39B5B)
         else -> androidx.compose.ui.graphics.Color(0xFFB8B8B8)
     }
@@ -82,7 +85,7 @@ object MemoStorage {
                     Memo(
                         id = o.optString("id"),
                         content = o.optString("content"),
-                        tag = o.optString("tag", ""),
+                        tag = migrateTag(o.optString("tag", "")),
                         colorIndex = o.optInt("colorIndex"),
                         images = imgs,
                         pinned = o.optBoolean("pinned"),

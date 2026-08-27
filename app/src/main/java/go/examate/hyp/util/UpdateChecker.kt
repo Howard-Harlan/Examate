@@ -1,152 +1,114 @@
 package go.examate.hyp.util
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.os.Build
 import android.util.Log
+import androidx.core.app.NotificationCompat
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
+import java.time.LocalDate
 import java.util.concurrent.TimeUnit
 
 /**
- * 更新检查器:通过 GitHub Releases API 检查最新版本
+ * 更新检查器:双源 fallback 策略检查最新版本。
  *
- * 实现说明:
- * - 请求 `https://api.github.com/repos/{owner}/{repo}/releases/latest`
- * - 国内网络:api.github.com 通常可访问,git clone / release 下载可能慢
- * - 下载链接用 ghproxy 加速:将 github.com → ghproxy.com/https://github.com
+ * - 主源 Gitee(国内快): https://gitee.com/api/v5/repos/danfuu/Examate/releases/latest
+ * - 备源 GitHub:        https://api.github.com/repos/duringk/Examate/releases/latest
  *
- * 使用方式:
- * ```
- * val result = UpdateChecker.checkUpdate()
- * when (result) {
- *     is UpdateChecker.Result.NewVersion -> // 有新版本,显示更新弹窗
- *     is UpdateChecker.Result.UpToDate -> // 已是最新
- *     is UpdateChecker.Result.Error -> // 检查失败
- * }
- * ```
- *
- * 配置:发布到 GitHub 后,修改 [OWNER] 和 [REPO] 为实际仓库地址。
+ * Gitee 无 release 或请求失败时自动回退到 GitHub,两个源都失败才报错。
+ * tag_name 支持任意前缀(如 "版本更新v1.1"),用正则提取版本号。
  */
 object UpdateChecker {
 
     private const val TAG = "UpdateChecker"
 
-    /** GitHub 仓库所有者 */
-    private const val OWNER = "duringk"
-
-    /** GitHub 仓库名 */
-    private const val REPO = "Examate"
-
-    /** GitHub API 地址(api.github.com 在国内一般可访问) */
-    private const val API_URL = "https://api.github.com/repos/$OWNER/$REPO/releases/latest"
+    private const val GITEE_API = "https://gitee.com/api/v5/repos/danfuu/Examate/releases/latest"
+    private const val GITHUB_API = "https://api.github.com/repos/duringk/Examate/releases/latest"
 
     private val client by lazy {
         OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(20, TimeUnit.SECONDS)
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
             .build()
     }
 
-    /** 检查结果 */
     sealed class Result {
-        /** 有新版本 */
         data class NewVersion(
-            val latestVersion: String,   // 最新版本号(如 "1.1")
-            val currentVersion: String,  // 当前版本号(如 "1.0")
-            val releaseNotes: String,    // 更新日志(markdown)
-            val downloadUrl: String,     // APK 下载链接(已加速)
-            val releasePageUrl: String   // Release 页面链接
+            val latestVersion: String,
+            val currentVersion: String,
+            val releaseNotes: String,
+            val downloadUrl: String,
+            val releasePageUrl: String
         ) : Result()
 
-        /** 已是最新版本 */
         data class UpToDate(val currentVersion: String) : Result()
-
-        /** 检查失败 */
         data class Error(val message: String) : Result()
     }
 
-    /**
-     * 检查更新
-     * @param currentVersion 当前版本号(从 BuildConfig.VERSION_NAME 获取)
-     */
     suspend fun checkUpdate(currentVersion: String): Result = withContext(Dispatchers.IO) {
+        val github = fetchFromSource(GITHUB_API, isGitHub = true, currentVersion)
+        if (github !is Result.Error) return@withContext github
+
+        val gitee = fetchFromSource(GITEE_API, isGitHub = false, currentVersion)
+        if (gitee !is Result.Error) return@withContext gitee
+
+        Result.Error("GitHub: ${github.message}; Gitee: ${gitee.message}")
+    }
+
+    private fun fetchFromSource(apiUrl: String, isGitHub: Boolean, currentVersion: String): Result {
         try {
-            val request = Request.Builder()
-                .url(API_URL)
-                .header("Accept", "application/vnd.github+json")
-                .header("User-Agent", "ExamMate-App")  // GitHub API 要求 User-Agent
-                .build()
-
-            client.newCall(request).execute().use { resp ->
-                if (!resp.isSuccessful) {
-                    return@withContext Result.Error("GitHub API 返回 ${resp.code}")
-                }
-
-                val body = resp.body?.string()
-                    ?: return@withContext Result.Error("响应为空")
-
+            val builder = Request.Builder().url(apiUrl)
+            if (isGitHub) {
+                builder.header("Accept", "application/vnd.github+json")
+                builder.header("User-Agent", "Examate-App")
+            }
+            client.newCall(builder.build()).execute().use { resp ->
+                if (!resp.isSuccessful) return Result.Error("API 返回 ${resp.code}")
+                val body = resp.body?.string() ?: return Result.Error("响应为空")
                 val json = JSONObject(body)
+
                 val tagName = json.optString("tag_name", "")
-                // tag_name 通常是 "v1.0" 或 "1.0",去掉前缀 v
-                val latestVersion = tagName.removePrefix("v").removePrefix("V").trim()
+                val latestVersion = Regex("\\d+(\\.\\d+)+").find(tagName)?.value
+                    ?: tagName.removePrefix("v").removePrefix("V").trim()
+                if (latestVersion.isEmpty()) return Result.Error("无法解析版本号")
+
                 val releaseNotes = json.optString("body", "暂无更新说明")
                 val releasePageUrl = json.optString("html_url", "")
 
-                // 从 assets 中找 APK 下载链接
-                val assets = json.optJSONArray("assets")
                 var apkUrl = ""
+                val assets = json.optJSONArray("assets")
                 if (assets != null && assets.length() > 0) {
                     for (i in 0 until assets.length()) {
                         val asset = assets.getJSONObject(i)
-                        val name = asset.optString("name", "")
-                        if (name.endsWith(".apk")) {
+                        if (asset.optString("name", "").endsWith(".apk")) {
                             apkUrl = asset.optString("browser_download_url", "")
                             break
                         }
                     }
                 }
+                val downloadUrl = if (apkUrl.isNotEmpty()) apkUrl else releasePageUrl
 
-                // 如果没有 apk asset,用 release 页面让用户手动下载
-                val downloadUrl = if (apkUrl.isNotEmpty()) {
-                    accelerateUrl(apkUrl)
-                } else {
-                    releasePageUrl
-                }
-
-                if (latestVersion.isEmpty()) {
-                    return@withContext Result.Error("无法解析版本号")
-                }
-
-                // 版本比较
-                if (isNewer(latestVersion, currentVersion)) {
+                return if (isNewer(latestVersion, currentVersion)) {
                     Result.NewVersion(latestVersion, currentVersion, releaseNotes, downloadUrl, releasePageUrl)
                 } else {
                     Result.UpToDate(currentVersion)
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "checkUpdate failed", e)
-            Result.Error("网络异常: ${e.message ?: "未知错误"}")
+            Log.e(TAG, "fetchFromSource($apiUrl) failed", e)
+            return Result.Error("网络异常: ${e.message ?: "未知错误"}")
         }
     }
 
-    /**
-     * 加速 GitHub 下载链接(国内 ghproxy 镜像)
-     * github.com/xxx → ghproxy.com/https://github.com/xxx
-     */
-    private fun accelerateUrl(url: String): String {
-        return if (url.contains("github.com")) {
-            "https://ghproxy.com/$url"
-        } else {
-            url
-        }
-    }
-
-    /**
-     * 版本号比较:判断 latest 是否比 current 新
-     * 支持 "1.0" / "1.0.1" / "1.2.3" 格式
-     */
     private fun isNewer(latest: String, current: String): Boolean {
         val latestParts = latest.split(".").map { it.toIntOrNull() ?: 0 }
         val currentParts = current.split(".").map { it.toIntOrNull() ?: 0 }
@@ -157,6 +119,56 @@ object UpdateChecker {
             if (l > c) return true
             if (l < c) return false
         }
-        return false  // 相等
+        return false
+    }
+
+    // ════════════════════════════════════════
+    //  静默检查(当天首次进入应用时后台触发)
+    // ════════════════════════════════════════
+
+    private const val CHANNEL_ID = "update_check"
+    private const val NOTIFICATION_ID = 1001
+
+    /**
+     * 当天首次调用时静默检查更新,有新版本则发通知。
+     * 同一天只检查一次(用 SharedPreferences 记录日期)。
+     */
+    fun silentCheckIfNeeded(context: Context) {
+        val prefs = context.getSharedPreferences("update_check", Context.MODE_PRIVATE)
+        val today = LocalDate.now().toString()
+        if (prefs.getString("last_check_date", "") == today) return
+        prefs.edit().putString("last_check_date", today).apply()
+
+        val currentVersion = go.examate.hyp.BuildConfig.VERSION_NAME
+        CoroutineScope(Dispatchers.IO).launch {
+            when (val result = checkUpdate(currentVersion)) {
+                is Result.NewVersion -> showUpdateNotification(context, result)
+                else -> {}
+            }
+        }
+    }
+
+    private fun showUpdateNotification(context: Context, result: Result.NewVersion) {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            nm.createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, "更新提醒", NotificationManager.IMPORTANCE_LOW)
+            )
+        }
+        val intent = Intent(context, go.examate.hyp.AboutActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val pi = PendingIntent.getActivity(
+            context, 0, intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("发现新版本 ${result.latestVersion}")
+            .setContentText(result.releaseNotes.take(60))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(result.releaseNotes))
+            .setContentIntent(pi)
+            .setAutoCancel(true)
+            .build()
+        nm.notify(NOTIFICATION_ID, notification)
     }
 }

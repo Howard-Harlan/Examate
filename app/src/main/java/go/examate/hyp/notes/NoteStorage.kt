@@ -26,8 +26,17 @@ object NoteStorage {
         val createdAt: Long,
         val updatedAt: Long,
         val pinned: Boolean = false,
+        /** 所属文件夹 id,空 = 根目录 */
+        val folderId: String = "",
         /** 是否作为 AI 搜题的知识来源(默认是,可在笔记「功能设置」里关闭) */
         val knowledgeSource: Boolean = true
+    )
+
+    /** 笔记文件夹 */
+    data class NoteFolder(
+        val id: String,
+        val name: String,
+        val createdAt: Long
     )
 
     /** 索引条目(无正文,用于列表展示) */
@@ -37,6 +46,7 @@ object NoteStorage {
         val createdAt: Long,
         val updatedAt: Long,
         val pinned: Boolean = false,
+        val folderId: String = "",
         val knowledgeSource: Boolean = true
     )
 
@@ -48,6 +58,9 @@ object NoteStorage {
 
     private fun indexFile(context: Context): File =
         File(notesDir(context), "index.json")
+
+    private fun foldersFile(context: Context): File =
+        File(notesDir(context), "folders.json")
 
     private fun noteFile(context: Context, id: String): File =
         File(notesDir(context), "$id.md")
@@ -67,6 +80,7 @@ object NoteStorage {
                     createdAt = o.optLong("createdAt"),
                     updatedAt = o.optLong("updatedAt"),
                     pinned = o.optBoolean("pinned"),
+                    folderId = o.optString("folderId", ""),
                     knowledgeSource = o.optBoolean("knowledgeSource", true)
                 ))
             }
@@ -85,6 +99,7 @@ object NoteStorage {
                     put("createdAt", e.createdAt)
                     put("updatedAt", e.updatedAt)
                     put("pinned", e.pinned)
+                    put("folderId", e.folderId)
                     put("knowledgeSource", e.knowledgeSource)
                 })
             }
@@ -92,21 +107,96 @@ object NoteStorage {
         }
     }
 
-    /** 创建笔记:生成 id,写 .md 文件,追加到索引 */
-    fun createNote(context: Context, title: String, content: String): Note {
+    // ════════════════════════════════════════
+    //  文件夹
+    // ════════════════════════════════════════
+
+    /** 文件夹列表(按创建时间升序) */
+    fun listFolders(context: Context): List<NoteFolder> {
+        val result = mutableListOf<NoteFolder>()
+        val f = foldersFile(context)
+        if (!f.exists()) return result
+        runCatching {
+            val arr = JSONArray(f.readText())
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                result.add(NoteFolder(
+                    id = o.optString("id"),
+                    name = o.optString("name"),
+                    createdAt = o.optLong("createdAt")
+                ))
+            }
+        }
+        return result.sortedBy { it.createdAt }
+    }
+
+    private fun writeFolders(context: Context, folders: List<NoteFolder>) {
+        runCatching {
+            val arr = JSONArray()
+            folders.forEach { fd ->
+                arr.put(JSONObject().apply {
+                    put("id", fd.id)
+                    put("name", fd.name)
+                    put("createdAt", fd.createdAt)
+                })
+            }
+            foldersFile(context).writeText(arr.toString())
+        }
+    }
+
+    /** 创建文件夹,返回新文件夹 */
+    fun createFolder(context: Context, name: String): NoteFolder {
+        val folder = NoteFolder(
+            id = "folder_${System.currentTimeMillis()}",
+            name = name.trim().ifBlank { "未命名文件夹" },
+            createdAt = System.currentTimeMillis()
+        )
+        writeFolders(context, listFolders(context) + folder)
+        return folder
+    }
+
+    /** 重命名文件夹 */
+    fun renameFolder(context: Context, folderId: String, name: String) {
+        writeFolders(context, listFolders(context).map {
+            if (it.id == folderId) it.copy(name = name.trim().ifBlank { it.name }) else it
+        })
+    }
+
+    /** 删除文件夹:文件夹内笔记移回根目录,不删除笔记本身 */
+    fun deleteFolder(context: Context, folderId: String) {
+        writeFolders(context, listFolders(context).filterNot { it.id == folderId })
+        writeIndex(context, readIndex(context).map {
+            if (it.folderId == folderId) it.copy(folderId = "") else it
+        })
+    }
+
+    /** 移动笔记到文件夹(folderId 空 = 移回根目录) */
+    fun moveNoteToFolder(context: Context, noteId: String, folderId: String) {
+        runCatching {
+            val entries = readIndex(context)
+            val idx = entries.indexOfFirst { it.id == noteId }
+            if (idx >= 0) {
+                entries[idx] = entries[idx].copy(folderId = folderId)
+                writeIndex(context, entries)
+            }
+        }
+    }
+
+    /** 创建笔记:生成 id,写 .md 文件,追加到索引(可指定所属文件夹) */
+    fun createNote(context: Context, title: String, content: String, folderId: String = ""): Note {
         val now = System.currentTimeMillis()
         val id = "note_$now"
-        val note = Note(id = id, title = title, content = content, createdAt = now, updatedAt = now)
+        val note = Note(id = id, title = title, content = content, createdAt = now, updatedAt = now, folderId = folderId)
         runCatching {
             noteFile(context, id).writeText(content)
             val entries = readIndex(context)
-            entries.add(IndexEntry(id, title, now, now, knowledgeSource = true))
+            entries.add(IndexEntry(id, title, now, now, folderId = folderId, knowledgeSource = true))
             writeIndex(context, entries)
         }
         return note
     }
 
-    /** 保存笔记:覆盖写 .md 文件,更新索引中的 updatedAt/title */
+    /** 保存笔记:覆盖写 .md 文件,更新索引中的 updatedAt/title(保留 folderId) */
     fun saveNote(context: Context, note: Note) {
         runCatching {
             noteFile(context, note.id).writeText(note.content)
@@ -114,9 +204,9 @@ object NoteStorage {
             val now = System.currentTimeMillis()
             val idx = entries.indexOfFirst { it.id == note.id }
             if (idx >= 0) {
-                entries[idx] = IndexEntry(note.id, note.title, entries[idx].createdAt, now, note.pinned, note.knowledgeSource)
+                entries[idx] = IndexEntry(note.id, note.title, entries[idx].createdAt, now, note.pinned, entries[idx].folderId, note.knowledgeSource)
             } else {
-                entries.add(IndexEntry(note.id, note.title, note.createdAt, now, note.pinned, note.knowledgeSource))
+                entries.add(IndexEntry(note.id, note.title, note.createdAt, now, note.pinned, note.folderId, note.knowledgeSource))
             }
             writeIndex(context, entries)
         }
@@ -144,6 +234,7 @@ object NoteStorage {
                     createdAt = e.createdAt,
                     updatedAt = e.updatedAt,
                     pinned = e.pinned,
+                    folderId = e.folderId,
                     knowledgeSource = e.knowledgeSource
                 )
             }
@@ -163,6 +254,7 @@ object NoteStorage {
                 createdAt = entry?.createdAt ?: 0L,
                 updatedAt = entry?.updatedAt ?: 0L,
                 pinned = entry?.pinned ?: false,
+                folderId = entry?.folderId ?: "",
                 knowledgeSource = entry?.knowledgeSource ?: true
             )
         }.getOrNull()

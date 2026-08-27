@@ -45,6 +45,9 @@ class MainActivity : ComponentActivity() {
 
         updatePermissionStatus()
 
+        // 当天首次进入应用时后台静默检查更新
+        go.examate.hyp.util.UpdateChecker.silentCheckIfNeeded(this)
+
         setContent {
             ExamateTheme {
                 MainScreenRoot(
@@ -53,6 +56,7 @@ class MainActivity : ComponentActivity() {
                     onMesChatClick = { navigator.gotoMesChat() },
                     onCampusServiceClick = { navigator.gotoCampusService() },
                     onWaterCardClick = { navigator.gotoWaterCard() },
+                    onLePaoClick = { navigator.gotoLePao() },
                     onScheduleClick = { navigator.gotoSchedule() },
                     onDownloaderClick = { navigator.gotoDownloader() },
                     onReadingClick = { navigator.gotoReading() },
@@ -88,3 +92,4 @@ class MainActivity : ComponentActivity() {
         mainViewModel.updateShizukuGranted(permissionHelper.isShizukuGranted())
     }
 }
+

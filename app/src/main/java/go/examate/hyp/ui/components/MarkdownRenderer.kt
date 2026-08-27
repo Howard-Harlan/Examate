@@ -14,6 +14,7 @@ import go.examate.hyp.util.ToastUtil
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -48,6 +49,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
@@ -65,8 +67,13 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import go.examate.hyp.ui.theme.CardBg
+import go.examate.hyp.ui.theme.IsDark
+import go.examate.hyp.ui.theme.Divider
+import go.examate.hyp.ui.theme.ChipBg
+import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.InputBg
 import go.examate.hyp.ui.theme.TextPrimary
+import go.examate.hyp.ui.theme.TextSecondary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -74,6 +81,16 @@ import org.json.JSONObject
 
 /** 正文段落行距增量(相对字号),供「预览主题」全局注入,默认 6 */
 private val LocalLineHeightExtra = androidx.compose.runtime.staticCompositionLocalOf { 6 }
+
+/**
+ * Markdown 链接点击处理器 — 默认 null(不可点击,聊天等场景行为不变);
+ * 笔记预览等需要跳转的场景经 CompositionLocalProvider 注入。
+ */
+val LocalMarkdownLinkHandler = androidx.compose.runtime.staticCompositionLocalOf<((String) -> Unit)?> { null }
+
+/** Markdown 链接色:浅色经典蓝,深色提亮蓝(渲染层非组合上下文使用,静态定义) */
+private val MarkdownLinkBlue = Color(0xFF0066CC)
+private val MarkdownLinkBlueDark = Color(0xFF7EB3FF)
 
 @Composable
 fun MarkdownText(
@@ -509,11 +526,14 @@ private fun InlineContent(text: String, textColor: Color, fontSize: Int, isStrea
                 }
                 InlineKind.Text -> if (seg.text.isNotBlank()) {
                     SelectionContainer {
-                        Text(
-                            text = renderInline(seg.text, textColor),
+                        val annotated = renderInline(
+                            seg.text, textColor,
+                            if (IsDark) MarkdownLinkBlueDark else MarkdownLinkBlue
+                        )
+                        LinkAwareText(
+                            annotated = annotated,
                             color = textColor,
-                            fontSize = fontSize.sp,
-                            lineHeight = (fontSize + LocalLineHeightExtra.current).sp
+                            fontSize = fontSize
                         )
                     }
                 }
@@ -542,11 +562,14 @@ private fun RichInlineText(
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
+    // 链接色随深浅色自适应(浅色经典蓝,深色提亮)
+    val linkColor = if (IsDark) MarkdownLinkBlueDark else MarkdownLinkBlue
     val hasMath = remember(text) { text.contains('$') && INLINE_MATH_REGEX.containsMatchIn(text) }
     if (!hasMath || isStreaming || !KatexRenderer.fontsAvailable(context)) {
-        Text(
-            renderInline(text, textColor), color = textColor, fontSize = fontSize.sp,
-            fontWeight = fontWeight, fontStyle = fontStyle, lineHeight = (fontSize + LocalLineHeightExtra.current).sp
+        LinkAwareText(
+            annotated = renderInline(text, textColor, linkColor),
+            color = textColor, fontSize = fontSize,
+            fontWeight = fontWeight, fontStyle = fontStyle
         )
         return
     }
@@ -564,7 +587,7 @@ private fun RichInlineText(
     val annotated = buildAnnotatedString {
         var last = 0
         INLINE_MATH_REGEX.findAll(text).forEach { m ->
-            if (m.range.first > last) parseInlineRec(text.substring(last, m.range.first), textColor, SpanStyle())
+            if (m.range.first > last) parseInlineRec(text.substring(last, m.range.first), textColor, SpanStyle(), linkColor)
             val latex = m.groupValues[1]
             val id = "m${idx++}"
             val bmp = bitmaps[latex]
@@ -590,11 +613,45 @@ private fun RichInlineText(
             }
             last = m.range.last + 1
         }
-        if (last < text.length) parseInlineRec(text.substring(last), textColor, SpanStyle())
+        if (last < text.length) parseInlineRec(text.substring(last), textColor, SpanStyle(), linkColor)
     }
     Text(
         annotated, inlineContent = inlineContent, color = textColor, fontSize = fontSize.sp,
         fontWeight = fontWeight, fontStyle = fontStyle, lineHeight = (fontSize + LocalLineHeightExtra.current).sp
+    )
+}
+
+/**
+ * 带链接点击的文本:注册 [LocalMarkdownLinkHandler] 时可点按 [text](url) 跳转;
+ * 未注册时与普通 Text 行为一致(点击无响应,聊天等场景不受影响)。
+ */
+@Composable
+private fun LinkAwareText(
+    annotated: AnnotatedString,
+    color: Color,
+    fontSize: Int,
+    fontWeight: FontWeight? = null,
+    fontStyle: FontStyle? = null
+) {
+    val linkHandler = LocalMarkdownLinkHandler.current
+    var layout by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
+    Text(
+        text = annotated,
+        color = color,
+        fontSize = fontSize.sp,
+        fontWeight = fontWeight,
+        fontStyle = fontStyle,
+        lineHeight = (fontSize + LocalLineHeightExtra.current).sp,
+        onTextLayout = { layout = it },
+        modifier = if (linkHandler != null) {
+            Modifier.pointerInput(annotated) {
+                detectTapGestures { pos ->
+                    val l = layout ?: return@detectTapGestures
+                    val off = l.getOffsetForPosition(pos).coerceIn(0, annotated.length)
+                    annotated.getStringAnnotations("URL", off, off).firstOrNull()?.let { linkHandler(it.item) }
+                }
+            }
+        } else Modifier
     )
 }
 
@@ -664,7 +721,7 @@ private fun RenderBox(
             .padding(10.dp)
     ) {
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            Text(title, color = Color(0xFF5F6B7A), fontSize = 11.sp, fontWeight = FontWeight.Medium)
+            Text(title, color = TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
             Spacer(Modifier.weight(1f))
             BoxAction("复制") { copyText(context, raw) }
             Spacer(Modifier.width(8.dp))
@@ -704,11 +761,11 @@ private fun RenderBox(
 private fun BoxAction(text: String, onClick: () -> Unit) {
     Text(
         text = text,
-        color = Color(0xFF3867D6),
+        color = AccentBlue,
         fontSize = 12.sp,
         modifier = Modifier
             .clip(RoundedCornerShape(6.dp))
-            .background(Color(0x0F3867D6))
+            .background(AccentBlue.copy(alpha = 0.08f))
             .padding(horizontal = 8.dp, vertical = 4.dp)
             .clickable(onClick = onClick)
     )
@@ -737,11 +794,11 @@ private fun GenericCodeBlock(block: MdBlock.CodeBlock) {
                 Spacer(Modifier.height(6.dp))
                 Text(
                     text = if (expanded) "收起" else "展开全部 ($lineCount 行)",
-                    color = Color(0xFF3867D6),
+                    color = AccentBlue,
                     fontSize = 12.sp,
                     modifier = Modifier
                         .clip(RoundedCornerShape(6.dp))
-                        .background(Color(0x0F3867D6))
+                        .background(AccentBlue.copy(alpha = 0.08f))
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                         .clickable { expanded = !expanded }
                 )
@@ -759,7 +816,7 @@ private fun CodeText(text: String, modifier: Modifier = Modifier) {
     SelectionContainer {
         Text(
             text = text,
-            color = Color(0xFF263238),
+            color = TextPrimary,
             fontSize = 12.sp,
             lineHeight = 18.sp,
             fontFamily = FontFamily.Monospace,
@@ -793,6 +850,7 @@ private fun TableView(headers: List<String>, rows: List<List<String>>, isStreami
     val colCount = maxOf(headers.size, rows.maxOfOrNull { it.size } ?: 0)
     // 在 @Composable 上下文读取颜色,供 remember lambda 使用
     val tableTextColor = TextPrimary
+    val tableLinkColor = if (IsDark) MarkdownLinkBlueDark else MarkdownLinkBlue
     // 量出每列最大内容宽度并统一列宽 → 跨行对齐(修复"部分行偏移";列宽含内边距与余量)
     val colWidths = remember(headers, rows) {
         val style = androidx.compose.ui.text.TextStyle(fontSize = 12.sp)
@@ -801,7 +859,7 @@ private fun TableView(headers: List<String>, rows: List<List<String>>, isStreami
                 add(headers.getOrNull(c).orEmpty())
                 rows.forEach { add(it.getOrNull(c).orEmpty()) }
             }
-            val maxPx = cells.maxOf { measurer.measure(renderInline(it, tableTextColor), style = style).size.width }
+            val maxPx = cells.maxOf { measurer.measure(renderInline(it, tableTextColor, tableLinkColor), style = style).size.width }
             with(density) { maxPx.toDp() } + 24.dp
         }
     }
@@ -812,7 +870,7 @@ private fun TableView(headers: List<String>, rows: List<List<String>>, isStreami
             .background(CardBg)
     ) {
         if (headers.isNotEmpty()) {
-            Row(Modifier.background(Color(0xFFEFF3FA)).padding(vertical = 7.dp)) {
+            Row(Modifier.background(ChipBg).padding(vertical = 7.dp)) {
                 repeat(colCount) { c ->
                     Box(Modifier.width(colWidths[c]).padding(horizontal = 8.dp)) {
                         RichInlineText(headers.getOrNull(c).orEmpty(), TextPrimary, 12, isStreaming, fontWeight = FontWeight.SemiBold)
@@ -821,7 +879,7 @@ private fun TableView(headers: List<String>, rows: List<List<String>>, isStreami
             }
         }
         rows.forEachIndexed { rIdx, row ->
-            HorizontalDivider(color = Color(0x11000000), thickness = 0.5.dp)
+            HorizontalDivider(color = Divider, thickness = 0.5.dp)
             Row(
                 Modifier
                     .background(if (rIdx % 2 == 1) InputBg else CardBg)
@@ -926,14 +984,16 @@ private fun splitInlineContent(text: String): List<InlineSegment> {
  * 现改为递归:遇到 ** * ` ~~ [ 时,对内部子串递归调用 parseInlineRec,
  * 用 parentStyle.merge(...) 让粗体+斜体等样式可叠加。
  */
-private fun renderInline(text: String, baseColor: Color): AnnotatedString = buildAnnotatedString {
-    parseInlineRec(text, baseColor, SpanStyle())
+private fun renderInline(text: String, baseColor: Color, linkColor: Color = MarkdownLinkBlue): AnnotatedString =
+    buildAnnotatedString {
+    parseInlineRec(text, baseColor, SpanStyle(), linkColor)
 }
 
 private fun AnnotatedString.Builder.parseInlineRec(
     text: String,
     baseColor: Color,
-    parentStyle: SpanStyle
+    parentStyle: SpanStyle,
+    linkColor: Color = MarkdownLinkBlue
 ) {
     var i = 0
     while (i < text.length) {
@@ -947,10 +1007,10 @@ private fun AnnotatedString.Builder.parseInlineRec(
                     val url = text.substring(closeBracket + 2, closeParen)
                     pushStringAnnotation(tag = "URL", annotation = url)
                     val linkStyle = parentStyle.merge(
-                        SpanStyle(color = Color(0xFF0066CC), fontWeight = FontWeight.Medium)
+                        SpanStyle(color = linkColor, fontWeight = FontWeight.Medium)
                     )
                     withStyle(linkStyle) {
-                        parseInlineRec(linkText, baseColor, linkStyle)
+                        parseInlineRec(linkText, baseColor, linkStyle, linkColor)
                     }
                     pop()
                     i = closeParen + 1
@@ -966,7 +1026,7 @@ private fun AnnotatedString.Builder.parseInlineRec(
                 val merged = parentStyle.merge(
                     SpanStyle(textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough)
                 )
-                withStyle(merged) { parseInlineRec(inner, baseColor, merged) }
+                withStyle(merged) { parseInlineRec(inner, baseColor, merged, linkColor) }
                 i = end + 2
                 continue
             }
@@ -977,7 +1037,7 @@ private fun AnnotatedString.Builder.parseInlineRec(
             if (end != -1) {
                 val inner = text.substring(i + 2, end)
                 val merged = parentStyle.merge(SpanStyle(fontWeight = FontWeight.Bold))
-                withStyle(merged) { parseInlineRec(inner, baseColor, merged) }
+                withStyle(merged) { parseInlineRec(inner, baseColor, merged, linkColor) }
                 i = end + 2
                 continue
             }
@@ -988,7 +1048,7 @@ private fun AnnotatedString.Builder.parseInlineRec(
             if (end != -1 && end != i + 1 && (end + 1 >= text.length || text[end + 1] != '*')) {
                 val inner = text.substring(i + 1, end)
                 val merged = parentStyle.merge(SpanStyle(fontStyle = FontStyle.Italic))
-                withStyle(merged) { parseInlineRec(inner, baseColor, merged) }
+                withStyle(merged) { parseInlineRec(inner, baseColor, merged, linkColor) }
                 i = end + 1
                 continue
             }

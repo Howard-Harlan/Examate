@@ -189,16 +189,6 @@ class UnifiedFloatingService : Service() {
         PixelFormat.TRANSLUCENT)
     private lateinit var askContainerView: View
     private var isAskViewShow = false
-    // 求是悬浮窗参数(独立于 askView,不传主对话历史)
-    val qiushiViewParams = WindowManager.LayoutParams(
-        800,
-        1000,
-        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_SECURE,
-        PixelFormat.TRANSLUCENT)
-    private lateinit var qiushiContainerView: View
-    private var isQiushiViewShow = false
-    private var qiushiThread: Thread? = null
     // 网页浏览窗口参数
     val webViewParams = WindowManager.LayoutParams(
         WindowManager.LayoutParams.WRAP_CONTENT,
@@ -237,7 +227,6 @@ class UnifiedFloatingService : Service() {
             askViewParams.flags = askViewParams.flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
             webViewParams.flags = webViewParams.flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
             selectZoneViewParams.flags = selectZoneViewParams.flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
-            qiushiViewParams.flags = qiushiViewParams.flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
         } else {
             try {
                 launcherSecureCountListener()
@@ -249,8 +238,6 @@ class UnifiedFloatingService : Service() {
         initToggleBtnView()
         // 初始化AI问问
         initAskView()
-        // 初始化求是悬浮窗
-        initQiushiView()
         // 初始化网页浏览
         initWebView()
         // 注:选区窗口依赖 mode,故在 onStartCommand 中根据模式初始化(见 initSelectZoneView)
@@ -261,12 +248,7 @@ class UnifiedFloatingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val modeStr = intent?.getStringExtra(EXTRA_MODE)
-        // 求是模式:独立悬浮窗,不影响主模式,不传主对话历史
-        if (modeStr == "qiushi") {
-            val content = intent?.getStringExtra("qiushi_content") ?: ""
-            showQiushiView(content)
-            return START_NOT_STICKY
-        }
+        // 求是已解耦为独立服务 QiushiFloatingService
         if (modeStr == "screenshot") {
             mode = FloatingMode.SCREENSHOT
             currentMode = FloatingMode.SCREENSHOT
@@ -355,10 +337,6 @@ class UnifiedFloatingService : Service() {
         val t = thread
         if (t != null && t.isAlive) t.interrupt()
         thread = null
-        // 中断求是线程
-        val qt = qiushiThread
-        if (qt != null && qt.isAlive) qt.interrupt()
-        qiushiThread = null
         isActive = false
         currentMode = FloatingMode.NONE
         // 悬浮窗关闭后,恢复在后台任务列表显示
@@ -699,28 +677,31 @@ class UnifiedFloatingService : Service() {
                                 currentProvider.endpointType
                             )
                         }
-                        // 无障碍模式 + 非流式:沿用 FloatingWidgetService 的手动 JSON 解析
+                        // 无障碍模式 + 非流式:统一走 extractContent(兼容 chat/responses/anthropic)
                         mode == FloatingMode.ACCESSIBILITY -> {
-                            val resText = HttpUtils.sendPostRequest(
-                                currentProvider.requestUrl, currentProvider.modelId, userInput,
-                                currentProvider.apiKey, MyConfig.SYSTEM_PROMPT, currentProvider.enableThinking
-                            )
-                            if (resText == null) return@Runnable
-                            try {
-                                val resJson = JSONObject(resText)
-                                val choicesArray = resJson.getJSONArray("choices")
-                                val firstChoice = choicesArray.getJSONObject(0)
-                                val messageObject = firstChoice.getJSONObject("message")
-                                val content = messageObject.getString("content")
+                            val resText = try {
+                                HttpUtils.sendPostRequestSync(
+                                    currentProvider.requestUrl, currentProvider.modelId, userInput,
+                                    currentProvider.apiKey, MyConfig.SYSTEM_PROMPT,
+                                    currentProvider.enableThinking, currentProvider.endpointType
+                                )
+                            } catch (e: Exception) {
                                 handler.post {
+                                    errorTextView.visibility = View.VISIBLE
+                                    errorTextView.text = "请求失败: ${e.message}"
+                                    setSubmitBtnStatus(true)
+                                }
+                                return@Runnable
+                            }
+                            val content = HttpUtils.extractContent(resText, currentProvider.endpointType)
+                            handler.post {
+                                if (content.isEmpty()) {
+                                    errorTextView.visibility = View.VISIBLE
+                                    errorTextView.text = "解析失败:\n$resText"
+                                } else {
                                     textView.text = AnswerFormatter.format(content)
                                 }
-                            } catch (e: JSONException) {
-                                handler.post {
-                                    textView.text = "Error parse JSON Content:\n$resText"
-                                }
-                            } finally {
-                                handler.post { setSubmitBtnStatus(true) }
+                                setSubmitBtnStatus(true)
                             }
                         }
                         // 截图模式:只用非流式 sendPostRequestSync + extractContent
@@ -875,197 +856,6 @@ class UnifiedFloatingService : Service() {
 
     // ═══ 求是悬浮窗:独立于 askView,不传主对话历史 ═══
 
-    @SuppressLint("ClickableViewAccessibility")
-    private fun initQiushiView() {
-        qiushiViewParams.gravity = Gravity.CENTER_VERTICAL or Gravity.CENTER_HORIZONTAL
-        qiushiViewParams.x = 0
-        qiushiViewParams.y = 0
-        qiushiContainerView = LayoutInflater.from(this).inflate(R.layout.qiushi_widget, null)
-
-        val outputTextView = qiushiContainerView.findViewById<TextView>(R.id.qiushi_output)
-        val scrollView = qiushiContainerView.findViewById<ScrollView>(R.id.qiushi_scroll)
-        val editText = qiushiContainerView.findViewById<EditText>(R.id.qiushi_input)
-
-        // 关闭按钮
-        qiushiContainerView.findViewById<View>(R.id.qiushi_close_btn).setOnClickListener {
-            isQiushiViewShow = false
-            if (this::qiushiContainerView.isInitialized && qiushiContainerView.isAttachedToWindow) {
-                windowManager.removeView(qiushiContainerView)
-            }
-            val t = qiushiThread
-            if (t != null && t.isAlive) t.interrupt()
-            setQiushiSubmitBtnStatus(true)
-        }
-
-        // 发送按钮 → SSE 流式请求(不传主对话历史,仅单条用户消息)
-        qiushiContainerView.findViewById<View>(R.id.qiushi_submit_btn).setOnClickListener {
-            val userInput = editText.text.toString()
-            if (userInput.isEmpty()) return@setOnClickListener
-
-            outputTextView.text = ""
-            setQiushiSubmitBtnStatus(false)
-            // 窗口失焦
-            qiushiViewParams.flags = qiushiViewParams.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-            qiushiViewParams.flags = qiushiViewParams.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL.inv()
-            windowManager.updateViewLayout(qiushiContainerView, qiushiViewParams)
-
-            val provider = MyConfig.providersFor(this, ModelProvider.CAP_CHAT).firstOrNull()
-            if (provider == null) {
-                outputTextView.text = "未配置可用的聊天模型，请先在设置中添加 API Key"
-                setQiushiSubmitBtnStatus(true)
-                return@setOnClickListener
-            }
-
-            qiushiThread = Thread(Runnable {
-                kotlinx.coroutines.runBlocking {
-                    HttpUtils.sendChatWithHistoryStreamFlow(
-                        provider.requestUrl, provider.modelId,
-                        listOf("user" to userInput), // 单条消息,不传主对话历史
-                        provider.apiKey, "你是助手",
-                        provider.enableThinking, provider.endpointType
-                    ).collect { event ->
-                        when (event) {
-                            is HttpUtils.SseEvent.Token -> {
-                                handler.post {
-                                    outputTextView.append(event.text)
-                                    scrollView.fullScroll(ScrollView.FOCUS_DOWN)
-                                }
-                            }
-                            is HttpUtils.SseEvent.ThinkToken -> { /* 思考过程暂不展示 */ }
-                            is HttpUtils.SseEvent.Error -> {
-                                handler.post {
-                                    outputTextView.text = "错误: ${event.message}"
-                                    setQiushiSubmitBtnStatus(true)
-                                }
-                            }
-                            is HttpUtils.SseEvent.Done -> {
-                                handler.post {
-                                    val formatted = AnswerFormatter.format(outputTextView.text.toString())
-                                    if (formatted != null) outputTextView.text = formatted
-                                    scrollView.fullScroll(ScrollView.FOCUS_DOWN)
-                                    setQiushiSubmitBtnStatus(true)
-                                }
-                            }
-                            is HttpUtils.SseEvent.ToolCalls -> { /* 求是无工具调用 */ }
-                        }
-                    }
-                }
-            })
-            qiushiThread?.start()
-        }
-
-        // 停止按钮
-        qiushiContainerView.findViewById<View>(R.id.qiushi_stop_btn).setOnClickListener {
-            val t = qiushiThread
-            if (t != null && t.isAlive) t.interrupt()
-            setQiushiSubmitBtnStatus(true)
-        }
-
-        // 输入框触摸时允许窗口获得焦点
-        editText.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_DOWN) {
-                qiushiViewParams.flags = qiushiViewParams.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
-                qiushiViewParams.flags = qiushiViewParams.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                windowManager.updateViewLayout(qiushiContainerView, qiushiViewParams)
-            }
-            false
-        }
-
-        // 标题栏拖拽(移动窗口)
-        qiushiContainerView.findViewById<View>(R.id.qiushi_title_bar).setOnTouchListener(object : View.OnTouchListener {
-            private var initialX = 0
-            private var initialY = 0
-            private var initialTouchX = 0f
-            private var initialTouchY = 0f
-
-            override fun onTouch(v: View, event: MotionEvent): Boolean {
-                when (event.action) {
-                    MotionEvent.ACTION_DOWN -> {
-                        initialX = qiushiViewParams.x
-                        initialY = qiushiViewParams.y
-                        initialTouchX = event.rawX
-                        initialTouchY = event.rawY
-                        return true
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        qiushiViewParams.x = initialX + (event.rawX - initialTouchX).toInt()
-                        qiushiViewParams.y = initialY + (event.rawY - initialTouchY).toInt()
-                        windowManager.updateViewLayout(qiushiContainerView, qiushiViewParams)
-                        return true
-                    }
-                }
-                return false
-            }
-        })
-
-        // 右下角拖拽调节大小手柄(最小 400x600 px)
-        val density = resources.displayMetrics.density
-        val minWidth = (400 * density).toInt()
-        val minHeight = (600 * density).toInt()
-        qiushiContainerView.findViewById<View>(R.id.qiushi_resize_handle).setOnTouchListener(object : View.OnTouchListener {
-            private var initialWidth = 0
-            private var initialHeight = 0
-            private var initialTouchX = 0f
-            private var initialTouchY = 0f
-
-            override fun onTouch(v: View, event: MotionEvent): Boolean {
-                when (event.action) {
-                    MotionEvent.ACTION_DOWN -> {
-                        initialWidth = qiushiViewParams.width
-                        initialHeight = qiushiViewParams.height
-                        initialTouchX = event.rawX
-                        initialTouchY = event.rawY
-                        return true
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        val dx = (event.rawX - initialTouchX).toInt()
-                        val dy = (event.rawY - initialTouchY).toInt()
-                        qiushiViewParams.width = Math.max(minWidth, initialWidth + dx)
-                        qiushiViewParams.height = Math.max(minHeight, initialHeight + dy)
-                        windowManager.updateViewLayout(qiushiContainerView, qiushiViewParams)
-                        return true
-                    }
-                }
-                return false
-            }
-        })
-    }
-
-    /** 显示求是悬浮窗,填充参考内容到输入框 */
-    private fun showQiushiView(content: String) {
-        if (!isQiushiViewShow) {
-            isQiushiViewShow = true
-            if (content.isNotEmpty()) {
-                val editText = qiushiContainerView.findViewById<EditText>(R.id.qiushi_input)
-                editText.setText(content)
-                val outputTextView = qiushiContainerView.findViewById<TextView>(R.id.qiushi_output)
-                outputTextView.text = "求是结果将显示在这里..."
-            }
-            windowManager.addView(qiushiContainerView, qiushiViewParams)
-        } else {
-            // 已显示则更新参考内容
-            if (content.isNotEmpty()) {
-                val editText = qiushiContainerView.findViewById<EditText>(R.id.qiushi_input)
-                editText.setText(content)
-            }
-        }
-    }
-
-    /** 切换求是发送/停止按钮状态 */
-    private fun setQiushiSubmitBtnStatus(active: Boolean) {
-        if (!this::qiushiContainerView.isInitialized) return
-        val submit = qiushiContainerView.findViewById<Button>(R.id.qiushi_submit_btn)
-        val stop = qiushiContainerView.findViewById<Button>(R.id.qiushi_stop_btn)
-        submit.isEnabled = active
-        stop.isEnabled = !active
-        if (active) {
-            submit.visibility = View.VISIBLE
-            stop.visibility = View.GONE
-        } else {
-            submit.visibility = View.GONE
-            stop.visibility = View.VISIBLE
-        }
-    }
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun initWebView() {
@@ -1570,7 +1360,10 @@ class UnifiedFloatingService : Service() {
         errorOutput.visibility = View.GONE
         errorOutput.text = ""
         setSubmitBtnStatus(false)
-        val provider = modelProviders[modelIndex.coerceIn(0, modelProviders.size - 1)]
+        // 当前模型不支持视觉时,自动回退到首个具备「多模态」能力的厂商(与聊天页一致)
+        val current = modelProviders[modelIndex.coerceIn(0, modelProviders.size - 1)]
+        val provider = if (current.hasCapability(go.examate.hyp.entity.ModelProvider.CAP_VISION)) current
+            else MyConfig.providersFor(this, go.examate.hyp.entity.ModelProvider.CAP_VISION).firstOrNull() ?: current
         thread = Thread(Runnable {
             val result = kotlinx.coroutines.runBlocking {
                 HttpUtils.sendImagesRequestResult(
@@ -1731,6 +1524,11 @@ class UnifiedFloatingService : Service() {
     }
 
     private fun showSelectZoneView() {
+        // 防御:选区视图尚未初始化(异常启动路径)时先补初始化,避免 lateinit 崩溃
+        if (!::selectZoneView.isInitialized) {
+            runCatching { initSelectZoneView() }
+            if (!::selectZoneView.isInitialized) return
+        }
         if (mode == FloatingMode.SCREENSHOT) {
             showSelectZoneViewScreenshot()
         } else {
@@ -1776,10 +1574,6 @@ class UnifiedFloatingService : Service() {
     private fun hideAllWindows() {
         if (isPopupMenuShow) showPopupMenu()
         if (isAskViewShow) showAskView()
-        if (isQiushiViewShow && this::qiushiContainerView.isInitialized && qiushiContainerView.isAttachedToWindow) {
-            isQiushiViewShow = false
-            windowManager.removeView(qiushiContainerView)
-        }
         if (isWebViewShow) showWebView()
         if (isSelectZoneViewShow) showSelectZoneView()
     }
@@ -1807,7 +1601,6 @@ class UnifiedFloatingService : Service() {
             askViewParams.flags = askViewParams.flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
             webViewParams.flags = webViewParams.flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
             selectZoneViewParams.flags = selectZoneViewParams.flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
-            qiushiViewParams.flags = qiushiViewParams.flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
             handler.post {
                 val btnView = floatToggleBtnView
                 if (btnView != null && btnView.isAttachedToWindow) {

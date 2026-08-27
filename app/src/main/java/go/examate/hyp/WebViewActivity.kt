@@ -1861,10 +1861,17 @@ private fun WebViewScreen(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(err, color = TextSecondary, fontSize = 14.sp)
                         Spacer(Modifier.height(12.dp))
-                        go.examate.hyp.ui.components.LiquidGlassButton(
-                            text = "重试",
-                            onClick = onRetry,
-                            modifier = Modifier.padding(horizontal = 24.dp)
+                        // 普通药丸按钮:此处不在 LiquidGlassContainer 内,不能用玻璃按钮(会崩)
+                        Text(
+                            "重试",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(AccentBlue)
+                                .clickable(onClick = onRetry)
+                                .padding(horizontal = 28.dp, vertical = 10.dp)
                         )
                     }
                 }

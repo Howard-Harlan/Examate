@@ -61,7 +61,8 @@ import java.time.LocalDate
 fun HomeSourceSection(
     onOpenTodo: () -> Unit,
     onOpenNotes: (String?) -> Unit,
-    onOpenSchedule: () -> Unit
+    onOpenSchedule: () -> Unit,
+    onOpenMemo: () -> Unit = {}
 ) {
     val context = LocalContext.current
     var tick by remember { mutableIntStateOf(0) }
@@ -114,7 +115,8 @@ fun HomeSourceSection(
                             onRemove = { HomeSourceStore.remove(context, def.id); tick++ },
                             onOpenTodo = onOpenTodo,
                             onOpenNotes = onOpenNotes,
-                            onOpenSchedule = onOpenSchedule
+                            onOpenSchedule = onOpenSchedule,
+                            onOpenMemo = onOpenMemo
                         )
                         Spacer(Modifier.height(12.dp))
                     }
@@ -127,7 +129,8 @@ fun HomeSourceSection(
                             onRemove = { HomeSourceStore.remove(context, def.id); tick++ },
                             onOpenTodo = onOpenTodo,
                             onOpenNotes = onOpenNotes,
-                            onOpenSchedule = onOpenSchedule
+                            onOpenSchedule = onOpenSchedule,
+                            onOpenMemo = onOpenMemo
                         )
                         Spacer(Modifier.height(12.dp))
                     }
@@ -179,7 +182,8 @@ private fun SourceCard(
     onRemove: () -> Unit,
     onOpenTodo: () -> Unit,
     onOpenNotes: (String?) -> Unit,
-    onOpenSchedule: () -> Unit
+    onOpenSchedule: () -> Unit,
+    onOpenMemo: () -> Unit
 ) {
     val context = LocalContext.current
     val accent = when (def.id) {
@@ -222,7 +226,7 @@ private fun SourceCard(
             // 数据区
             when (def.id) {
                 "todo" -> TodoCardBody(context)
-                "countdown" -> CountdownCardBody(context)
+                "countdown" -> CountdownCardBody(context, onOpenMemo)
                 "notes" -> NotesCardBody(context, onOpenNotes)
                 "schedule" -> ScheduleCardBody(context)
             }
@@ -299,17 +303,18 @@ private fun TodoCardBody(context: android.content.Context) {
 // ════════════════════════════════════════
 
 @Composable
-private fun CountdownCardBody(context: android.content.Context) {
+private fun CountdownCardBody(context: android.content.Context, onOpenMemo: () -> Unit) {
     var tick by remember { mutableIntStateOf(0) }
     val items by produceState(initialValue = emptyList<CountdownStore.Countdown>(), tick) {
         value = withContext(Dispatchers.IO) { CountdownStore.list(context) }
     }
-    // 编辑目标:null=不弹窗;空内容哨兵 = 新增
-    var editing by remember { mutableStateOf<CountdownStore.Countdown?>(null) }
-    var showAdd by remember { mutableStateOf(false) }
 
     if (items.isEmpty()) {
-        Text("还没有倒数日,点右下角 ＋ 添加", color = TextHint, fontSize = 12.sp)
+        Text(
+            "还没有倒数日,点击去速记添加",
+            color = TextHint, fontSize = 12.sp,
+            modifier = Modifier.clickable { onOpenMemo() }
+        )
     } else {
         items.take(3).forEach { c ->
             val d = c.daysLeft()
@@ -317,7 +322,7 @@ private fun CountdownCardBody(context: android.content.Context) {
                 Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(10.dp))
-                    .clickable { editing = c }
+                    .clickable { onOpenMemo() }
                     .padding(vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -337,110 +342,8 @@ private fun CountdownCardBody(context: android.content.Context) {
             }
         }
     }
-
-    // 右下角 ＋ 添加(卡片内直接编辑)
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-        Text(
-            "＋ 添加",
-            color = AccentBlue,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier
-                .clip(RoundedCornerShape(10.dp))
-                .clickable { showAdd = true }
-                .padding(horizontal = 8.dp, vertical = 4.dp)
-        )
-    }
-
-    // 新增弹窗
-    if (showAdd) {
-        CountdownEditDialog(
-            initial = null,
-            onDismiss = { showAdd = false },
-            onSave = { name, date ->
-                CountdownStore.add(context, name.ifBlank { "倒数日" }, date)
-                tick++
-                showAdd = false
-            }
-        )
-    }
-    // 编辑/删除弹窗
-    editing?.let { target ->
-        CountdownEditDialog(
-            initial = target,
-            onDismiss = { editing = null },
-            onSave = { name, date ->
-                val updated = target.copy(name = name.ifBlank { "倒数日" }, date = date)
-                CountdownStore.update(context, updated)
-                tick++
-                editing = null
-            },
-            onDelete = {
-                CountdownStore.remove(context, target.id)
-                tick++
-                editing = null
-            }
-        )
-    }
 }
 
-/** 倒数日新增/编辑弹窗(名称 + 日期,编辑时可删除) */
-@Composable
-private fun CountdownEditDialog(
-    initial: CountdownStore.Countdown?,
-    onDismiss: () -> Unit,
-    onSave: (String, String) -> Unit,
-    onDelete: (() -> Unit)? = null
-) {
-    var name by remember { mutableStateOf(initial?.name ?: "") }
-    var date by remember { mutableStateOf(runCatching { LocalDate.parse(initial?.date ?: "") }.getOrDefault(LocalDate.now())) }
-    var showDatePicker by remember { mutableStateOf(false) }
-
-    PlainDialog(onDismissRequest = onDismiss) {
-        PlainDialogTitle(if (initial == null) "添加倒数日" else "编辑倒数日")
-        androidx.compose.material3.OutlinedTextField(
-            value = name,
-            onValueChange = { name = it },
-            placeholder = { Text("如:考研 / 生日 / 纪念日", color = TextHint, fontSize = 12.sp) },
-            singleLine = true,
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp)
-        )
-        Spacer(Modifier.height(10.dp))
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .clickable { showDatePicker = true }
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("📅", fontSize = 15.sp)
-            Spacer(Modifier.width(8.dp))
-            Text(date.toString(), color = TextPrimary, fontSize = 14.sp, modifier = Modifier.weight(1f))
-            Text("选择日期", color = AccentBlue, fontSize = 12.sp)
-        }
-        Spacer(Modifier.height(14.dp))
-        PlainDialogButtons(
-            buttons = buildList {
-                if (onDelete != null) add(Triple("删除", false) { onDelete() })
-                add(Triple("保存", true) { onSave(name.trim(), date.toString()) })
-            }
-        )
-    }
-
-    if (showDatePicker) {
-        go.examate.hyp.campus.ui.DatePickerDialog(
-            initialDate = date,
-            onDismiss = { showDatePicker = false },
-            onConfirm = {
-                date = it
-                showDatePicker = false
-            }
-        )
-    }
-}
 
 // ════════════════════════════════════════
 //  最近笔记卡片

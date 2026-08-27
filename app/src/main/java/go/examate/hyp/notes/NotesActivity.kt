@@ -22,7 +22,7 @@ class NotesActivity : ComponentActivity() {
 
     private sealed class Screen {
         data object List : Screen()
-        data class Editor(val noteId: String?) : Screen()
+        data class Editor(val noteId: String?, val folderId: String = "") : Screen()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -40,10 +40,11 @@ class NotesActivity : ComponentActivity() {
                     when (val s = screen) {
                         is Screen.List -> NotesScreen(
                             onBack = { finish() },
-                            onOpenNote = { id -> screen = Screen.Editor(id) }
+                            onOpenNote = { id, folderId -> screen = Screen.Editor(id, folderId) }
                         )
                         is Screen.Editor -> NoteEditorScreen(
                             noteId = s.noteId,
+                            folderId = s.folderId,
                             onBack = { screen = Screen.List }
                         )
                     }

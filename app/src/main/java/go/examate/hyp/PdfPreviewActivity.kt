@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -25,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -57,6 +59,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.theme.AccentBlue
+import go.examate.hyp.ui.theme.BgPrimary
+import go.examate.hyp.ui.theme.CardBg
+import go.examate.hyp.ui.theme.ExamateTheme
+
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
 import go.examate.hyp.ui.theme.TextHint
@@ -106,24 +112,27 @@ class PdfPreviewActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         pdfUrl = intent.getStringExtra(EXTRA_PDF_URL) ?: run { finish(); return }
         val title = intent.getStringExtra(EXTRA_PDF_TITLE) ?: "PDF预览"
 
         setContent {
-            PdfPreviewScreen(
-                url = pdfUrl,
-                title = title,
-                cacheDir = cacheDir,
-                onBack = { finish() },
-                onSave = {
-                    // 先确保已下载到缓存,再调起 SAF 选择保存位置
-                    val cached = ensureCached(url = pdfUrl, cacheDir = cacheDir)
-                    cacheFile = cached
-                    val fileName = pdfUrl.substringAfterLast("/").substringBefore("?")
-                        .let { if (it.endsWith(".pdf", true)) it else "$it.pdf" }
-                    saveLauncher.launch(fileName)
-                }
-            )
+            ExamateTheme {
+                PdfPreviewScreen(
+                    url = pdfUrl,
+                    title = title,
+                    cacheDir = cacheDir,
+                    onBack = { finish() },
+                    onSave = {
+                        // 先确保已下载到缓存,再调起 SAF 选择保存位置
+                        val cached = ensureCached(url = pdfUrl, cacheDir = cacheDir)
+                        cacheFile = cached
+                        val fileName = pdfUrl.substringAfterLast("/").substringBefore("?")
+                            .let { if (it.endsWith(".pdf", true)) it else "$it.pdf" }
+                        saveLauncher.launch(fileName)
+                    }
+                )
+            }
         }
     }
 
@@ -173,10 +182,10 @@ private fun PdfPreviewScreen(
         loading = false
     }
 
-    Column(Modifier.fillMaxSize().background(Color(0xFFF5F5F5))) {
+    Column(Modifier.fillMaxSize().background(BgPrimary)) {
         // ═══ 顶栏(液态玻璃按钮) ═══
         Box(
-            Modifier.fillMaxWidth().background(Color.White)
+            Modifier.fillMaxWidth().background(CardBg).statusBarsPadding()
                 .padding(horizontal = 10.dp, vertical = 6.dp)
         ) {
             LiquidGlassIconButton(

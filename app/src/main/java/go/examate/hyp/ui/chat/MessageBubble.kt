@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -68,16 +69,23 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import go.examate.hyp.ui.components.MarkdownText
+import coil.compose.AsyncImage
+import go.examate.hyp.ui.components.ImageViewerDialog
 import go.examate.hyp.ui.theme.AccentBlue
+import go.examate.hyp.ui.theme.AccentPurple
 import go.examate.hyp.ui.theme.CardBg
 import go.examate.hyp.ui.theme.ChipBg
 import go.examate.hyp.ui.theme.Danger
 import go.examate.hyp.ui.theme.DialogBg
 import go.examate.hyp.ui.theme.ErrorBg
+import go.examate.hyp.ui.theme.Divider
 import go.examate.hyp.ui.theme.InputBg
+import go.examate.hyp.ui.theme.Success
+import go.examate.hyp.ui.theme.Warning
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
 import go.examate.hyp.util.ActionCard
+import go.examate.hyp.util.ChatMediaStore
 import go.examate.hyp.util.ChatMsg
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -90,6 +98,7 @@ fun MessageBubble(
     msg: ChatMsg,
     timeFmt: SimpleDateFormat,
     context: Context,
+    showTimestamp: Boolean = true,
     onQuickFollowUp: (String) -> Unit = {},
     onRegenerate: () -> Unit = {},
     onDelete: () -> Unit = {},
@@ -152,16 +161,19 @@ fun MessageBubble(
             )
         }
 
-        Text(
-            text = timeFmt.format(Date(msg.time)),
-            color = TextSecondary.copy(alpha = 0.7f),
-            fontSize = 10.sp,
-            modifier = Modifier.padding(
-                start = if (isUser) 0.dp else 4.dp,
-                end = if (isUser) 4.dp else 0.dp,
-                top = 2.dp
+        // 时间戳按间隔分组显示(与上一条间隔 >5 分钟或首条),减少视觉噪音
+        if (showTimestamp) {
+            Text(
+                text = timeFmt.format(Date(msg.time)),
+                color = TextSecondary.copy(alpha = 0.7f),
+                fontSize = 10.sp,
+                modifier = Modifier.padding(
+                    start = if (isUser) 0.dp else 4.dp,
+                    end = if (isUser) 4.dp else 0.dp,
+                    top = 2.dp
+                )
             )
-        )
+        }
     }
 }
 
@@ -251,7 +263,7 @@ private fun BubbleContent(
                     if (!isUser && !msg.isError) {
                         Modifier.border(
                             0.5.dp,
-                            Color(0x15000000),
+                            Divider,
                             RoundedCornerShape(16.dp, 16.dp, 16.dp, 4.dp)
                         )
                     } else {
@@ -293,76 +305,134 @@ private fun ToolStepsSection(msg: ChatMsg) {
 
 @Composable
 private fun UserImage(msg: ChatMsg, context: Context) {
-    // 兼容旧单图 imageUriString;多图横向排列,单图大图展示
+    // 兼容旧单图 imageUriString;多图横向排列,单图按原始比例展示;点击全屏预览
     val uris = msg.imageUris.ifEmpty { listOfNotNull(msg.imageUriString) }
     if (uris.isEmpty()) return
+    var viewing by remember { mutableStateOf<String?>(null) }
     if (uris.size == 1) {
-        UserImageOne(uris[0], context, Modifier.fillMaxWidth().height(180.dp))
+        UserImageOne(uris[0], context, Modifier.fillMaxWidth(), naturalAspect = true) { viewing = uris[0] }
     } else {
         Row(
             Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            uris.forEach { UserImageOne(it, context, Modifier.size(110.dp)) }
+            uris.forEach { u -> UserImageOne(u, context, Modifier.size(110.dp)) { viewing = u } }
         }
     }
     if (msg.content.isNotEmpty()) Spacer(Modifier.height(8.dp))
+    viewing?.let { u ->
+        ImageViewerDialog(model = ChatMediaStore.renderModel(u), onDismiss = { viewing = null })
+    }
 }
 
 @Composable
-private fun UserImageOne(uriStr: String, context: Context, modifier: Modifier) {
+private fun UserImageOne(
+    uriStr: String,
+    context: Context,
+    modifier: Modifier,
+    naturalAspect: Boolean = false,
+    onClick: () -> Unit = {}
+) {
     var bitmap by remember(uriStr) { mutableStateOf<android.graphics.Bitmap?>(null) }
     LaunchedEffect(uriStr) {
         bitmap = withContext(kotlinx.coroutines.Dispatchers.IO) {
             try {
-                context.contentResolver.openInputStream(Uri.parse(uriStr))?.use { stream ->
-                    val opts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    android.graphics.BitmapFactory.decodeStream(stream, null, opts)
-                    val sample = (opts.outWidth / 720).coerceAtLeast(1)
-                    context.contentResolver.openInputStream(Uri.parse(uriStr))?.use { s2 ->
-                        val decodeOpts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
-                        android.graphics.BitmapFactory.decodeStream(s2, null, decodeOpts)
-                    }
-                }
+                // 兼容本地持久化路径与 content URI
+                val bytes = ChatMediaStore.readBytes(context, uriStr) ?: return@withContext null
+                val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                val sample = (bounds.outWidth / 720).coerceAtLeast(1)
+                val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
             } catch (_: Exception) {
                 null
             }
         }
     }
-    bitmap?.let {
+    bitmap?.let { bmp ->
+        // naturalAspect:按位图真实宽高比布局,超高清竖图限高,杜绝拉伸变形
+        val sized = if (naturalAspect) {
+            modifier
+                .aspectRatio(bmp.width.toFloat() / bmp.height.coerceAtLeast(1))
+                .heightIn(max = 340.dp)
+        } else modifier
         Image(
-            bitmap = it.asImageBitmap(),
+            bitmap = bmp.asImageBitmap(),
             contentDescription = "图片",
-            modifier = modifier.clip(RoundedCornerShape(8.dp)),
-            contentScale = ContentScale.Crop
+            modifier = sized
+                .clip(RoundedCornerShape(10.dp))
+                .clickable(onClick = onClick),
+            contentScale = if (naturalAspect) ContentScale.FillBounds else ContentScale.Crop
         )
     }
 }
 
 @Composable
 private fun AssistantImage(msg: ChatMsg) {
-    val b64 = msg.imageBase64 ?: return
-    var bitmap by remember(b64) { mutableStateOf<android.graphics.Bitmap?>(null) }
-    LaunchedEffect(b64) {
-        bitmap = withContext(kotlinx.coroutines.Dispatchers.IO) {
-            try {
-                val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
-                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-            } catch (_: Exception) {
-                null
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val b64 = msg.imageBase64
+    val url = msg.imageUrl
+    if (b64 == null && url.isNullOrBlank()) return
+    var viewing by remember(msg.id) { mutableStateOf(false) }
+
+    if (b64 != null) {
+        var bitmap by remember(b64) { mutableStateOf<android.graphics.Bitmap?>(null) }
+        LaunchedEffect(b64) {
+            bitmap = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                } catch (_: Exception) {
+                    null
+                }
             }
         }
-    }
-    bitmap?.let {
-        Image(
-            bitmap = it.asImageBitmap(),
+        bitmap?.let { bmp ->
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = "AI 生成图片",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(bmp.width.toFloat() / bmp.height.coerceAtLeast(1))
+                    .heightIn(max = 340.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { viewing = true },
+                contentScale = ContentScale.FillBounds
+            )
+            if (msg.content.isNotEmpty()) Spacer(Modifier.height(8.dp))
+        }
+        if (viewing) {
+            // 预览用:落临时文件复用查看器(含保存到相册)
+            val file = remember(b64) {
+                runCatching {
+                    val f = java.io.File(context.cacheDir, "gen_${msg.id}.png")
+                    if (!f.exists() || f.length() == 0L) {
+                        val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+                        f.writeBytes(bytes)
+                    }
+                    f
+                }.getOrNull()
+            }
+            file?.let {
+                ImageViewerDialog(model = it, onDismiss = { viewing = false })
+            }
+        }
+    } else {
+        // URL 型生图结果(部分厂商返回直链)
+        val link = url ?: return
+        AsyncImage(
+            model = link,
             contentDescription = "AI 生成图片",
+            contentScale = ContentScale.FillWidth,
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 300.dp)
-                .clip(RoundedCornerShape(8.dp)),
-            contentScale = ContentScale.FillWidth
+                .heightIn(max = 340.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .clickable { viewing = true }
         )
+        if (viewing) {
+            ImageViewerDialog(model = link, onDismiss = { viewing = false })
+        }
         if (msg.content.isNotEmpty()) Spacer(Modifier.height(8.dp))
     }
 }
@@ -454,7 +524,7 @@ private fun AnimatedCardAppear(content: @Composable () -> Unit) {
 @Composable
 private fun BalanceCard(card: ActionCard) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val accent = Color(0xFF34C759)
+    val accent = Success
     val amount = card.payload["amount"] ?: card.summary.removePrefix("¥")
     val account = card.payload["account"].orEmpty()
     Row(
@@ -497,7 +567,7 @@ private fun BalanceCard(card: ActionCard) {
 @Composable
 private fun ScheduleCard(card: ActionCard) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val accent = Color(0xFF5B7CFA)
+    val accent = AccentBlue
     val weekday = card.payload["weekday"].orEmpty()
     val courses = card.payload["today"].orEmpty().split("\n").filter { it.isNotBlank() }
     val todos = card.payload["todos"].orEmpty().split("\n").filter { it.isNotBlank() }
@@ -574,8 +644,8 @@ private fun GenericActionCard(card: ActionCard) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val (iconVec, accent) = when (card.type) {
         "ecard_topup" -> Icons.Filled.Payments to AccentBlue
-        "room_electricity" -> Icons.Filled.Bolt to Color(0xFFEF6C00)
-        "campus_grades" -> Icons.Filled.Assessment to Color(0xFF9B7BE8)
+        "room_electricity" -> Icons.Filled.Bolt to Warning
+        "campus_grades" -> Icons.Filled.Assessment to AccentPurple
         "campus_info" -> Icons.Filled.Person to AccentBlue
         else -> Icons.Filled.Link to AccentBlue
     }

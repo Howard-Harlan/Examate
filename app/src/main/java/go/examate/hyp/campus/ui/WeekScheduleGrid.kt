@@ -28,7 +28,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import go.examate.hyp.campus.model.MAX_SECTIONS
-import go.examate.hyp.campus.model.PERIOD_TIMES
+
 import go.examate.hyp.campus.model.ScheduleEntry
 import go.examate.hyp.campus.model.ScheduleStorage
 import go.examate.hyp.campus.model.ScheduleTodo
@@ -62,6 +62,8 @@ internal fun WeekScheduleGrid(
     semesterStartDate: String? = null,
     /** 课程卡片字体缩放档:0=小 1=标准 2=大 */
     fontScale: Int = 1,
+    /** 当前生效的节次时间表(上课,下课) */
+    periodTimes: List<Pair<String, String>> = emptyList(),
     onCourseClick: (ScheduleEntry) -> Unit,
     onEmptyCellClick: (day: Int, section: Int) -> Unit,
     modifier: Modifier = Modifier
@@ -69,7 +71,7 @@ internal fun WeekScheduleGrid(
     val cellHeight = 58.dp
     val timeColWidth = 40.dp
     // 显示的节次数与时间表锁定:PERIOD_TIME.size 决定节次数
-    val sectionCount = PERIOD_TIMES.size.coerceAtMost(MAX_SECTIONS)
+    val sectionCount = periodTimes.size.coerceAtMost(MAX_SECTIONS)
 
     // 构建要显示的星期列表(根据 showSaturday/showSunday 过滤)
     val visibleDays = (1..7).filter { day ->
@@ -98,6 +100,11 @@ internal fun WeekScheduleGrid(
     // 按 date 分组代办,用于在表头显示标记
     val todosByDate: Map<String, List<ScheduleTodo>> = remember(todos) {
         todos.groupBy { it.date }
+    }
+
+    // 预分组:按星期分组当前周课程,避免在 visibleDays.forEach 内部反复 filter
+    val entriesByDay: Map<Int, List<ScheduleEntry>> = remember(entries, currentWeek) {
+        entries.filter { currentWeek in it.weeks }.groupBy { it.dayOfWeek }
     }
 
     Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
@@ -143,7 +150,7 @@ internal fun WeekScheduleGrid(
         Row(Modifier.fillMaxWidth()) {
             Column(Modifier.width(timeColWidth)) {
                 for (period in 1..sectionCount) {
-                    val timePair = PERIOD_TIMES.getOrNull(period - 1)
+                    val timePair = periodTimes.getOrNull(period - 1)
                     Box(
                         Modifier.height(cellHeight).fillMaxWidth(),
                         contentAlignment = Alignment.Center
@@ -168,7 +175,7 @@ internal fun WeekScheduleGrid(
             visibleDays.forEach { day ->
                 DayColumn(
                     day = day,
-                    entries = entries.filter { it.dayOfWeek == day && currentWeek in it.weeks },
+                    entries = entriesByDay[day] ?: emptyList(),
                     cellHeight = cellHeight,
                     sectionCount = sectionCount,
                     fontScale = fontScale,

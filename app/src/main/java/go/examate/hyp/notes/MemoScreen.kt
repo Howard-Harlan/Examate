@@ -2,6 +2,12 @@ package go.examate.hyp.notes
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -9,6 +15,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,10 +40,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -53,12 +61,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -68,6 +81,7 @@ import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
 import go.examate.hyp.campus.ui.DatePickerDialog
 import go.examate.hyp.ui.components.FrostedGlassCard
+import go.examate.hyp.ui.components.ImageViewerDialog
 import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.CardBg
@@ -119,6 +133,8 @@ fun MemoScreen(onBack: () -> Unit) {
 
     // 编辑目标:null=不弹窗
     var editing by remember { mutableStateOf<MemoStorage.Memo?>(null) }
+    // 查看目标:null=不弹窗;点击卡片先看全文,编辑入口在查看弹窗内
+    var viewing by remember { mutableStateOf<MemoStorage.Memo?>(null) }
 
     // 页面切换:false=速记画布,true=统计页
     var showStats by remember { mutableStateOf(false) }
@@ -144,7 +160,7 @@ fun MemoScreen(onBack: () -> Unit) {
                     memos = memos,
                     countdowns = countdowns,
                     timeFormat = timeFormat,
-                    onMemoClick = { editing = it },
+                    onMemoClick = { viewing = it },
                     onCountdownClick = {
                         countdownName = it.name
                         countdownDate = runCatching { LocalDate.parse(it.date) }.getOrDefault(LocalDate.now())
@@ -192,6 +208,29 @@ fun MemoScreen(onBack: () -> Unit) {
                 )
             }
         }
+    }
+
+    // ═══ 全文查看弹窗(点击卡片默认动作) ═══
+    viewing?.let { memo ->
+        MemoViewerDialog(
+            memo = memo,
+            timeText = timeFormat.format(Date(memo.updatedAt)),
+            onDismiss = { viewing = null },
+            onEdit = {
+                viewing = null
+                editing = memo
+            },
+            onDelete = {
+                MemoStorage.deleteMemo(context, memo.id)
+                viewing = null
+                memosTick++
+            },
+            onTogglePin = {
+                MemoStorage.setPinned(context, memo.id, !memo.pinned)
+                viewing = null
+                memosTick++
+            }
+        )
     }
 
     // ═══ 速记编辑弹窗 ═══
@@ -744,6 +783,146 @@ private fun rhythmSuggestion(memos: List<MemoStorage.Memo>): String {
 }
 
 // ════════════════════════════════════════
+//  全文查看弹窗:点击卡片的默认动作
+// ════════════════════════════════════════
+
+/**
+ * 速记全文查看 — 卡片显示面积有限,点击先看全文再决定编辑。
+ * 附图两列网格,点击进入全屏查看(可保存到相册)。
+ */
+@Composable
+private fun MemoViewerDialog(
+    memo: MemoStorage.Memo,
+    timeText: String,
+    onDismiss: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onTogglePin: () -> Unit
+) {
+    val context = LocalContext.current
+    var viewingImage by remember { mutableStateOf<File?>(null) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .clip(RoundedCornerShape(24.dp))
+                .background(CardBg)
+                .padding(20.dp)
+        ) {
+            // 头部:分类 + 时间 + 置顶标记
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (memo.tag.isNotEmpty()) {
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MemoStorage.tagColor(memo.tag).copy(alpha = 0.14f))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            "${MemoStorage.tagEmoji(memo.tag)} ${MemoStorage.tagName(memo.tag)}",
+                            color = TextSecondary, fontSize = 11.sp
+                        )
+                    }
+                }
+                Spacer(Modifier.weight(1f))
+                if (memo.pinned) Text("📌", fontSize = 12.sp)
+                Spacer(Modifier.width(8.dp))
+                Text(timeText, color = TextHint, fontSize = 11.sp)
+            }
+
+            // 全文内容
+            if (memo.content.isNotBlank()) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    memo.content,
+                    color = TextPrimary,
+                    fontSize = 14.sp,
+                    lineHeight = 22.sp
+                )
+            }
+
+            // 附图网格(两列)
+            if (memo.images.isNotEmpty()) {
+                Spacer(Modifier.height(14.dp))
+                memo.images.chunked(2).forEach { rowImages ->
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        rowImages.forEach { rel ->
+                            AsyncImage(
+                                model = File(MemoStorage.resolveImageFile(context, rel).absolutePath),
+                                contentDescription = "附图",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(150.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { viewingImage = MemoStorage.resolveImageFile(context, rel) }
+                            )
+                        }
+                        if (rowImages.size == 1) Spacer(Modifier.weight(1f))
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
+
+            // 底部操作
+            Spacer(Modifier.height(16.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(SurfaceVariant)
+                        .clickable { onDelete() }
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    Text("删除", color = Danger, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                }
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(SurfaceVariant)
+                        .clickable { onTogglePin() }
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    Text(
+                        if (memo.pinned) "取消置顶" else "置顶",
+                        color = TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(SurfaceVariant)
+                        .clickable { onDismiss() }
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                ) {
+                    Text("关闭", color = TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                }
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(SelectedBg)
+                        .clickable { onEdit() }
+                        .padding(horizontal = 16.dp, vertical = 10.dp)
+                ) {
+                    Text("编辑", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+        }
+    }
+
+    // 全屏图片查看(含保存到相册)
+    viewingImage?.let { file ->
+        ImageViewerDialog(model = file, onDismiss = { viewingImage = null })
+    }
+}
+
+// ════════════════════════════════════════
 //  倒数日编辑弹窗
 // ════════════════════════════════════════
 
@@ -824,141 +1003,148 @@ private fun CountdownEditDialog(
 }
 
 // ════════════════════════════════════════
-//  底部快速输入:文本 + 图片 + 标签
+//  底部快速输入:左侧 ＋ 展开(图片/想法/记录/倒数日)
 // ════════════════════════════════════════
 
+/**
+ * 快速输入栏 — 核心是"零负担输入":
+ * - 收起态只有一行:[＋][输入框][发送],默认按「记录」归档,直接打字就能发
+ * - 点 ＋ 展开选项:图片 / 想法 / 记录 / 倒数日
+ * - 选「倒数日」时输入行切换为:日期在前 + 名称 + 添加
+ */
 @Composable
 private fun QuickAddBar(
     onSendMemo: (text: String, tag: String, images: List<String>) -> Unit,
     onAddCountdown: (String, String) -> Unit
 ) {
     val context = LocalContext.current
-    var mode by remember { mutableIntStateOf(0) } // 0=速记 1=倒数日
+    var expanded by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
-    var currentTag by remember { mutableStateOf("") }
+    var currentTag by remember { mutableStateOf(MemoStorage.DEFAULT_TAG) }
     var pendingImages by remember { mutableStateOf<List<String>>(emptyList()) }
+    // 倒数日模式:由展开面板的「倒数日」选项触发,发送或取消后回到文本模式
+    var countdownMode by remember { mutableStateOf(false) }
     var cdName by remember { mutableStateOf("") }
     var cdDate by remember { mutableStateOf(LocalDate.now()) }
     var showDatePicker by remember { mutableStateOf(false) }
 
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
-            MemoStorage.copyImage(context, uri)?.let { rel -> pendingImages = pendingImages + rel }
+            MemoStorage.copyImage(context, uri)?.let { rel ->
+                pendingImages = pendingImages + rel
+                expanded = true
+            }
         }
     }
 
     FrostedGlassCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-        Column(Modifier.fillMaxWidth().padding(8.dp)) {
-            // 模式切换:速记 / 倒数日
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ModeChip("速记", selected = mode == 0) { mode = 0 }
-                ModeChip("倒数日", selected = mode == 1) { mode = 1 }
-            }
-            Spacer(Modifier.height(8.dp))
-
-            if (mode == 0) {
-                // ═══ 速记输入 ═══
-                // 待发送图片缩略图
-                if (pendingImages.isNotEmpty()) {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(pendingImages) { rel ->
-                            Box {
-                                AsyncImage(
-                                    model = File(MemoStorage.resolveImageFile(context, rel).absolutePath),
-                                    contentDescription = "待添加图片",
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier
-                                        .size(56.dp)
-                                        .clip(RoundedCornerShape(10.dp))
-                                )
-                                Box(
-                                    Modifier
-                                        .align(Alignment.TopEnd)
-                                        .size(18.dp)
-                                        .clip(CircleShape)
-                                        .background(Color.Black.copy(alpha = 0.55f))
-                                        .clickable { pendingImages = pendingImages - rel },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text("✕", color = Color.White, fontSize = 10.sp)
-                                }
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                }
-
-                // 标签快捷选择
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(MemoStorage.Tags) { tag ->
-                        val selected = currentTag == tag.first
-                        Box(
-                            Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(if (selected) SelectedBg else SurfaceVariant)
-                                .clickable { currentTag = if (selected) "" else tag.first }
-                                .padding(horizontal = 10.dp, vertical = 5.dp)
-                        ) {
-                            Text(
-                                "${tag.second} ${tag.third}",
-                                fontSize = 11.sp,
-                                color = if (selected) Color.White else TextSecondary
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-                    // 图片按钮
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(8.dp)
+                .animateContentSize(spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium))
+        ) {
+            // ═══ 展开面板:图片 / 想法 / 记录 / 倒数日 ═══
+            if (expanded) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    // 图片
                     Box(
                         Modifier
-                            .size(40.dp)
+                            .size(34.dp)
                             .clip(CircleShape)
                             .background(SurfaceVariant)
                             .clickable { imagePicker.launch(arrayOf("image/*")) },
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Filled.Image, contentDescription = "添加图片", tint = TextSecondary, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Filled.Image, contentDescription = "添加图片", tint = TextSecondary, modifier = Modifier.size(16.dp))
                     }
-                    Spacer(Modifier.width(8.dp))
-                    OutlinedTextField(
-                        value = input,
-                        onValueChange = { input = it },
-                        placeholder = { Text("记下此刻…", color = TextHint, fontSize = 13.sp) },
-                        minLines = 1,
-                        maxLines = 3,
-                        shape = RoundedCornerShape(14.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            unfocusedBorderColor = Color.Transparent,
-                            focusedBorderColor = Primary.copy(alpha = 0.5f),
-                            unfocusedContainerColor = Primary.copy(alpha = 0.05f),
-                            focusedContainerColor = Primary.copy(alpha = 0.10f),
-                            cursorColor = Primary
-                        ),
-                        modifier = Modifier.weight(1f)
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    val canSend = input.isNotBlank() || pendingImages.isNotEmpty()
+                    Spacer(Modifier.width(2.dp))
+                    // 分类:想法 / 记录
+                    MemoStorage.Tags.forEach { tag ->
+                        val selected = !countdownMode && currentTag == tag.first
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(if (selected) SelectedBg else SurfaceVariant)
+                                .clickable {
+                                    currentTag = tag.first
+                                    countdownMode = false
+                                }
+                                .padding(horizontal = 10.dp, vertical = 7.dp)
+                        ) {
+                            Text(
+                                "${tag.second} ${tag.third}",
+                                fontSize = 11.sp,
+                                color = if (selected) Color.White else TextSecondary,
+                                fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal
+                            )
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    // 倒数日
                     Box(
                         Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(if (canSend) SelectedBg else Primary.copy(alpha = 0.4f))
-                            .clickable(enabled = canSend) {
-                                onSendMemo(input.trim(), currentTag, pendingImages)
-                                input = ""
-                                currentTag = ""
-                                pendingImages = emptyList()
-                            },
-                        contentAlignment = Alignment.Center
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(if (countdownMode) SelectedBg else SurfaceVariant)
+                            .clickable { countdownMode = !countdownMode }
+                            .padding(horizontal = 10.dp, vertical = 7.dp)
                     ) {
-                        Icon(Icons.Filled.Send, contentDescription = "发送", tint = Color.White, modifier = Modifier.size(18.dp))
+                        Text(
+                            "⏰ 倒数日",
+                            fontSize = 11.sp,
+                            color = if (countdownMode) Color.White else TextSecondary,
+                            fontWeight = if (countdownMode) FontWeight.Medium else FontWeight.Normal
+                        )
                     }
                 }
-            } else {
-                // ═══ 倒数日输入:名称 + 日期 + 添加 ═══
+                Spacer(Modifier.height(8.dp))
+            }
+
+            // ═══ 待发送图片缩略图 ═══
+            if (pendingImages.isNotEmpty()) {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(pendingImages) { rel ->
+                        Box {
+                            AsyncImage(
+                                model = File(MemoStorage.resolveImageFile(context, rel).absolutePath),
+                                contentDescription = "待添加图片",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                            )
+                            Box(
+                                Modifier
+                                    .align(Alignment.TopEnd)
+                                    .size(18.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.Black.copy(alpha = 0.55f))
+                                    .clickable { pendingImages = pendingImages - rel },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("✕", color = Color.White, fontSize = 10.sp)
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+
+            if (countdownMode) {
+                // ═══ 倒数日输入:日期在前,名称在后 ═══
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Primary.copy(alpha = 0.10f))
+                            .clickable { showDatePicker = true }
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("📅 ${cdDate}", color = Primary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    }
+                    Spacer(Modifier.width(8.dp))
                     OutlinedTextField(
                         value = cdName,
                         onValueChange = { cdName = it },
@@ -977,28 +1163,106 @@ private fun QuickAddBar(
                     Spacer(Modifier.width(8.dp))
                     Box(
                         Modifier
-                            .height(40.dp)
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(SurfaceVariant)
-                            .clickable { showDatePicker = true }
-                            .padding(horizontal = 10.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("📅 ${cdDate}", color = TextSecondary, fontSize = 12.sp)
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Box(
-                        Modifier
                             .size(40.dp)
                             .clip(CircleShape)
                             .background(SelectedBg)
                             .clickable {
                                 onAddCountdown(cdName.trim(), cdDate.toString())
                                 cdName = ""
+                                countdownMode = false
+                                expanded = false
                             },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(Icons.Filled.Add, contentDescription = "添加倒数日", tint = Color.White, modifier = Modifier.size(18.dp))
+                    }
+                }
+            } else {
+                // ═══ 文本输入:[＋][输入框][发送] ═══
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    // 左侧 + 按钮(液态玻璃风格,点击展开选项)
+                    val addInteraction = remember { MutableInteractionSource() }
+                    val addPressed by addInteraction.collectIsPressedAsState()
+                    val addScale by animateFloatAsState(
+                        if (addPressed) 0.85f else 1f,
+                        spring(dampingRatio = Spring.DampingRatioMediumBouncy), label = "addScale"
+                    )
+                    val addRotation by animateFloatAsState(
+                        if (expanded) 45f else 0f,
+                        spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
+                        label = "addRot"
+                    )
+                    Box(
+                        Modifier
+                            .size(38.dp)
+                            .graphicsLayer { scaleX = addScale; scaleY = addScale; rotationZ = addRotation }
+                            .clip(RoundedCornerShape(19.dp))
+                            .background(if (expanded) AccentBlue.copy(0.12f) else SurfaceVariant)
+                            .clickable(interactionSource = addInteraction, indication = null) { expanded = !expanded },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = "展开选项", tint = AccentBlue, modifier = Modifier.size(22.dp))
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    val canSend = input.isNotBlank() || pendingImages.isNotEmpty()
+                    // 输入框(与 all in agents 统一风格)
+                    OutlinedTextField(
+                        value = input,
+                        onValueChange = { input = it },
+                        modifier = Modifier.weight(1f),
+                        placeholder = { Text("记下此刻…", color = TextHint, fontSize = 14.sp) },
+                        shape = RoundedCornerShape(22.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            focusedBorderColor = AccentBlue.copy(0.45f),
+                            unfocusedBorderColor = SurfaceVariant,
+                            cursorColor = AccentBlue
+                        ),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(onSend = {
+                            if (canSend) {
+                                onSendMemo(input.trim(), currentTag, pendingImages)
+                                input = ""
+                                pendingImages = emptyList()
+                            }
+                        }),
+                        singleLine = false,
+                        minLines = 1,
+                        maxLines = 4
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    // 发送按钮(渐变填充 + 按压回弹)
+                    val targetColor = if (canSend) AccentBlue else AccentBlue.copy(0.35f)
+                    val containerColor by animateColorAsState(targetColor, tween(220), label = "sendColor")
+                    val sendInteraction = remember { MutableInteractionSource() }
+                    val sendPressed by sendInteraction.collectIsPressedAsState()
+                    val pressScale by animateFloatAsState(
+                        if (sendPressed && canSend) 0.85f else 1f,
+                        spring(dampingRatio = Spring.DampingRatioMediumBouncy), label = "sendPress"
+                    )
+                    val readyScale by animateFloatAsState(
+                        if (canSend) 1f else 0.8f,
+                        spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
+                        label = "sendReady"
+                    )
+                    val gradient = Brush.linearGradient(listOf(lerp(containerColor, Color.White, 0.22f), containerColor))
+                    Box(
+                        Modifier
+                            .size(40.dp)
+                            .graphicsLayer { scaleX = pressScale * readyScale; scaleY = pressScale * readyScale }
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(gradient)
+                            .then(
+                                if (canSend) Modifier.clickable(interactionSource = sendInteraction, indication = null) {
+                                    onSendMemo(input.trim(), currentTag, pendingImages)
+                                    input = ""
+                                    pendingImages = emptyList()
+                                } else Modifier
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "发送", tint = Color.White, modifier = Modifier.size(18.dp))
                     }
                 }
             }
@@ -1013,24 +1277,6 @@ private fun QuickAddBar(
                 cdDate = it
                 showDatePicker = false
             }
-        )
-    }
-}
-
-@Composable
-private fun ModeChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    Box(
-        Modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(if (selected) SelectedBg else SurfaceVariant)
-            .clickable { onClick() }
-            .padding(horizontal = 12.dp, vertical = 6.dp)
-    ) {
-        Text(
-            label,
-            color = if (selected) Color.White else TextSecondary,
-            fontSize = 12.sp,
-            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal
         )
     }
 }

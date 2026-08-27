@@ -17,7 +17,11 @@ data class ModelProvider @JvmOverloads constructor(
     var barColor: String = "",
     var visible: Boolean = true,
     /** 模型能力标签:chat/vision/image_gen/video_gen,用于多模态按需路由 */
-    var capabilities: Set<String> = setOf(CAP_CHAT)
+    var capabilities: Set<String> = setOf(CAP_CHAT),
+    /** 生图接口地址覆盖(空 = 从聊天地址推导 baseUrl + /v1/images/generations) */
+    var imageGenUrl: String = "",
+    /** 生图模型 id 覆盖(空 = 用 modelId) */
+    var imageGenModel: String = ""
 ) {
     /** 是否具备某项能力 */
     fun hasCapability(cap: String): Boolean = capabilities.contains(cap)
@@ -43,6 +47,8 @@ data class ModelProvider @JvmOverloads constructor(
         json.put("barColor", barColor)
         json.put("visible", visible)
         json.put("capabilities", JSONArray(capabilities.toList()))
+        json.put("imageGenUrl", imageGenUrl)
+        json.put("imageGenModel", imageGenModel)
         return json
     }
 
@@ -53,12 +59,13 @@ data class ModelProvider @JvmOverloads constructor(
         const val CAP_IMAGE_GEN = "image_gen"
         const val CAP_VIDEO_GEN = "video_gen"
 
-        /** 根据 URL 推断 endpoint 类型:responses / chat */
+        /** 根据 URL 推断 endpoint 类型:responses / anthropic / chat */
         @JvmStatic
         fun inferEndpointType(url: String?): String {
             if (url == null) return "chat"
             return when {
                 url.contains("/v1/responses") -> "responses"
+                url.contains("/v1/messages") -> "anthropic"
                 else -> "chat"
             }
         }
@@ -113,7 +120,9 @@ data class ModelProvider @JvmOverloads constructor(
                 json.optString("label", ""),
                 json.optString("barColor", ""),
                 json.optBoolean("visible", true),
-                parseCapabilities(json)
+                parseCapabilities(json),
+                json.optString("imageGenUrl", ""),
+                json.optString("imageGenModel", "")
             )
         }
 

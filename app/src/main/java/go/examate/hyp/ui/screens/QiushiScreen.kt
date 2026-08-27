@@ -1,5 +1,8 @@
 package go.examate.hyp.ui.screens
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -20,12 +23,18 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import go.examate.hyp.R
@@ -35,6 +44,7 @@ import go.examate.hyp.ui.components.IconBook
 import go.examate.hyp.ui.components.IconMusic
 import go.examate.hyp.ui.components.IconDownload
 import go.examate.hyp.ui.components.IconSchool
+import go.examate.hyp.ui.components.IconRun
 import go.examate.hyp.ui.components.IconNote
 import go.examate.hyp.ui.theme.BgPrimary
 import go.examate.hyp.ui.theme.Primary
@@ -43,16 +53,17 @@ import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
 
 /**
- * 探索页 — 分类布局。
+ * 探索页 — 分类布局,分区可折叠。
  *
- * - 校内服务:校园服务 / 课程表 / 乐校通水卡 / Mesh 聊天
- * - 探索边界:速记 / 阅读 / 音乐 / 下载
+ * - 校内服务:校园服务 / 课程表 / 乐校通水卡 / 速记
+ * - 探索边界:局域网聊天 / 阅读 / 音乐 / 下载
  */
 @Composable
 fun QiushiScreen(
     onMesChatClick: () -> Unit,
     onCampusServiceClick: () -> Unit,
     onWaterCardClick: () -> Unit = {},
+    onLePaoClick: () -> Unit = {},
     onScheduleClick: () -> Unit = {},
     onDownloaderClick: () -> Unit = {},
     onReadingClick: () -> Unit = {},
@@ -60,6 +71,9 @@ fun QiushiScreen(
     onMemoClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    var campusExpanded by remember { mutableStateOf(true) }
+    var exploreExpanded by remember { mutableStateOf(true) }
+
     Column(
         modifier
             .fillMaxSize()
@@ -79,83 +93,78 @@ fun QiushiScreen(
         Spacer(Modifier.height(20.dp))
 
         // ═══ 校内服务 ═══
-        SectionHeader("校内服务")
+        SectionHeader("校内服务", expanded = campusExpanded, onToggle = { campusExpanded = !campusExpanded })
         Spacer(Modifier.height(12.dp))
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        Column(
+            Modifier.fillMaxWidth().animateContentSize(
+                animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
+            )
         ) {
-            FeatureCard(
-                title = "校园服务",
-                iconVector = IconSchool,
-                onClick = onCampusServiceClick
-            )
-            FeatureCard(
-                title = "课程表",
-                iconVector = IconCalendar,
-                onClick = onScheduleClick
-            )
-        }
-        Spacer(Modifier.height(14.dp))
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            FeatureCard(
-                title = "乐校通水卡",
-                iconRes = R.drawable.ic_water_card,
-                onClick = onWaterCardClick
-            )
-            FeatureCard(
-                title = "局域网聊天",
-                iconRes = R.drawable.ic_mes_chat,
-                onClick = onMesChatClick
-            )
+            if (campusExpanded) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    FeatureCard(title = "校园服务", iconVector = IconSchool, onClick = onCampusServiceClick)
+                    FeatureCard(title = "课程表", iconVector = IconCalendar, onClick = onScheduleClick)
+                }
+                Spacer(Modifier.height(14.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    FeatureCard(title = "乐校通水卡", iconRes = R.drawable.ic_water_card, onClick = onWaterCardClick)
+                    FeatureCard(title = "速记", iconVector = IconNote, onClick = onMemoClick)
+                }
+                Spacer(Modifier.height(14.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    FeatureCard(title = "步道乐跑", iconVector = IconRun, onClick = onLePaoClick)
+                    Spacer(Modifier.weight(1f))
+                }
+            }
         }
 
         Spacer(Modifier.height(26.dp))
 
         // ═══ 探索边界 ═══
-        SectionHeader("探索边界")
+        SectionHeader("探索边界", expanded = exploreExpanded, onToggle = { exploreExpanded = !exploreExpanded })
         Spacer(Modifier.height(12.dp))
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        Column(
+            Modifier.fillMaxWidth().animateContentSize(
+                animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
+            )
         ) {
-            FeatureCard(
-                title = "速记",
-                iconVector = IconNote,
-                onClick = onMemoClick
-            )
-            FeatureCard(
-                title = "阅读",
-                iconVector = IconBook,
-                onClick = onReadingClick
-            )
-        }
-        Spacer(Modifier.height(14.dp))
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            FeatureCard(
-                title = "音乐",
-                iconVector = IconMusic,
-                onClick = onMusicClick
-            )
-            FeatureCard(
-                title = "下载",
-                iconVector = IconDownload,
-                onClick = onDownloaderClick
-            )
+            if (exploreExpanded) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    FeatureCard(title = "局域网聊天", iconRes = R.drawable.ic_mes_chat, onClick = onMesChatClick)
+                    FeatureCard(title = "阅读", iconVector = IconBook, onClick = onReadingClick)
+                }
+                Spacer(Modifier.height(14.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    FeatureCard(title = "音乐", iconVector = IconMusic, onClick = onMusicClick)
+                    FeatureCard(title = "下载", iconVector = IconDownload, onClick = onDownloaderClick)
+                }
+            }
         }
     }
 }
 
-/** 分类小标题:主标题 + 装饰线 */
+/** 分类小标题:整行可点折叠/展开,箭头随状态旋转 */
 @Composable
-private fun SectionHeader(title: String) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+private fun SectionHeader(title: String, expanded: Boolean, onToggle: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable { onToggle() }.padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
         Box(
             Modifier
                 .size(width = 3.dp, height = 14.dp)
@@ -164,7 +173,12 @@ private fun SectionHeader(title: String) {
         Spacer(Modifier.size(8.dp))
         Text(title, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
         Spacer(Modifier.weight(1f))
-        Text("›", color = TextHint, fontSize = 14.sp)
+        Text(
+            "›",
+            color = TextHint,
+            fontSize = 14.sp,
+            modifier = Modifier.graphicsLayer { rotationZ = if (expanded) 90f else 0f }
+        )
     }
 }
 
@@ -235,3 +249,4 @@ private fun RowScope.FeatureCard(
         }
     }
 }
+

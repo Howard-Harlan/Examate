@@ -242,7 +242,10 @@ internal fun TimeTableEditPage(metaId: String, onBack: () -> Unit) {
                 LiquidGlassIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "返回",
-                    onClick = onBack,
+                    onClick = {
+                        ScheduleStorage.updateTimeTableMeta(context, meta)
+                        onBack()
+                    },
                     modifier = Modifier.size(40.dp)
                 )
                 Text(
@@ -278,7 +281,7 @@ internal fun TimeTableEditPage(metaId: String, onBack: () -> Unit) {
                                             // 删除最后一节的 periods
                                             val newPeriods = meta.periods.dropLast(1)
                                             meta = meta.copy(sectionCount = newCount, periods = newPeriods)
-                                            ScheduleStorage.updateTimeTableMeta(context, meta)
+
                                         }
                                     }.padding(4.dp))
                                 Text("${meta.sectionCount}", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium,
@@ -299,7 +302,7 @@ internal fun TimeTableEditPage(metaId: String, onBack: () -> Unit) {
                                             }
                                             newPeriods.add(newPeriod)
                                             meta = meta.copy(sectionCount = newCount, periods = newPeriods)
-                                            ScheduleStorage.updateTimeTableMeta(context, meta)
+
                                         }
                                     }.padding(4.dp))
                             }
@@ -313,7 +316,6 @@ internal fun TimeTableEditPage(metaId: String, onBack: () -> Unit) {
                                     modifier = Modifier.clickable {
                                         if (meta.classDurationMinutes > 30) {
                                             meta = meta.copy(classDurationMinutes = meta.classDurationMinutes - 5)
-                                            ScheduleStorage.updateTimeTableMeta(context, meta)
                                         }
                                     }.padding(4.dp))
                                 Text("${meta.classDurationMinutes}分钟", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium,
@@ -322,7 +324,6 @@ internal fun TimeTableEditPage(metaId: String, onBack: () -> Unit) {
                                     modifier = Modifier.clickable {
                                         if (meta.classDurationMinutes < 120) {
                                             meta = meta.copy(classDurationMinutes = meta.classDurationMinutes + 5)
-                                            ScheduleStorage.updateTimeTableMeta(context, meta)
                                         }
                                     }.padding(4.dp))
                             }
@@ -369,6 +370,7 @@ internal fun TimeTableEditPage(metaId: String, onBack: () -> Unit) {
                     onClick = {
                         ScheduleStorage.updateTimeTableMeta(context, meta)
                         ToastUtil.show(context, "已保存")
+                        onBack()
                     },
                     style = ButtonStyle.White, height = 44.dp
                 )
@@ -404,7 +406,7 @@ internal fun TimeTableEditPage(metaId: String, onBack: () -> Unit) {
                         text = "保存", onClick = {
                             if (renameText.isNotBlank()) {
                                 meta = meta.copy(name = renameText.trim())
-                                ScheduleStorage.updateTimeTableMeta(context, meta)
+
                             }
                             showRenameDialog = false
                         },

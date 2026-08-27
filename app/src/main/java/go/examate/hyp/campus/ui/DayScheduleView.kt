@@ -1,16 +1,11 @@
 package go.examate.hyp.campus.ui
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -67,7 +62,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import go.examate.hyp.campus.model.PERIOD_TIMES
+
 import go.examate.hyp.campus.model.ScheduleEntry
 import go.examate.hyp.campus.model.ScheduleStorage
 import go.examate.hyp.campus.model.ScheduleTodo
@@ -118,6 +113,7 @@ internal fun DayScheduleView(
     onDeleteTodo: (String) -> Unit,
     onCourseClick: (ScheduleEntry) -> Unit,
     onOpenAllTodos: () -> Unit = {},
+    periodTimes: List<Pair<String, String>> = emptyList(),
     modifier: Modifier = Modifier
 ) {
     val today = LocalDate.now()
@@ -192,8 +188,8 @@ internal fun DayScheduleView(
             } else {
                 dayCourses.forEach { entry ->
                     // 跨节课程:取开始节上课时间 → 结束节下课时间(如 3-5 节 = 10:10-16:50)
-                    val startTime = PERIOD_TIMES.getOrNull(entry.startSection - 1)?.first
-                    val endTimeStr = PERIOD_TIMES.getOrNull(entry.endSection - 1)?.second
+                    val startTime = periodTimes.getOrNull(entry.startSection - 1)?.first
+                    val endTimeStr = periodTimes.getOrNull(entry.endSection - 1)?.second
                     val timeStr = if (startTime != null && endTimeStr != null) "$startTime-$endTimeStr" else ""
                     // 判断是否已结束:用结束时间对比当前时间(仅今天需要判断)
                     val isFinished = if (isToday && endTimeStr != null) {
@@ -300,25 +296,18 @@ internal fun DayScheduleView(
                 }
             } else {
                 dayTodos.forEach { todo ->
-                    // key 保证列表重排(完成后排到底部)时动画正确关联到对应条目
                     key(todo.id) {
-                        // 新增/删除待办时的淡入淡出 + 展开收起动画
-                        AnimatedVisibility(
-                            visible = true,
-                            enter = fadeIn(tween(250)) + expandVertically(tween(250)),
-                            exit = fadeOut(tween(200)) + shrinkVertically(tween(200))
-                        ) {
-                            Column {
-                                TodoItem(
-                                    todo = todo,
-                                    onToggle = { onToggleTodo(todo.id) },
-                                    onDelete = { onDeleteTodo(todo.id) }
-                                )
-                                Spacer(Modifier.height(6.dp))
-                            }
+                        Column {
+                            TodoItem(
+                                todo = todo,
+                                onToggle = { onToggleTodo(todo.id) },
+                                onDelete = { onDeleteTodo(todo.id) }
+                            )
+                            Spacer(Modifier.height(6.dp))
                         }
                     }
                 }
+
             }
         }
     }
@@ -414,7 +403,7 @@ internal fun DayScheduleView(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             dayCourses.forEach { c ->
-                                val startT = PERIOD_TIMES.getOrNull(c.startSection - 1)?.first
+                                val startT = periodTimes.getOrNull(c.startSection - 1)?.first
                                 if (startT != null) {
                                     val selected = newTodoTime.text == startT
                                     Box(

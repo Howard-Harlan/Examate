@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
@@ -49,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.CardBg
+import go.examate.hyp.ui.theme.Danger
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.util.ChatSession
@@ -191,6 +193,14 @@ fun HistoryPanel(
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 8.dp)
                 ) {
                     items(filtered, key = { it.id }) { session ->
+                        // 两步删除:第一次点击变红色确认态,3 秒内再点才真正删除
+                        var confirmDelete by remember(session.id) { mutableStateOf(false) }
+                        LaunchedEffect(confirmDelete) {
+                            if (confirmDelete) {
+                                kotlinx.coroutines.delay(3000)
+                                confirmDelete = false
+                            }
+                        }
                         Row(
                             Modifier
                                 .fillMaxWidth()
@@ -204,7 +214,8 @@ fun HistoryPanel(
                                     color = if (session.id == currentSessionId) AccentBlue else TextPrimary,
                                     fontSize = 14.sp,
                                     fontWeight = if (session.id == currentSessionId) FontWeight.Medium else FontWeight.Normal,
-                                    maxLines = 1
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                 )
                                 Text(
                                     "${session.messages.size} 条 · ${timeFmt.format(Date(session.updateTime))}",
@@ -213,16 +224,34 @@ fun HistoryPanel(
                                     modifier = Modifier.padding(top = 2.dp)
                                 )
                             }
-                            Icon(
-                                Icons.Filled.Close,
-                                contentDescription = "删除",
-                                tint = TextHint,
-                                modifier = Modifier.clickable(
-                                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                                    indication = null,
-                                    onClick = { onDelete(session.id) }
-                                ).padding(8.dp).size(16.dp)
-                            )
+                            if (confirmDelete) {
+                                Text(
+                                    "确认删除",
+                                    color = Danger,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(Danger.copy(alpha = 0.10f))
+                                        .clickable(
+                                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                            indication = null,
+                                            onClick = { onDelete(session.id) }
+                                        )
+                                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                                )
+                            } else {
+                                Icon(
+                                    Icons.Outlined.Delete,
+                                    contentDescription = "删除",
+                                    tint = TextHint,
+                                    modifier = Modifier.clickable(
+                                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                        indication = null,
+                                        onClick = { confirmDelete = true }
+                                    ).padding(8.dp).size(16.dp)
+                                )
+                            }
                         }
                     }
                 }

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -17,8 +18,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -26,6 +29,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.NoteAdd
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -55,6 +60,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import go.examate.hyp.ui.components.FrostedGlassCard
 import go.examate.hyp.ui.components.LiquidGlassIconButton
+import go.examate.hyp.ui.components.PlainDialog
+import go.examate.hyp.ui.components.PlainDialogButtons
+import go.examate.hyp.ui.components.PlainDialogTitle
 import go.examate.hyp.ui.theme.AccentBlue
 import go.examate.hyp.ui.theme.BgPrimary
 import go.examate.hyp.ui.theme.CardBg
@@ -74,16 +82,17 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * 笔记主页(优化版) — 搜索 + 全部/置顶筛选 + 精致卡片。
+ * 笔记主页 — 方形卡片网格 + 文件夹收纳。
  *
- * - 置顶笔记排在前面,卡片带 📌 标识
- * - 相对时间展示(刚刚 / N 分钟前 / 今天 / 昨天 / 日期)
- * - 长按弹出操作菜单:置顶/取消置顶、删除
+ * - 根目录:文件夹卡片(含"新建文件夹") + 笔记卡片,两列方形网格
+ * - 进入文件夹后只显示该文件夹的笔记,新建笔记自动归入当前文件夹
+ * - 长按笔记:移动到文件夹 / 置顶 / 删除;长按文件夹:重命名 / 删除(笔记移回根目录)
+ * - 搜索 + 全部/置顶筛选,相对时间展示
  */
 @Composable
 fun NotesScreen(
     onBack: () -> Unit,
-    onOpenNote: (String?) -> Unit
+    onOpenNote: (noteId: String?, folderId: String) -> Unit
 ) {
     val context = LocalContext.current
 
@@ -96,42 +105,64 @@ fun NotesScreen(
             }
         }
     }
+    val folders by produceState(initialValue = emptyList<NoteStorage.NoteFolder>(), notesTick) {
+        value = withContext(Dispatchers.IO) { NoteStorage.listFolders(context) }
+    }
 
     var query by remember { mutableStateOf("") }
     var searchVisible by remember { mutableStateOf(false) }
     var onlyPinned by remember { mutableStateOf(false) }
+    // null = 根目录;否则为当前浏览的文件夹 id
+    var currentFolderId by remember { mutableStateOf<String?>(null) }
     var actionTarget by remember { mutableStateOf<NoteStorage.Note?>(null) }
+    var folderTarget by remember { mutableStateOf<NoteStorage.NoteFolder?>(null) }
+    var moveTarget by remember { mutableStateOf<NoteStorage.Note?>(null) }
+    var showNewFolder by remember { mutableStateOf(false) }
+    var renameTarget by remember { mutableStateOf<NoteStorage.NoteFolder?>(null) }
     var showSettings by remember { mutableStateOf(false) }
-
-    // 外显布局:0=卡片式, 1=列表式
-    var layoutMode by remember { mutableIntStateOf(NotePrefs.layoutMode(context)) }
 
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(searchVisible) {
         if (searchVisible) focusRequester.requestFocus()
     }
 
-    val filtered = remember(notes, query, onlyPinned) {
+    val currentFolder = folders.find { it.id == currentFolderId }
+    val inFolder = currentFolderId != null
+    val scoped = remember(notes, currentFolderId, query, onlyPinned) {
         notes.filter { n ->
-            (if (onlyPinned) n.pinned else true) &&
+            val folderMatch = if (query.isNotBlank()) true else (n.folderId == (currentFolderId ?: ""))
+            (if (onlyPinned) n.pinned else true) && folderMatch &&
                 (query.isBlank() || n.title.contains(query, ignoreCase = true) || n.content.contains(query, ignoreCase = true))
         }
     }
+    val rootNotes = remember(notes) { notes.filter { it.folderId.isEmpty() } }
 
     Box(Modifier.fillMaxSize().statusBarsPadding()) {
         Column(Modifier.fillMaxSize()) {
-            // ═══ 顶栏 ═══
+            // ═══ 顶栏:返回 + 标题 + 操作 ═══
             Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)) {
                 LiquidGlassIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "返回",
-                    onClick = onBack,
+                    onClick = {
+                        if (inFolder) {
+                            currentFolderId = null
+                            searchVisible = false
+                            query = ""
+                        } else onBack()
+                    },
                     modifier = Modifier.size(40.dp).align(Alignment.CenterStart)
                 )
                 Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("笔记", color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Medium)
-                    if (notes.isNotEmpty()) {
-                        Text("${notes.size} 篇", color = TextHint, fontSize = 10.sp)
+                    Text(
+                        currentFolder?.name ?: "笔记",
+                        color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Medium,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 72.dp)
+                    )
+                    val totalCount = if (inFolder) scoped.size else notes.size
+                    if (totalCount > 0) {
+                        Text("$totalCount 篇", color = TextHint, fontSize = 10.sp)
                     }
                 }
                 Row(
@@ -157,7 +188,7 @@ fun NotesScreen(
                 }
             }
 
-            // ═══ 搜索框(点击顶栏搜索按钮展开) ═══
+            // ═══ 搜索框 ═══
             if (searchVisible) {
                 OutlinedTextField(
                     value = query,
@@ -192,7 +223,7 @@ fun NotesScreen(
                 )
             }
 
-            // ═══ 筛选:全部 / 置顶 ═══
+            // ═══ 筛选 ═══
             Row(
                 Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -201,8 +232,8 @@ fun NotesScreen(
                 FilterChip("📌 置顶", selected = onlyPinned) { onlyPinned = true }
             }
 
-            // ═══ 笔记列表 ═══
-            if (filtered.isEmpty()) {
+            // ═══ 方形卡片网格 ═══
+            if (scoped.isEmpty() && !inFolder && folders.isEmpty() && !searchVisible && !onlyPinned) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Box(
@@ -212,68 +243,77 @@ fun NotesScreen(
                             Icon(Icons.Filled.NoteAdd, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(30.dp))
                         }
                         Spacer(Modifier.height(14.dp))
-                        Text(
-                            if (notes.isEmpty()) "还没有笔记" else "没有匹配的笔记",
-                            color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium
-                        )
+                        Text("还没有笔记", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
                         Spacer(Modifier.height(4.dp))
-                        Text(
-                            if (notes.isEmpty()) "点击右下角 + 创建第一篇知识笔记" else "换个关键词试试",
-                            color = TextHint, fontSize = 12.sp
-                        )
+                        Text("点击右下角 + 创建第一篇,或先建一个文件夹", color = TextHint, fontSize = 12.sp)
                     }
                 }
             } else {
-                LazyColumn(
-                    Modifier.fillMaxSize(),
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 16.dp, top = 10.dp, end = 16.dp, bottom = 88.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(filtered, key = { it.id }) { note ->
-                        if (layoutMode == 1) {
-                            NoteListRow(
-                                title = note.title.ifEmpty { "无标题" },
-                                updatedAt = relativeTime(note.updatedAt),
-                                pinned = note.pinned,
-                                onClick = { onOpenNote(note.id) },
-                                onLongPress = { actionTarget = note }
+                    // 根目录:文件夹区(含新建文件夹入口)
+                    if (!inFolder && query.isBlank()) {
+                        items(folders, key = { "f_" + it.id }, span = { GridItemSpan(1) }) { folder ->
+                            FolderCard(
+                                name = folder.name,
+                                count = notes.count { it.folderId == folder.id },
+                                onClick = { currentFolderId = folder.id },
+                                onLongPress = { folderTarget = folder }
                             )
-                        } else {
-                            NoteCard(
-                                title = note.title.ifEmpty { "无标题" },
-                                summary = note.content,
-                                updatedAt = relativeTime(note.updatedAt),
-                                pinned = note.pinned,
-                                onClick = { onOpenNote(note.id) },
-                                onLongPress = { actionTarget = note }
-                            )
+                        }
+                        item(key = "new_folder") {
+                            NewFolderCard(onClick = { showNewFolder = true })
+                        }
+                    }
+                    // 空文件夹提示
+                    if (inFolder && scoped.isEmpty() && query.isBlank()) {
+                        item(span = { GridItemSpan(2) }) {
+                            Box(Modifier.fillMaxWidth().padding(vertical = 32.dp), contentAlignment = Alignment.Center) {
+                                Text("这个文件夹还是空的,点右下角 + 写一篇", color = TextHint, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                    // 笔记卡片
+                    items(scoped, key = { it.id }) { note ->
+                        NoteCard(
+                            title = note.title.ifEmpty { "无标题" },
+                            summary = note.content,
+                            updatedAt = relativeTime(note.updatedAt),
+                            pinned = note.pinned,
+                            onClick = { onOpenNote(note.id, "") },
+                            onLongPress = { actionTarget = note }
+                        )
+                    }
+                    if (!inFolder && query.isBlank() && rootNotes.isEmpty() && folders.isNotEmpty()) {
+                        item(span = { GridItemSpan(2) }) {
+                            Box(Modifier.fillMaxWidth().padding(vertical = 20.dp), contentAlignment = Alignment.Center) {
+                                Text("根目录暂无笔记", color = TextHint, fontSize = 12.sp)
+                            }
                         }
                     }
                 }
             }
         }
 
-        // ═══ 悬浮添加按钮(右下角) ═══
-        Box(
-            Modifier.align(Alignment.BottomEnd).padding(end = 20.dp, bottom = 24.dp)
-        ) {
+        // ═══ 悬浮添加按钮(右下角,新建笔记归入当前文件夹) ═══
+        Box(Modifier.align(Alignment.BottomEnd).padding(end = 20.dp, bottom = 24.dp)) {
             LiquidGlassIconButton(
                 icon = Icons.Filled.Add,
                 contentDescription = "新建笔记",
-                onClick = { onOpenNote(null) },
+                onClick = { onOpenNote(null, currentFolderId ?: "") },
                 modifier = Modifier.size(52.dp)
             )
         }
 
-        // ═══ 设置面板(显示设置 + 功能设置) ═══
+        // ═══ 设置面板 ═══
         if (showSettings) {
             NoteSettingsPanel(
                 notes = notes,
-                layoutMode = layoutMode,
-                onSelectLayout = {
-                    layoutMode = it
-                    NotePrefs.setLayoutMode(context, it)
-                },
                 onBack = { showSettings = false; notesTick++ },
                 onToggleKnowledge = { id, enabled ->
                     NoteStorage.setKnowledgeSource(context, id, enabled)
@@ -283,7 +323,7 @@ fun NotesScreen(
         }
     }
 
-    // ═══ 长按操作菜单(项目风格弹窗:圆角卡片 + 取消按钮) ═══
+    // ═══ 笔记长按操作:移动 / 置顶 / 删除 ═══
     actionTarget?.let { note ->
         Dialog(onDismissRequest = { actionTarget = null }) {
             Column(
@@ -299,52 +339,142 @@ fun NotesScreen(
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    if (note.pinned) "已置顶 · 置顶笔记会排在列表最前" else "可置顶到列表最前,或删除笔记",
+                    if (note.pinned) "已置顶 · 置顶笔记会排在网格最前" else "可移动到文件夹、置顶到最前,或删除笔记",
                     color = TextSecondary, fontSize = 13.sp
                 )
                 Spacer(Modifier.height(18.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // 取消按钮
-                    Box(
-                        Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(SurfaceVariant)
-                            .clickable { actionTarget = null }
-                            .padding(horizontal = 14.dp, vertical = 10.dp)
-                    ) {
-                        Text("取消", color = TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ActionRow(icon = "📁", label = if (note.folderId.isEmpty()) "移动到文件夹" else "移动到其他位置") {
+                        moveTarget = note
+                        actionTarget = null
                     }
-                    Spacer(Modifier.weight(1f))
-                    // 删除按钮
-                    Box(
-                        Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Danger.copy(alpha = 0.12f))
-                            .clickable {
-                                NoteStorage.deleteNote(context, note.id)
-                                actionTarget = null
-                                notesTick++
-                            }
-                            .padding(horizontal = 14.dp, vertical = 10.dp)
-                    ) {
-                        Text("删除", color = Danger, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    ActionRow(icon = "✕", label = "删除", danger = true) {
+                        NoteStorage.deleteNote(context, note.id)
+                        actionTarget = null
+                        notesTick++
                     }
-                    // 置顶/取消置顶按钮
-                    Box(
-                        Modifier
+                    ActionRow(icon = "📌", label = if (note.pinned) "取消置顶" else "置顶") {
+                        NoteStorage.setPinned(context, note.id, !note.pinned)
+                        actionTarget = null
+                        notesTick++
+                    }
+                    ActionRow(icon = "", label = "取消") {
+                        actionTarget = null
+                    }
+                }
+            }
+        }
+    }
+
+    // ═══ 移动到文件夹 ═══
+    moveTarget?.let { note ->
+        Dialog(onDismissRequest = { moveTarget = null }) {
+            Column(
+                Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(CardBg)
+                    .padding(20.dp)
+            ) {
+                Text("移动到", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.height(12.dp))
+                MoveRow(
+                    icon = "🏠", name = "根目录", selected = note.folderId.isEmpty(),
+                    onClick = {
+                        NoteStorage.moveNoteToFolder(context, note.id, "")
+                        moveTarget = null
+                        notesTick++
+                    }
+                )
+                folders.filter { it.id != note.folderId }.forEach { f ->
+                    MoveRow(
+                        icon = "📁", name = f.name, selected = false,
+                        onClick = {
+                            NoteStorage.moveNoteToFolder(context, note.id, f.id)
+                            moveTarget = null
+                            notesTick++
+                        }
+                    )
+                }
+                MoveRow(icon = "＋", name = "新建文件夹并移入", selected = false, accent = true) {
+                    moveTarget = null
+                    showNewFolder = true
+                    pendingMoveNewNote = note.id
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    Text(
+                        "取消", color = TextSecondary, fontSize = 13.sp,
+                        modifier = Modifier
                             .clip(RoundedCornerShape(12.dp))
-                            .background(SelectedBg)
-                            .clickable {
-                                NoteStorage.setPinned(context, note.id, !note.pinned)
-                                actionTarget = null
-                                notesTick++
-                            }
-                            .padding(horizontal = 14.dp, vertical = 10.dp)
-                    ) {
-                        Text(
-                            if (note.pinned) "取消置顶" else "置顶",
-                            color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium
-                        )
+                            .clickable { moveTarget = null }
+                            .padding(horizontal = 14.dp, vertical = 8.dp)
+                    )
+                }
+            }
+        }
+    }
+
+    // ═══ 新建/重命名文件夹 ═══
+    if (showNewFolder) {
+        FolderNameDialog(
+            title = "新建文件夹",
+            initial = "",
+            onDismiss = { showNewFolder = false; pendingMoveNewNote = null },
+            onConfirm = { name ->
+                val folder = NoteStorage.createFolder(context, name)
+                pendingMoveNewNote?.let { NoteStorage.moveNoteToFolder(context, it, folder.id) }
+                pendingMoveNewNote = null
+                showNewFolder = false
+                notesTick++
+            }
+        )
+    }
+    renameTarget?.let { folder ->
+        FolderNameDialog(
+            title = "重命名文件夹",
+            initial = folder.name,
+            onDismiss = { renameTarget = null },
+            onConfirm = { name ->
+                NoteStorage.renameFolder(context, folder.id, name)
+                renameTarget = null
+                notesTick++
+            }
+        )
+    }
+
+    // ═══ 文件夹长按操作:重命名 / 删除 ═══
+    folderTarget?.let { folder ->
+        Dialog(onDismissRequest = { folderTarget = null }) {
+            Column(
+                Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(CardBg)
+                    .padding(20.dp)
+            ) {
+                Text(
+                    folder.name,
+                    color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "删除文件夹后,里面的笔记会移回根目录,不会被删除",
+                    color = TextSecondary, fontSize = 13.sp
+                )
+                Spacer(Modifier.height(18.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ActionRow(icon = "✏️", label = "重命名") {
+                        renameTarget = folder
+                        folderTarget = null
+                    }
+                    ActionRow(icon = "✕", label = "删除文件夹", danger = true) {
+                        NoteStorage.deleteFolder(context, folder.id)
+                        if (currentFolderId == folder.id) currentFolderId = null
+                        folderTarget = null
+                        notesTick++
+                    }
+                    ActionRow(icon = "", label = "取消") {
+                        folderTarget = null
                     }
                 }
             }
@@ -352,12 +482,220 @@ fun NotesScreen(
     }
 }
 
-/** 笔记设置面板:显示设置(布局/预览主题) + 功能设置(AI 搜题知识来源) */
+/** "新建文件夹并移入"时暂存待移动的笔记 id */
+private var pendingMoveNewNote: String? = null
+
+/** 长按操作行 */
+@Composable
+private fun ActionRow(icon: String, label: String, danger: Boolean = false, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (danger) Danger.copy(alpha = 0.10f) else SurfaceVariant)
+            .clickable { onClick() }
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (icon.isNotEmpty()) {
+            Text(icon, fontSize = 14.sp)
+            Spacer(Modifier.width(10.dp))
+        }
+        Text(
+            label,
+            color = if (danger) Danger else TextPrimary,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(1f)
+        )
+        Text("›", color = TextHint, fontSize = 15.sp)
+    }
+}
+
+/** 移动目标行 */
+@Composable
+private fun MoveRow(icon: String, name: String, selected: Boolean, accent: Boolean = false, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(
+                when {
+                    selected -> SelectedBg
+                    accent -> Primary.copy(alpha = 0.10f)
+                    else -> SurfaceVariant
+                }
+            )
+            .clickable { onClick() }
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(icon, fontSize = 14.sp)
+        Spacer(Modifier.width(10.dp))
+        Text(
+            name,
+            color = if (selected || accent) Primary else TextPrimary,
+            fontSize = 14.sp, fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(1f)
+        )
+        if (selected) Text("✓", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+/** 文件夹名输入弹窗(新建/重命名共用) */
+@Composable
+private fun FolderNameDialog(
+    title: String,
+    initial: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var name by remember { mutableStateOf(initial) }
+    PlainDialog(onDismissRequest = onDismiss) {
+        PlainDialogTitle(title)
+        OutlinedTextField(
+            value = name,
+            onValueChange = { name = it },
+            placeholder = { Text("文件夹名称", color = TextHint, fontSize = 13.sp) },
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                unfocusedBorderColor = Color.Transparent,
+                focusedBorderColor = Primary.copy(alpha = 0.35f),
+                unfocusedContainerColor = SurfaceVariant,
+                focusedContainerColor = SurfaceVariant
+            ),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp)
+        )
+        Spacer(Modifier.height(14.dp))
+        PlainDialogButtons(
+            buttons = listOf(
+                Triple("取消", false) { onDismiss() },
+                Triple("确定", true) { onConfirm(name.trim()) }
+            )
+        )
+    }
+}
+
+/** 文件夹方形卡片 */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun FolderCard(
+    name: String,
+    count: Int,
+    onClick: () -> Unit,
+    onLongPress: () -> Unit
+) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    FrostedGlassCard(
+        Modifier
+            .fillMaxWidth()
+            .aspectRatio(1f)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = {
+                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                    onLongPress()
+                }
+            )
+    ) {
+        Column(
+            Modifier.fillMaxSize().padding(14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(Icons.Filled.Folder, contentDescription = name, tint = AccentBlue, modifier = Modifier.size(44.dp))
+            Spacer(Modifier.height(10.dp))
+            Text(
+                name,
+                color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(3.dp))
+            Text("$count 篇", color = TextHint, fontSize = 11.sp)
+        }
+    }
+}
+
+/** 新建文件夹卡片(虚位卡片) */
+@Composable
+private fun NewFolderCard(onClick: () -> Unit) {
+    FrostedGlassCard(Modifier.fillMaxWidth().aspectRatio(1f)) {
+        Column(
+            Modifier.fillMaxSize().clickable(onClick = onClick).padding(14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(Icons.Filled.CreateNewFolder, contentDescription = "新建文件夹", tint = TextHint, modifier = Modifier.size(40.dp))
+            Spacer(Modifier.height(10.dp))
+            Text("新建文件夹", color = TextHint, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        }
+    }
+}
+
+/** 笔记方形卡片:标题 + 摘要 + 时间,1:1 比例 */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun NoteCard(
+    title: String,
+    summary: String,
+    updatedAt: String,
+    pinned: Boolean,
+    onClick: () -> Unit,
+    onLongPress: () -> Unit
+) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    FrostedGlassCard(
+        Modifier
+            .fillMaxWidth()
+            .aspectRatio(1f)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = {
+                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                    onLongPress()
+                }
+            )
+    ) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    title,
+                    color = TextPrimary,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                if (pinned) {
+                    Spacer(Modifier.width(4.dp))
+                    Text("📌", fontSize = 11.sp)
+                }
+            }
+            if (summary.isNotBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    summary,
+                    color = TextSecondary,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                    maxLines = 6,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Divider))
+            Spacer(Modifier.height(6.dp))
+            Text(updatedAt, color = TextHint, fontSize = 10.sp)
+        }
+    }
+}
+
+/** 笔记设置面板:显示设置(预览主题) + 功能设置(AI 搜题知识来源) */
 @Composable
 private fun NoteSettingsPanel(
     notes: List<NoteStorage.Note>,
-    layoutMode: Int,
-    onSelectLayout: (Int) -> Unit,
     onBack: () -> Unit,
     onToggleKnowledge: (String, Boolean) -> Unit
 ) {
@@ -366,7 +704,6 @@ private fun NoteSettingsPanel(
 
     Box(Modifier.fillMaxSize().background(BgPrimary)) {
         Column(Modifier.fillMaxSize()) {
-            // 顶栏(仅返回,无标题文字)
             Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)) {
                 LiquidGlassIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
@@ -384,30 +721,6 @@ private fun NoteSettingsPanel(
                 Spacer(Modifier.height(8.dp))
                 FrostedGlassCard(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp)) {
-                        Text("显示风格(外显布局)", color = TextPrimary, fontSize = 13.sp)
-                        Spacer(Modifier.height(10.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(0 to "卡片式", 1 to "列表式").forEach { (mode, label) ->
-                                val selected = layoutMode == mode
-                                Box(
-                                    Modifier
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(if (selected) SelectedBg else GlassChipTint)
-                                        .clickable { onSelectLayout(mode) }
-                                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                                ) {
-                                    Text(
-                                        label,
-                                        color = if (selected) Color.White else TextSecondary,
-                                        fontSize = 12.sp,
-                                        fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(Modifier.height(14.dp))
-
                         Text("预览主题", color = TextPrimary, fontSize = 13.sp)
                         Spacer(Modifier.height(10.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -541,110 +854,4 @@ private fun FilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
             fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal
         )
     }
-}
-
-/** 笔记卡片(卡片式布局):置顶标识 + 标题 + 摘要(前2行) + 相对时间 */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun NoteCard(
-    title: String,
-    summary: String,
-    updatedAt: String,
-    pinned: Boolean,
-    onClick: () -> Unit,
-    onLongPress: () -> Unit
-) {
-    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
-    FrostedGlassCard(Modifier.fillMaxWidth()) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .combinedClickable(
-                    onClick = onClick,
-                    onLongClick = {
-                        // 长按触感反馈,增强交互感知
-                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                        onLongPress()
-                    }
-                )
-                .padding(horizontal = 16.dp, vertical = 14.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    title,
-                    color = TextPrimary,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                if (pinned) {
-                    Spacer(Modifier.width(6.dp))
-                    Text("📌", fontSize = 12.sp)
-                }
-            }
-            if (summary.isNotBlank()) {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    summary,
-                    color = TextSecondary,
-                    fontSize = 12.sp,
-                    lineHeight = 17.sp,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(updatedAt, color = TextHint, fontSize = 11.sp)
-                Spacer(Modifier.weight(1f))
-                Text("编辑 ›", color = AccentBlue, fontSize = 11.sp)
-            }
-        }
-    }
-}
-
-/** 笔记行(列表式布局):紧凑单行,标题 + 置顶 + 时间 */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun NoteListRow(
-    title: String,
-    updatedAt: String,
-    pinned: Boolean,
-    onClick: () -> Unit,
-    onLongPress: () -> Unit
-) {
-    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = {
-                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                    onLongPress()
-                }
-            )
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            title,
-            color = TextPrimary,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f)
-        )
-        if (pinned) {
-            Spacer(Modifier.width(6.dp))
-            Text("📌", fontSize = 11.sp)
-        }
-        Spacer(Modifier.width(10.dp))
-        Text(updatedAt, color = TextHint, fontSize = 11.sp)
-    }
-    Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(1.dp).background(Divider))
 }

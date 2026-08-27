@@ -43,14 +43,14 @@ object ChnuConfig {
 
     /**
      * 根据当前日期推算学年学期。
-     * 9月~次年1月:第一学期;2月~7月:第二学期;8月归第一学期。
+     * 8月~次年1月:第一学期;2月~7月:第二学期。
      * @return (学年, 学期),如 ("2024-2025", "1")
      */
     fun currentXnXq(): Pair<String, String> {
         val now = LocalDate.now()
         val year = now.year
         val month = now.monthValue
-        return if (month >= 9) "${year}-${year + 1}" to "1"
+        return if (month >= 8) "${year}-${year + 1}" to "1"
         else if (month >= 2) "${year - 1}-${year}" to "2"
         else "${year - 1}-${year}" to "1"
     }

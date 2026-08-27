@@ -47,6 +47,11 @@ sniff_data/
 .uploads/
 .qoder/
 .workbuddy/
+.arts/
+.codeartsdoer/
+
+# 第三方逆向协议文档(含敏感API信息,不入库)
+步道乐跑协议文档.md
 
 # 根目录调试/临时文件
 b64.txt

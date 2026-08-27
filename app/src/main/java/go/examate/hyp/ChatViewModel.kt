@@ -2,6 +2,7 @@ package go.examate.hyp
 
 import android.content.Context
 import android.net.Uri
+import go.examate.hyp.util.ChatMediaStore
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import go.examate.hyp.agent.AgentOrchestrator
@@ -109,35 +110,42 @@ class ChatViewModel : ViewModel() {
     ) {
         if (providers.isEmpty()) return
         resetStreamBuffer()
-        val now = System.currentTimeMillis()
-        val uriStrs = imageUris.map { it.toString() }
-
-        // 追加用户消息:挂到分支锚点或当前激活叶子;重置输入/图片/加载状态
-        val branchParent = _uiState.value.branchAnchorId ?: _uiState.value.activeLeafId
-        val userMsg = ChatMsg("user", text, false, now, imageUris = uriStrs, parentId = branchParent)
-        pendingReplyParent = userMsg.id
-        updateState {
-            it.copy(
-                messages = it.messages + userMsg,
-                activeLeafId = userMsg.id,
-                branchAnchorId = null,
-                inputText = "",
-                pendingImageUris = emptyList(),
-                isLoading = true,
-                loadingStatus = "",
-                toolProgressCards = emptyList(),
-                streamingText = "",
-                currentToolSteps = emptyList()
-            )
-        }
-        ensurePrefs(context)
-
-        val provider = providers[_uiState.value.modelIndex.coerceIn(0, providers.size - 1)]
 
         sendJob = viewModelScope.launch {
+            // 图片先持久化到私有目录(content URI 授权会过期,重启后消息里的图就没了)
+            val uriStrs = withContext(Dispatchers.IO) {
+                imageUris.map { uri ->
+                    val raw = uri.toString()
+                    ChatMediaStore.importUri(context, raw) ?: raw
+                }
+            }
+            val now = System.currentTimeMillis()
+
+            // 追加用户消息:挂到分支锚点或当前激活叶子;重置输入/图片/加载状态
+            val branchParent = _uiState.value.branchAnchorId ?: _uiState.value.activeLeafId
+            val userMsg = ChatMsg("user", text, false, now, imageUris = uriStrs, parentId = branchParent)
+            pendingReplyParent = userMsg.id
+            updateState {
+                it.copy(
+                    messages = it.messages + userMsg,
+                    activeLeafId = userMsg.id,
+                    branchAnchorId = null,
+                    inputText = "",
+                    pendingImageUris = emptyList(),
+                    isLoading = true,
+                    loadingStatus = "",
+                    toolProgressCards = emptyList(),
+                    streamingText = "",
+                    currentToolSteps = emptyList()
+                )
+            }
+            ensurePrefs(context)
+
+            val provider = providers[_uiState.value.modelIndex.coerceIn(0, providers.size - 1)]
+
             try {
-                if (imageUris.isNotEmpty()) {
-                    runVision(context, provider, imageUris, text)
+                if (uriStrs.isNotEmpty()) {
+                    runVision(context, provider, uriStrs, text)
                 } else {
                     val history = historyPairs()
                     AgentOrchestrator.executeFlow(
@@ -159,12 +167,12 @@ class ChatViewModel : ViewModel() {
     }
 
     /** 识图公共逻辑(send/regenerate 复用):多图 + 用户文本 → vision provider */
-    private suspend fun runVision(context: Context, provider: ModelProvider, imageUris: List<Uri>, userText: String) {
+    private suspend fun runVision(context: Context, provider: ModelProvider, uriStrings: List<String>, userText: String) {
         updateState { it.copy(loadingStatus = "正在识别图片...") }
         val visionProvider = if (provider.hasCapability(ModelProvider.CAP_VISION)) provider
             else MyConfig.providersFor(context, ModelProvider.CAP_VISION).firstOrNull() ?: provider
         val imagesBytes = withContext(Dispatchers.IO) {
-            imageUris.mapNotNull { uri -> context.contentResolver.openInputStream(uri)?.use { it.readBytes() } }
+            uriStrings.mapNotNull { ChatMediaStore.readBytes(context, it) }
         }
         val result = HttpUtils.sendImagesRequestResult(
             visionProvider.requestUrl, visionProvider.modelId, imagesBytes,
@@ -180,9 +188,62 @@ class ChatViewModel : ViewModel() {
         }
     }
 
+    /**
+     * 生图模式直连管线:不走 Agent/function-calling,直接调生图 API。
+     * 结果为 base64 或图片直链,经 appendAssistant 挂到消息树(渲染/全屏/保存链路已就绪)。
+     */
+    fun generateImage(context: Context, prompt: String) {
+        if (prompt.isBlank()) return
+        resetStreamBuffer()
+        val branchParent = _uiState.value.branchAnchorId ?: _uiState.value.activeLeafId
+        val userMsg = ChatMsg("user", prompt, false, System.currentTimeMillis(), parentId = branchParent)
+        pendingReplyParent = userMsg.id
+        updateState {
+            it.copy(
+                messages = it.messages + userMsg,
+                activeLeafId = userMsg.id,
+                branchAnchorId = null,
+                inputText = "",
+                isLoading = true,
+                loadingStatus = "正在生成图片…",
+                toolProgressCards = emptyList(),
+                streamingText = "",
+                currentToolSteps = emptyList()
+            )
+        }
+        ensurePrefs(context)
+        sendJob = viewModelScope.launch {
+            try {
+                // 未配置生图厂商:给出明确指引而非静默失败
+                val hasImageGen = MyConfig.providersFor(context, ModelProvider.CAP_IMAGE_GEN).isNotEmpty()
+                if (!hasImageGen) {
+                    updateState { it.copy(isLoading = false, loadingStatus = "") }
+                    appendAssistant("还没有可用的生图模型:到 API 设置里给支持文生图的厂商勾选「生图」能力(可另填生图模型/接口地址),完成后即可使用。", isError = true)
+                    return@launch
+                }
+                val result = withContext(Dispatchers.IO) {
+                    go.examate.hyp.agent.ImageTools.generate(context, prompt)
+                }
+                updateState { it.copy(isLoading = false, loadingStatus = "") }
+                if (result == null) {
+                    appendAssistant("生图失败:请检查生图模型的接口地址/模型 ID 配置或网络", isError = true)
+                } else if (result.startsWith("http")) {
+                    appendAssistant("", imageUrl = result)
+                } else {
+                    appendAssistant("", imageBase64 = result)
+                }
+            } catch (e: CancellationException) {
+                updateState { it.copy(isLoading = false, loadingStatus = "", streamingText = "") }
+                throw e
+            } catch (e: Exception) {
+                updateState { it.copy(isLoading = false, loadingStatus = "") }
+                appendAssistant("生图失败: ${e.message ?: "未知错误"}", isError = true)
+            }
+        }
+    }
+
     /** 停止当前生成(取消正在进行的请求,保留已输出的部分文本) */
-    fun stopSend() {
-        sendJob?.cancel()
+    fun stopSend() {        sendJob?.cancel()
         sendJob = null
         val partial = consumeStreamText()
         val steps = _uiState.value.currentToolSteps
@@ -243,7 +304,7 @@ class ChatViewModel : ViewModel() {
 
         val provider = providers[_uiState.value.modelIndex.coerceIn(0, providers.size - 1)]
         val userText = userMsg.content
-        val imageUris = userMsg.imageUris.ifEmpty { listOfNotNull(userMsg.imageUriString) }.map { Uri.parse(it) }
+        val imageUris = userMsg.imageUris.ifEmpty { listOfNotNull(userMsg.imageUriString) }
 
         sendJob = viewModelScope.launch {
             try {

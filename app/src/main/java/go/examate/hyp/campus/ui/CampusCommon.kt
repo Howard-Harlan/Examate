@@ -48,11 +48,11 @@ import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
 import go.examate.hyp.ui.theme.TextSecondary
 
-/** 学年选项(近 5 年) */
+/** 学年选项(未来1年 + 过去4年;8月起即可选下学年) */
 val YEAR_OPTIONS: List<String> = run {
     val now = java.time.LocalDate.now()
-    val startYear = if (now.monthValue >= 9) now.year else now.year - 1
-    (0 until 5).map { i -> "${startYear - i}-${startYear - i + 1}" }
+    val startYear = if (now.monthValue >= 8) now.year else now.year - 1
+    (1 downTo -4).map { i -> "${startYear + i}-${startYear + i + 1}" }
 }
 
 /** 学期选项 */

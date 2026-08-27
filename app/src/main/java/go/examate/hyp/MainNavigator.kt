@@ -16,6 +16,10 @@ class MainNavigator(private val context: Context) {
     fun gotoDeepLearning() = context.startActivity(Intent(context, DeepLearningActivity::class.java))
     fun gotoMesChat() = context.startActivity(Intent(context, go.examate.hyp.meschat.MesChatActivity::class.java))
     fun gotoCampusService() = context.startActivity(Intent(context, CampusServiceActivity::class.java))
+    fun gotoLePao() {
+        context.startActivity(Intent(context, LePaoActivity::class.java))
+    }
+
     fun gotoWaterCard() = context.startActivity(Intent(context, WaterCardActivity::class.java))
     fun gotoSchedule() = context.startActivity(Intent(context, ScheduleActivity::class.java))
     fun gotoTodo() = context.startActivity(Intent(context, TodoActivity::class.java))
@@ -35,3 +39,4 @@ class MainNavigator(private val context: Context) {
     fun gotoAbout() = context.startActivity(Intent(context, AboutActivity::class.java))
     fun gotoSearchSettings() = context.startActivity(Intent(context, SearchSettingsActivity::class.java))
 }
+

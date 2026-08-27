@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 求是停止按钮:半透明红底 -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#33FFFFFF">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#99EF4444" />
+            <corners android:radius="11dp" />
+        </shape>
+    </item>
+</ripple>

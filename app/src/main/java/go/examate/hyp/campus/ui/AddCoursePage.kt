@@ -101,7 +101,7 @@ fun AddCoursePage(
 
     // ── 周次 ──
     var selectedWeeks by remember {
-        mutableStateOf<Set<Int>>((editEntry?.weeks ?: (1..16).toList()).toMutableSet())
+        mutableStateOf<Set<Int>>((editEntry?.weeks ?: (1..totalWeeks).toList()).toMutableSet())
     }
 
     // ── 时间段列表(一门课一周可能多次) ──
@@ -123,21 +123,38 @@ fun AddCoursePage(
     // 提取保存逻辑:构造 entries 列表并回调
     fun buildAndSave() {
         if (name.isBlank() || timeSlots.isEmpty()) return
-        val weeks = selectedWeeks.toList().sorted().ifEmpty { (1..16).toList() }
+        val weeks = selectedWeeks.toList().sorted().ifEmpty { (1..totalWeeks).toList() }
         val baseId = if (editEntry != null) editEntry.id else "usr_${System.currentTimeMillis()}"
         val entries = if (editEntry != null) {
-            // 编辑模式:只更新单个 entry
-            listOf(editEntry.copy(
-                courseName = name.trim(),
-                teacher = teacher.trim(),
-                classroom = classroom.trim(),
-                dayOfWeek = timeSlots[0].dayOfWeek,
-                startSection = timeSlots[0].startSection,
-                endSection = timeSlots[0].endSection,
-                weeks = weeks,
-                color = selectedColor,
-                note = note.trim()
-            ))
+            // 编辑模式:第一个时段更新原 entry,其余时段新增
+            timeSlots.mapIndexed { idx, slot ->
+                if (idx == 0) {
+                    editEntry.copy(
+                        courseName = name.trim(),
+                        teacher = teacher.trim(),
+                        classroom = classroom.trim(),
+                        dayOfWeek = slot.dayOfWeek,
+                        startSection = slot.startSection,
+                        endSection = slot.endSection,
+                        weeks = weeks,
+                        color = selectedColor,
+                        note = note.trim()
+                    )
+                } else {
+                    ScheduleEntry(
+                        id = "${baseId}_$idx",
+                        courseName = name.trim(),
+                        teacher = teacher.trim(),
+                        classroom = classroom.trim(),
+                        dayOfWeek = slot.dayOfWeek,
+                        startSection = slot.startSection,
+                        endSection = slot.endSection,
+                        weeks = weeks,
+                        color = selectedColor,
+                        note = note.trim()
+                    )
+                }
+            }
         } else {
             // 新增模式:每个时间段一个 entry
             timeSlots.mapIndexed { idx, slot ->

@@ -184,31 +184,13 @@ fun DeepLearningScreen(
         }
     }
 
-    // ═══ 启动模式选择弹窗(与旧版一致) ═══
+    // ═══ 启动模式选择弹窗(共享组件,聊天页搜题快捷按钮复用同一交互) ═══
     if (showLaunchDialog) {
-        PlainDialog(onDismissRequest = { showLaunchDialog = false }) {
-            PlainDialogTitle("选择启动模式")
-            PlainDialogContent("无障碍搜题:通过无障碍服务读取屏幕文本自动搜题。\n截屏搜题:通过截屏框选区域,由 AI 视觉识别题目。")
-            Row(
-                Modifier
-                    .padding(20.dp, 8.dp, 20.dp, 20.dp)
-                    .fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                LaunchDialogButton("无障碍", isAccent = true, Modifier.weight(1f)) {
-                    showLaunchDialog = false
-                    onLaunchAccessibility()
-                }
-                LaunchDialogButton("取消", isAccent = false, Modifier.weight(1f)) {
-                    showLaunchDialog = false
-                }
-                LaunchDialogButton("截屏", isAccent = true, Modifier.weight(1f)) {
-                    showLaunchDialog = false
-                    onLaunchScreenshot()
-                }
-            }
-        }
+        go.examate.hyp.ui.components.SearchLaunchDialog(
+            onDismiss = { showLaunchDialog = false },
+            onLaunchAccessibility = onLaunchAccessibility,
+            onLaunchScreenshot = onLaunchScreenshot
+        )
     }
 
     // ═══ 权限详情弹窗(与旧版一致) ═══
@@ -260,32 +242,6 @@ private fun PermissionDetailRow(name: String, granted: Boolean, explanation: Str
             fontSize = 12.sp,
             lineHeight = 17.sp,
             modifier = Modifier.padding(start = 18.dp, top = 4.dp)
-        )
-    }
-}
-
-/** 启动模式弹窗按钮:等宽排列,取消按钮用浅灰色 */
-@Composable
-private fun LaunchDialogButton(
-    text: String,
-    isAccent: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit
-) {
-    Box(
-        modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (isAccent) AccentBlue else ChipBg)
-            .clickable(onClick = onClick)
-            .padding(vertical = 10.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = text,
-            color = if (isAccent) Color.White else TextPrimary,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium,
-            textAlign = TextAlign.Center
         )
     }
 }

@@ -40,7 +40,10 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.HelpOutline
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.ScreenSearchDesktop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -61,6 +64,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -94,7 +98,11 @@ fun DynamicInputBar(
     canSend: Boolean,
     isLoading: Boolean,
     onSend: () -> Unit,
-    onStop: () -> Unit
+    onStop: () -> Unit,
+    imageGenMode: Boolean = false,
+    onToggleImageGen: () -> Unit = {},
+    onQiushi: () -> Unit = {},
+    onSearch: () -> Unit = {}
 ) {
     val backdrop = LocalGlassBackdrop.current
     // 深色模式降白:外层玻璃 38%→12%,避免在纯黑背景上过亮
@@ -130,6 +138,21 @@ fun DynamicInputBar(
             ImagePreviewRow(imageUris, onRemoveImageAt)
         }
         var showAttachPanel by remember { mutableStateOf(false) }
+        // ═══ 快捷操作排:生图模式 / 求是 / 搜题(区别于 + 里的文件上传) ═══
+        Row(
+            Modifier.padding(bottom = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ActionChip(
+                icon = Icons.Filled.Palette,
+                label = "生图",
+                active = imageGenMode,
+                onClick = onToggleImageGen
+            )
+            ActionChip(icon = Icons.Filled.HelpOutline, label = "求是", onClick = onQiushi)
+            ActionChip(icon = Icons.Filled.ScreenSearchDesktop, label = "搜题", onClick = onSearch)
+        }
         // 主操作行:附件按钮 + 输入框 + 发送/停止按钮
         Row(verticalAlignment = Alignment.CenterVertically) {
             // 左侧附件按钮 — 点击在下方展开附件面板(拍照/图库/文件),+ 旋转为 ×
@@ -179,7 +202,7 @@ fun DynamicInputBar(
                         )
                     } else Modifier
                 ),
-                placeholder = { Text("发掘无限可能", color = TextHint, fontSize = 14.sp) },
+                placeholder = { Text(if (imageGenMode) "描述要生成的画面…" else "发掘无限可能", color = TextHint, fontSize = 14.sp) },
                 shape = RoundedCornerShape(22.dp),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedContainerColor = Color.Transparent,
@@ -208,6 +231,33 @@ fun DynamicInputBar(
                 onPickFile = { showAttachPanel = false; onPickFile() }
             )
         }
+    }
+}
+
+/** 快捷操作胶囊:图标 + 文字;active 时高亮(生图模式开关用) */
+@Composable
+private fun ActionChip(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    active: Boolean = false,
+    onClick: () -> Unit
+) {
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(15.dp))
+            .background(if (active) AccentBlue else AccentBlue.copy(alpha = 0.10f))
+            .clickable { onClick() }
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Icon(icon, contentDescription = label, tint = if (active) Color.White else AccentBlue, modifier = Modifier.size(14.dp))
+        Text(
+            label,
+            color = if (active) Color.White else TextSecondary,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium
+        )
     }
 }
 
@@ -320,21 +370,28 @@ private fun AttachCell(
     }
 }
 
-/** 多图缩略图预览行(横向排列,每张右上角可删除) */
+/** 多图缩略图预览行(横向排列,点击缩略图全屏预览,右上角可删除) */
 @Composable
 private fun ImagePreviewRow(imageUris: List<String>, onRemoveAt: (Int) -> Unit) {
+    var previewing by remember { mutableStateOf<String?>(null) }
     Row(
         Modifier.padding(bottom = 6.dp).horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         imageUris.forEachIndexed { index, uri ->
-            ImageThumb(uri) { onRemoveAt(index) }
+            ImageThumb(uri, onRemove = { onRemoveAt(index) }, onPreview = { previewing = uri })
         }
+    }
+    previewing?.let { uri ->
+        go.examate.hyp.ui.components.ImageViewerDialog(
+            model = Uri.parse(uri),
+            onDismiss = { previewing = null }
+        )
     }
 }
 
 @Composable
-private fun ImageThumb(uriString: String, onRemove: () -> Unit) {
+private fun ImageThumb(uriString: String, onRemove: () -> Unit, onPreview: () -> Unit) {
     val context = LocalContext.current
     var bitmap by remember(uriString) { mutableStateOf<android.graphics.Bitmap?>(null) }
     LaunchedEffect(uriString) {
@@ -352,7 +409,10 @@ private fun ImageThumb(uriString: String, onRemove: () -> Unit) {
             Image(
                 bitmap = it.asImageBitmap(),
                 contentDescription = "待发送图片",
-                modifier = Modifier.size(56.dp).clip(RoundedCornerShape(10.dp)),
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable(onClick = onPreview),
                 contentScale = ContentScale.Crop
             )
         } ?: Box(Modifier.size(56.dp).clip(RoundedCornerShape(10.dp)).background(TextHint.copy(0.2f)))

@@ -7,10 +7,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -21,6 +23,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import go.examate.hyp.entity.ModelProvider
@@ -36,13 +39,19 @@ import go.examate.hyp.ui.theme.TextPrimary
 @Composable
 fun ModelSelector(providers: List<ModelProvider>, selectedIndex: Int, onSelect: (Int) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    val currentName = if (providers.isNotEmpty()) providers[selectedIndex].displayName else "未配置 API"
+    val safeIndex = if (providers.isEmpty()) 0 else selectedIndex.coerceIn(0, providers.size - 1)
+    val currentName = if (providers.isNotEmpty()) providers[safeIndex].displayName else "未配置 API"
     Box {
         Row(
             Modifier.clickable { expanded = true }.padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(currentName, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+            Text(
+                currentName,
+                color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 130.dp)
+            )
             Icon(Icons.Filled.ArrowDropDown, contentDescription = null, tint = TextHint, modifier = Modifier.size(18.dp))
         }
         DropdownMenu(
@@ -56,7 +65,7 @@ fun ModelSelector(providers: List<ModelProvider>, selectedIndex: Int, onSelect: 
             shadowElevation = 8.dp
         ) {
             providers.forEachIndexed { i, p ->
-                val isSelected = i == selectedIndex
+                val isSelected = i == safeIndex
                 Row(
                     Modifier
                         .fillMaxWidth()

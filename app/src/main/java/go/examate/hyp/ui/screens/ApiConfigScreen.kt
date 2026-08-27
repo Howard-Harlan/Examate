@@ -659,6 +659,9 @@ private fun EditProviderDialog(
     // 接口格式:OpenAI(chat) / OpenAI Responses / Anthropic
     var endpointType by remember { mutableStateOf(provider.endpointType.ifEmpty { ModelProvider.inferEndpointType(apiUrl) }) }
     var caps by remember { mutableStateOf(provider.capabilities) }
+    // 生图专属覆盖(可选):地址/模型与聊天接口不一致时填写
+    var imageGenUrl by remember { mutableStateOf(provider.imageGenUrl) }
+    var imageGenModel by remember { mutableStateOf(provider.imageGenModel) }
     var fetching by remember { mutableStateOf(false) }
     var modelList by remember { mutableStateOf<List<String>?>(null) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
@@ -688,6 +691,27 @@ private fun EditProviderDialog(
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.fillMaxWidth()
             )
+            Spacer(Modifier.height(8.dp))
+
+            // ═══ 接口格式(不同厂商 API 结构不同,选错会解析失败) ═══
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(
+                    "chat" to "OpenAI 兼容",
+                    "responses" to "Responses",
+                    "anthropic" to "Anthropic"
+                ).forEach { (type, typeLabel) ->
+                    val on = endpointType == type
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (on) SelectedBg else SurfaceVariant)
+                            .clickable { endpointType = type }
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text(typeLabel, color = if (on) Color.White else TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                    }
+                }
+            }
             Spacer(Modifier.height(12.dp))
 
             // ═══ API Key ═══
@@ -789,7 +813,31 @@ private fun EditProviderDialog(
                 }
             }
             Spacer(Modifier.height(4.dp))
-            Text("多模态=能理解图片,生图=文生图;发图/生图时自动路由到对应能力的模型", color = TextHint, fontSize = 10.sp)
+            Text("发图/生图时自动路由到对应能力的模型", color = TextHint, fontSize = 10.sp)
+
+            // ═══ 生图专属配置(勾选生图能力后出现;地址与聊天不一致时填写) ═══
+            if (caps.contains(ModelProvider.CAP_IMAGE_GEN)) {
+                Spacer(Modifier.height(10.dp))
+                FieldLabel("生图模型(可选)")
+                OutlinedTextField(
+                    value = imageGenModel,
+                    onValueChange = { imageGenModel = it },
+                    placeholder = { Text("默认用上面的模型 ID") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                FieldLabel("生图接口地址(可选)")
+                OutlinedTextField(
+                    value = imageGenUrl,
+                    onValueChange = { imageGenUrl = it },
+                    placeholder = { Text("默认自动推导 baseUrl + /v1/images/generations") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         }
 
         // 按钮区:[删除] [间距] [取消] [保存]
@@ -819,7 +867,9 @@ private fun EditProviderDialog(
                             provider.label,
                             provider.barColor,
                             provider.visible,
-                            caps
+                            caps,
+                            imageGenUrl.trim(),
+                            imageGenModel.trim()
                         )
                     )
                 }

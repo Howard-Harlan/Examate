@@ -83,6 +83,7 @@ private fun AboutScreen(onBack: () -> Unit) {
     var checking by remember { mutableStateOf(false) }
     var updateResult by remember { mutableStateOf<UpdateChecker.Result?>(null) }
     var showUpdateDialog by remember { mutableStateOf(false) }
+    var showSourceDialog by remember { mutableStateOf(false) }
 
     val currentVersion = go.examate.hyp.BuildConfig.VERSION_NAME
 
@@ -163,13 +164,7 @@ private fun AboutScreen(onBack: () -> Unit) {
         // ═══ 项目地址 ═══
         LiquidGlassButton(
             text = "项目地址",
-            onClick = {
-                runCatching {
-                    context.startActivity(
-                        Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/duringk/Examate"))
-                    )
-                }
-            },
+            onClick = { showSourceDialog = true },
             style = ButtonStyle.Outline,
             height = 44.dp
         )
@@ -182,6 +177,33 @@ private fun AboutScreen(onBack: () -> Unit) {
         Spacer(Modifier.height(20.dp))
 
         } // 内层 Column
+    }
+
+    // 项目地址选择弹窗
+    if (showSourceDialog) {
+        PlainDialog(onDismissRequest = { showSourceDialog = false }) {
+            PlainDialogTitle("项目地址")
+            Column(Modifier.padding(horizontal = 24.dp)) {
+                Text("选择镜像源访问项目仓库", color = TextSecondary, fontSize = 13.sp)
+            }
+            Spacer(Modifier.height(12.dp))
+            PlainDialogButtons(
+                listOf(
+                    Triple("GitHub", true) {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/duringk/Examate")))
+                        }
+                        showSourceDialog = false
+                    },
+                    Triple("Gitee", false) {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://gitee.com/danfuu/Examate")))
+                        }
+                        showSourceDialog = false
+                    }
+                )
+            )
+        }
     }
 
     // 更新检查结果弹窗

@@ -6,6 +6,7 @@ import android.widget.Toast
 import go.examate.hyp.util.ToastUtil
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -57,6 +58,7 @@ import go.examate.hyp.campus.model.DEFAULT_TOTAL_WEEKS
 import go.examate.hyp.campus.model.ScheduleEntry
 import go.examate.hyp.campus.model.ScheduleImporter
 import go.examate.hyp.campus.model.ScheduleItem
+
 import go.examate.hyp.campus.model.ScheduleStorage
 import go.examate.hyp.campus.model.ScheduleTodo
 import go.examate.hyp.campus.model.convertScheduleItems
@@ -337,6 +339,8 @@ fun ScheduleScreen(onBack: () -> Unit) {
     val prefs = remember { PrefsManager.getInstance(context) }
     // 当前课表元数据(用于控制显示周六/周日、学期周数等)
     var currentMeta by remember { mutableStateOf(ScheduleStorage.getCurrentScheduleMeta(context)) }
+    // 当前生效的节次时间表(独立 State,切换时间表时显式更新触发重组)
+    var periodTimes by remember { mutableStateOf(ScheduleStorage.getCurrentTimeTable(context).periods) }
     // 当前周次:基于 meta 推算;未创建课程时默认第1周
     var currentWeek by remember { mutableStateOf(inferCurrentWeek(currentMeta, state.entries.isNotEmpty())) }
     // 视图模式:周视图(默认)/ 日视图 — 从 PrefsManager 读取上次选择,切换时持久化
@@ -367,6 +371,7 @@ fun ScheduleScreen(onBack: () -> Unit) {
     LaunchedEffect(Unit) {
         ScheduleStorage.loadTimeSchedule(context)
         currentMeta = ScheduleStorage.getCurrentScheduleMeta(context)
+        periodTimes = ScheduleStorage.getCurrentTimeTable(context).periods
     }
 
     // 文件选择器
@@ -399,6 +404,7 @@ fun ScheduleScreen(onBack: () -> Unit) {
     ) { _ ->
         ScheduleStorage.loadTimeSchedule(context)
         currentMeta = ScheduleStorage.getCurrentScheduleMeta(context)
+        periodTimes = ScheduleStorage.getCurrentTimeTable(context).periods
         vm.reloadFromStorage()
     }
     // 待办页返回(可能增删了待办,需重新加载)
@@ -433,8 +439,10 @@ fun ScheduleScreen(onBack: () -> Unit) {
             onBack = closeAddCourse,
             onSave = { entries ->
                 if (editTarget != null) {
-                    // 编辑模式:更新该课程
-                    entries.forEach { vm.updateCourse(it) }
+                    // 编辑模式:第一个 entry 更新原课程,其余新增(多时段)
+                    entries.forEachIndexed { idx, entry ->
+                        if (idx == 0) vm.updateCourse(entry) else vm.addCourse(entry)
+                    }
                 } else {
                     // 新增模式:逐条添加(可能多个时间段)
                     entries.forEach { vm.addCourse(it) }
@@ -586,6 +594,7 @@ fun ScheduleScreen(onBack: () -> Unit) {
                     showSunday = currentMeta.showSunday,
                     semesterStartDate = currentMeta.semesterStartDate,
                     fontScale = currentMeta.fontScale,
+                    periodTimes = periodTimes,
                     onCourseClick = { entry ->
                         // 编辑现有课程:统一走 AddCoursePage
                         editTarget = entry; initialSlot = null; showAddCoursePage = true
@@ -617,6 +626,7 @@ fun ScheduleScreen(onBack: () -> Unit) {
                     entries = state.entries,
                     todos = state.todos,
                     meta = currentMeta,
+                    periodTimes = periodTimes,
                     onAddTodo = { vm.addTodo(it) },
                     onToggleTodo = { vm.toggleTodo(it) },
                     onDeleteTodo = { vm.deleteTodo(it) },
@@ -777,8 +787,7 @@ private fun JwxtImportOptionsDialog(
                         Text(xn, color = TextPrimary, fontSize = 13.sp)
                     }
                     if (showXnPicker) {
-                        val years = listOf("2020-2021", "2021-2022", "2022-2023", "2023-2024", "2024-2025", "2025-2026")
-                        SingleChoiceDialog("学年", years.map { it to it }, xn,
+                        SingleChoiceDialog("学年", YEAR_OPTIONS.map { it to it }, xn,
                             { onXnChange(it); showXnPicker = false }, { showXnPicker = false })
                     }
                     var showXqPicker by remember { mutableStateOf(false) }

@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -66,6 +67,9 @@ import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import go.examate.hyp.config.MyConfig
 import go.examate.hyp.ui.components.FrostedGlassCard
+import go.examate.hyp.ui.components.ImageViewerDialog
+import go.examate.hyp.ui.components.LocalMarkdownLinkHandler
+import go.examate.hyp.ui.components.openUrlExternally
 import go.examate.hyp.ui.components.LiquidGlassIconButton
 import go.examate.hyp.ui.components.MarkdownText
 import go.examate.hyp.ui.components.PlainDialog
@@ -101,6 +105,7 @@ import java.util.Locale
 @Composable
 fun NoteEditorScreen(
     noteId: String?,
+    folderId: String = "",
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
@@ -222,7 +227,7 @@ fun NoteEditorScreen(
         }
         val finalTitle = t.ifEmpty { "无标题" }
         if (noteId == null || originalNote == null) {
-            NoteStorage.createNote(context, finalTitle, c)
+            NoteStorage.createNote(context, finalTitle, c, folderId)
         } else {
             NoteStorage.saveNote(context, originalNote!!.copy(title = finalTitle, content = c))
         }
@@ -264,7 +269,11 @@ fun NoteEditorScreen(
         }
 
         // ═══ 正文区:编辑 / 预览(Crossfade 过渡) ═══
-        Crossfade(targetState = previewMode, label = "note_mode") { isPreview ->
+        Crossfade(
+            targetState = previewMode,
+            label = "note_mode",
+            modifier = Modifier.weight(1f)
+        ) { isPreview ->
             if (isPreview) {
                 NotePreview(
                     title = title,
@@ -437,25 +446,92 @@ private fun NoteEditPaper(
             Spacer(Modifier.height(10.dp))
             Box(Modifier.fillMaxWidth().height(1.dp).background(Divider))
             Spacer(Modifier.height(12.dp))
-            BasicTextField(
-                value = content,
-                onValueChange = onContentChange,
-                textStyle = TextStyle(
-                    fontSize = 16.sp,
-                    lineHeight = 28.sp,
-                    color = TextPrimary
-                ),
-                cursorBrush = SolidColor(AccentBlue),
-                modifier = Modifier.fillMaxWidth(),
-                decorationBox = { inner ->
-                    Box {
-                        if (content.text.isEmpty()) {
-                            Text("开始书写…（支持 Markdown，右下工具栏可插入图片与音频）", color = TextHint, fontSize = 15.sp, lineHeight = 28.sp)
+            // 正文区:左侧行号列 + 输入框(共用滚动,行号按软换行对齐)
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val textWidthPx = with(androidx.compose.ui.platform.LocalDensity.current) {
+                    (maxWidth - 16.dp - 6.dp).toPx()
+                }.toInt()
+                Row(Modifier.fillMaxWidth()) {
+                    LineNumberGutter(content = content.text, textWidthPx = textWidthPx)
+                    Spacer(Modifier.width(6.dp))
+                    BasicTextField(
+                        value = content,
+                        onValueChange = onContentChange,
+                        textStyle = TextStyle(
+                            fontSize = 16.sp,
+                            lineHeight = 28.sp,
+                            color = TextPrimary
+                        ),
+                        cursorBrush = SolidColor(AccentBlue),
+                        modifier = Modifier.weight(1f),
+                        decorationBox = { inner ->
+                            Box {
+                                if (content.text.isEmpty()) {
+                                    Text("开始书写…", color = TextHint, fontSize = 15.sp, lineHeight = 28.sp)
+                                }
+                                inner()
+                            }
                         }
-                        inner()
-                    }
+                    )
                 }
-            )
+            }
+        }
+    }
+}
+
+/**
+ * 行号列 — 与正文共用滚动容器,按逻辑行测量软换行后的视觉行数,
+ * 使行号高度与正文行严格对齐(软换行处不显示编号)。
+ * [textWidthPx] 为正文输入框的实际像素宽度,由父级测量传入。
+ */
+@Composable
+private fun LineNumberGutter(
+    content: String,
+    textWidthPx: Int,
+    modifier: Modifier = Modifier
+) {
+    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val lineH = with(density) { 28.sp.toDp() }
+    val measureStyle = TextStyle(fontSize = 16.sp, lineHeight = 28.sp)
+
+    // 逻辑行 -> (行号, 软换行后的视觉行数)
+    val rows = remember(content, textWidthPx) {
+        if (content.isEmpty()) {
+            listOf(1 to 1)
+        } else {
+            content.lines().mapIndexed { idx, line ->
+                val visual = runCatching {
+                    measurer.measure(
+                        androidx.compose.ui.text.AnnotatedString(line.ifEmpty { " " }),
+                        measureStyle,
+                        constraints = androidx.compose.ui.unit.Constraints(
+                            minWidth = 0,
+                            maxWidth = textWidthPx.coerceAtLeast(1),
+                            minHeight = 0,
+                            maxHeight = Int.MAX_VALUE
+                        )
+                    ).lineCount
+                }.getOrDefault(1)
+                (idx + 1) to visual.coerceAtLeast(1)
+            }
+        }
+    }
+    Column(modifier.width(16.dp)) {
+        rows.forEach { (num, visualLines) ->
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(lineH * visualLines),
+                contentAlignment = Alignment.TopCenter
+            ) {
+                Text(
+                    "$num",
+                    color = TextHint.copy(alpha = 0.55f),
+                    fontSize = 11.sp,
+                    lineHeight = 28.sp
+                )
+            }
         }
     }
 }
@@ -476,11 +552,15 @@ private fun NotePreview(
         NOTE_PREVIEW_THEMES[NotePrefs.previewThemeIndex(context).coerceIn(0, NOTE_PREVIEW_THEMES.size - 1)]
     }
     val charCount = content.replace(Regex("\\s"), "").length
-    val readMinutes = (charCount / 400 + 1).coerceAtLeast(1)
     val metaTime = remember(updatedAt) {
         SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(updatedAt))
     }
+    // 全屏图片查看(点击预览中的配图)
+    var viewingImage by remember { mutableStateOf<File?>(null) }
 
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalMarkdownLinkHandler provides { url -> openUrlExternally(context, url) }
+    ) {
     Column(
         modifier
             .verticalScroll(rememberScrollState())
@@ -494,7 +574,7 @@ private fun NotePreview(
         }
         Spacer(Modifier.height(10.dp))
         Text(
-            "$metaTime · $charCount 字 · 约 $readMinutes 分钟",
+            "$metaTime · $charCount 字",
             color = TextHint,
             fontSize = 11.sp
         )
@@ -520,6 +600,7 @@ private fun NotePreview(
                                             .fillMaxWidth()
                                             .heightIn(max = 360.dp)
                                             .clip(RoundedCornerShape(12.dp))
+                                            .clickable { viewingImage = file }
                                     )
                                     if (seg.alt.isNotBlank()) {
                                         Spacer(Modifier.height(4.dp))
@@ -568,6 +649,12 @@ private fun NotePreview(
                 }
             }
         }
+    }
+    }
+
+    // 全屏图片查看器(含保存到相册)
+    viewingImage?.let { file ->
+        ImageViewerDialog(model = file, onDismiss = { viewingImage = null })
     }
 }
 

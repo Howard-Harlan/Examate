@@ -3,7 +3,6 @@ package go.examate.hyp
 import android.content.Context
 import android.net.Uri
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -15,6 +14,8 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
@@ -39,6 +40,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountTree
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
@@ -46,8 +48,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -57,14 +61,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalDensity
 import go.examate.hyp.ui.anim.Motion
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -94,7 +96,7 @@ import go.examate.hyp.ui.theme.GlassChipTint
 import go.examate.hyp.ui.theme.GlassInputTint
 import go.examate.hyp.ui.theme.TextHint
 import go.examate.hyp.ui.theme.TextPrimary
-import go.examate.hyp.util.AvatarHelper
+import go.examate.hyp.ui.theme.TextSecondary
 import go.examate.hyp.util.ChatHistoryManager
 import go.examate.hyp.util.ChatMsg
 import java.text.SimpleDateFormat
@@ -106,25 +108,47 @@ class ChatActivity : ComponentActivity() {
         const val MODE_CHAT_ONLY = 2
     }
 
+    /** 权限助手:搜题快捷按钮复用深层学习页同款启动链 */
+    private lateinit var permissionHelper: PermissionHelper
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // 初始化权限助手(内部会注册 launcher 与 Shizuku 监听)
+        permissionHelper = PermissionHelper(this).apply { onCreate() }
         setContent {
             ExamateTheme {
                 LiquidGlassBackground {
-                    ChatScreen(onBack = { finish() })
+                    ChatScreen(permissionHelper = permissionHelper, onBack = { finish() })
                 }
             }
         }
     }
+
+    override fun onDestroy() {
+        permissionHelper.onDestroy()
+        super.onDestroy()
+    }
 }
 
 @Composable
-private fun ChatScreen(onBack: () -> Unit) {
+private fun ChatScreen(permissionHelper: PermissionHelper, onBack: () -> Unit) {
     val context = LocalContext.current
     val vm: ChatViewModel = viewModel()
     val ui by vm.uiState.collectAsStateWithLifecycle()
-    val providers = remember { MyConfig.loadProviders(context) }
+    // providers 保持可刷新:从设置页返回后重新加载,并在切换模型时回写配置
+    var providers by remember { mutableStateOf(MyConfig.loadProviders(context)) }
+    // 从 API 设置/Agent 设置返回时热刷新厂商列表(含刚保存的模型切换)
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                providers = MyConfig.loadProviders(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val listState = rememberLazyListState()
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val historyTimeFmt = remember { SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()) }
@@ -135,6 +159,30 @@ private fun ChatScreen(onBack: () -> Unit) {
 
     // 图谱开启时:系统返回键关闭图谱面板,而非退出页面
     BackHandler(enabled = ui.graphMode) { vm.closeGraph() }
+    // 历史面板展开时:返回键先收起面板
+    BackHandler(enabled = ui.showHistory && !ui.graphMode) { vm.dismissHistory() }
+
+    // ═══ 生图模式:开启后发送直达生图管线,不进 Agent ═══
+    var imageGenMode by rememberSaveable { mutableStateOf(false) }
+    val toggleImageGen: () -> Unit = {
+        imageGenMode = !imageGenMode
+        // 生图只吃文字描述,进入时清掉待发图片
+        if (imageGenMode && ui.pendingImageUris.isNotEmpty()) vm.clearPendingImages()
+    }
+    // 求是:把当前输入(或最近一条 AI 回复)丢进独立的求是悬浮窗
+    val onQiushiQuick: () -> Unit = {
+        val content = ui.inputText.trim().ifEmpty {
+            ui.messages.lastOrNull { it.role == "assistant" && !it.isError }?.content.orEmpty()
+        }
+        if (content.isNotBlank()) {
+            val intent = android.content.Intent(context, go.examate.hyp.service.QiushiFloatingService::class.java)
+            intent.putExtra(go.examate.hyp.service.QiushiFloatingService.EXTRA_CONTENT, content)
+            context.startService(intent)
+        }
+    }
+    // 搜题:复用深层学习页同款模式选择弹窗 + PermissionHelper 启动链
+    var showSearchLaunch by remember { mutableStateOf(false) }
+    val onSearchQuick: () -> Unit = { showSearchLaunch = true }
 
     val galleryPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
         if (uris.isNotEmpty()) vm.addPendingImages(uris.map { it.toString() })
@@ -182,6 +230,18 @@ private fun ChatScreen(onBack: () -> Unit) {
         vm.saveCurrentSession(context)
     }
 
+    // 聊天图片持久目录清理:删除未被任何历史会话引用且超过 7 天的文件
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val referenced = ChatHistoryManager.loadAll(context)
+                .flatMap { it.messages }
+                .flatMap { m -> m.imageUris.ifEmpty { listOfNotNull(m.imageUriString) } }
+                .filter { it.startsWith("/") }
+                .toSet()
+            go.examate.hyp.util.ChatMediaStore.cleanup(context, referenced)
+        }
+    }
+
     Box(
         Modifier
             .fillMaxSize()
@@ -216,6 +276,10 @@ private fun ChatScreen(onBack: () -> Unit) {
         // ═══ 消息列表(reverseLayout:消息从底部开始,新消息自动出现在底部) ═══
         // 已入场动画的消息 id(在列表层记忆,滚动回来不重播入场动画)
         val animatedIds = remember { mutableSetOf<String>() }
+        // 激活路径在组合期计算并缓存(避免每次重组都全树遍历)
+        val path = remember(ui.messages, ui.activeLeafId) { ui.activePath() }
+        val reversedPath = remember(path) { path.reversed() }
+        val activePathIds = remember(path) { path.mapTo(HashSet()) { it.id } }
         LazyColumn(
             Modifier
                 .fillMaxSize()
@@ -230,7 +294,15 @@ private fun ChatScreen(onBack: () -> Unit) {
             )
         ) {
             if (ui.messages.isEmpty() && ui.streamingText.isEmpty() && !ui.isLoading) {
-                // 空状态:留空,placeholder 已在输入框显示"发掘无限可能"
+                // ★ 欢迎空状态:极简标识 + 未配置 API 引导
+                item(key = "welcome") {
+                    ChatWelcomeState(
+                        providersEmpty = providers.isEmpty(),
+                        onGoConfig = {
+                            context.startActivity(android.content.Intent(context, ApiConfigActivity::class.java))
+                        }
+                    )
+                }
             } else {
                 // ★ 底部:流式文本 或 加载指示器
                 if (ui.streamingText.isNotEmpty()) {
@@ -267,11 +339,12 @@ private fun ChatScreen(onBack: () -> Unit) {
                     item(key = "card_$index") { ActionCardView(card) }
                 }
                 // ★ 消息列表:渲染当前激活路径(reversed:最新在底部)
-                val path = ui.activePath()
-                val activePathIds = path.mapTo(HashSet()) { it.id }
-                itemsIndexed(path.reversed(), key = { _, it -> it.id }) { index, message ->
+                itemsIndexed(reversedPath, key = { _, it -> it.id }) { index, message ->
                     // 仅最后一条消息(且非加载/流式状态)显示操作行
                     val isLast = index == 0
+                    // 时间戳分组:与上一条(更新的)消息间隔超过 5 分钟才显示,减少视觉噪音
+                    val showTime = index == 0 ||
+                        (reversedPath[index - 1].time - message.time) > 5 * 60_000L
                     // 入场动画:仅消息首次出现时播淡入+上滑;滚动回来不重播
                     val playEntrance = remember(message.id) { animatedIds.add(message.id) }
                     val appear = remember(message.id) { Animatable(if (playEntrance) 0f else 1f) }
@@ -290,6 +363,7 @@ private fun ChatScreen(onBack: () -> Unit) {
                     ) {
                         MessageBubble(
                             message, timeFmt, context,
+                            showTimestamp = showTime,
                             onQuickFollowUp = onQuickFollowUp,
                             onRegenerate = { vm.regenerate(message.id, providers, context) },
                             onDelete = { vm.deleteMessage(message.id) },
@@ -305,9 +379,8 @@ private fun ChatScreen(onBack: () -> Unit) {
                                 }
                             },
                             onQiushi = { content ->
-                                val intent = android.content.Intent(context, go.examate.hyp.service.UnifiedFloatingService::class.java)
-                                intent.putExtra("mode", "qiushi")
-                                intent.putExtra("qiushi_content", content)
+                                val intent = android.content.Intent(context, go.examate.hyp.service.QiushiFloatingService::class.java)
+                                intent.putExtra(go.examate.hyp.service.QiushiFloatingService.EXTRA_CONTENT, content)
                                 context.startService(intent)
                             },
                             showActions = isLast && !ui.isLoading && ui.streamingText.isEmpty()
@@ -402,6 +475,29 @@ private fun ChatScreen(onBack: () -> Unit) {
             )
         }
 
+        // ═══ 回到底部按钮:向上滚动查看历史消息时出现 ═══
+        val scope = rememberCoroutineScope()
+        val showJump by remember {
+            derivedStateOf { listState.firstVisibleItemIndex > 2 }
+        }
+        AnimatedVisibility(
+            visible = showJump,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 18.dp, bottom = 104.dp),
+            enter = scaleIn() + fadeIn(),
+            exit = scaleOut() + fadeOut()
+        ) {
+            LiquidGlassIconButton(
+                icon = Icons.Filled.KeyboardArrowDown,
+                contentDescription = "回到底部",
+                onClick = { scope.launch { listState.animateScrollToItem(0) } },
+                modifier = Modifier.size(40.dp),
+                surfaceAlpha = 0.42f,
+                ambientHighlight = true
+            )
+        }
+
         // ═══ 底部输入栏(开分支时上方显示提示横幅) ═══
         Column(Modifier.align(Alignment.BottomCenter)) {
             if (ui.branchAnchorId != null) {
@@ -423,14 +519,27 @@ private fun ChatScreen(onBack: () -> Unit) {
                     onTakePhoto = onTakePhoto,
                     onPickFile = { chatFilePicker.launch(arrayOf("*/*")) },
                     onRemoveImageAt = { vm.removePendingImageAt(it) },
-                    canSend = (ui.inputText.isNotBlank() || ui.pendingImageUris.isNotEmpty()) && !ui.isLoading && providers.isNotEmpty(),
+                    canSend = if (imageGenMode) {
+                        ui.inputText.isNotBlank() && !ui.isLoading && providers.isNotEmpty()
+                    } else {
+                        (ui.inputText.isNotBlank() || ui.pendingImageUris.isNotEmpty()) && !ui.isLoading && providers.isNotEmpty()
+                    },
                     isLoading = ui.isLoading,
                     onSend = {
                         val text = ui.inputText.trim()
-                        if (text.isEmpty() && ui.pendingImageUris.isEmpty()) return@DynamicInputBar
-                        vm.send(text, ui.pendingImageUris.map { Uri.parse(it) }, providers, context)
+                        if (imageGenMode) {
+                            if (text.isEmpty()) return@DynamicInputBar
+                            vm.generateImage(context, text)
+                        } else {
+                            if (text.isEmpty() && ui.pendingImageUris.isEmpty()) return@DynamicInputBar
+                            vm.send(text, ui.pendingImageUris.map { Uri.parse(it) }, providers, context)
+                        }
                     },
-                    onStop = { vm.stopSend() }
+                    onStop = { vm.stopSend() },
+                    imageGenMode = imageGenMode,
+                    onToggleImageGen = toggleImageGen,
+                    onQiushi = onQiushiQuick,
+                    onSearch = onSearchQuick
                 )
             }
         }
@@ -452,6 +561,15 @@ private fun ChatScreen(onBack: () -> Unit) {
         )
     }
 
+    // ═══ 搜题启动模式弹窗(与深层学习页同一组件) ═══
+    if (showSearchLaunch) {
+        go.examate.hyp.ui.components.SearchLaunchDialog(
+            onDismiss = { showSearchLaunch = false },
+            onLaunchAccessibility = { permissionHelper.startManualMode() },
+            onLaunchScreenshot = { permissionHelper.startScreenshotMode() }
+        )
+    }
+
     // ═══ 知识图谱视图(全屏覆盖):点击节点聚焦回线性视图 ═══
     AnimatedVisibility(
         visible = ui.graphMode,
@@ -460,9 +578,59 @@ private fun ChatScreen(onBack: () -> Unit) {
     ) {
         ConversationGraph(
             messages = ui.messages,
-            activePathIds = ui.activePath().mapTo(HashSet()) { it.id },
+            activePathIds = remember(ui.messages, ui.activeLeafId) { ui.activePath().mapTo(HashSet()) { it.id } },
             onNodeClick = { vm.focusNode(it) },
             onClose = { vm.closeGraph() }
         )
+    }
+}
+
+// ════════════════════════════════════════
+//  欢迎空状态
+// ════════════════════════════════════════
+
+/**
+ * 欢迎空状态 — 极简:仅标识;未配置模型 API 时展示"去配置"引导,
+ * 避免发送按钮静默禁用让用户摸不着头脑。
+ */
+@Composable
+private fun ChatWelcomeState(
+    providersEmpty: Boolean,
+    onGoConfig: () -> Unit
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 110.dp, bottom = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text("✦", color = AccentBlue, fontSize = 34.sp)
+        Spacer(Modifier.height(14.dp))
+        Text("智源奇点", color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Medium)
+
+        if (providersEmpty) {
+            Spacer(Modifier.height(22.dp))
+            Column(
+                Modifier
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(GlassChipTint)
+                    .padding(horizontal = 18.dp, vertical = 14.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("还没有配置模型 API,发送前先完成配置", color = TextSecondary, fontSize = 12.sp)
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "去配置 API",
+                    color = AccentBlue,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(AccentBlue.copy(alpha = 0.12f))
+                        .clickable { onGoConfig() }
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+            }
+        }
     }
 }
