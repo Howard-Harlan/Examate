@@ -6,19 +6,12 @@
 
 智能学习助手 · AI 对话 · 校园服务 · 悬浮窗答题
 
-`v1.35` · Kotlin + Jetpack Compose · Android 12+
+Kotlin + Jetpack Compose · Android 12+
 
 </div>
 
 ---
 
-## 截图
-
-| | | |
-|:---:|:---:|:---:|
-| ![home](s.png) | ![chat](screen.png) | ![explore](screen2.png) |
-
----
 
 ## 核心功能
 
@@ -106,9 +99,8 @@ git clone https://github.com/duringk/Examate.git
 
 ## 说明
 
-- 本项目为**独立开发**，早期基于开源社区方案修改而来，现已发展为功能完整的独立应用
 - 所有数据**本地存储**，隐私优先
-- 液态玻璃 UI 效果基于 [backdrop](https://github.com/nichenqin/compose-backdrop) 库
+- 液态玻璃 UI 效果基于 [AndroidLiquidGlass](https://github.com/Kyant0/AndroidLiquidGlass) 库
 - 仅供**学习交流**使用
 
 ---
