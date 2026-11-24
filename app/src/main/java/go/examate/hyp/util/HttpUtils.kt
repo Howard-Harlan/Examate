@@ -7,6 +7,7 @@ import android.view.View
 import android.widget.ScrollView
 import android.widget.TextView
 import go.examate.hyp.service.UnifiedFloatingService
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -26,6 +27,7 @@ import java.io.InputStreamReader
 import java.io.InterruptedIOException
 import java.io.OutputStreamWriter
 import java.net.SocketException
+import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
@@ -115,6 +117,22 @@ class HttpUtils {
                 .readTimeout(30, TimeUnit.SECONDS)
                 .writeTimeout(15, TimeUnit.SECONDS)
                 .retryOnConnectionFailure(true)
+                .build()
+        }
+
+        /**
+         * 识图/多模态专用 client(长超时)。
+         *
+         * 识图请求是 stream=false 的非流式请求:服务端必须把整段答案生成完才会吐出第一个
+         * 响应体字节,所以 httpClient 的 30s readTimeout 实际上是在"等模型算完",再叠加
+         * 200KB+ 截图的视觉 token prefill,很容易被误杀成 SocketTimeoutException。
+         * 这里放宽到 120s(成功案例实测最长 14s,留 8 倍余量),上传超时也一并放宽以适配
+         * base64 后的图片体积。注意不要用 callTimeout 收口,那会把上传+生成一起掐掉。
+         */
+        private val visionClient: OkHttpClient by lazy {
+            httpClient.newBuilder()
+                .readTimeout(120, TimeUnit.SECONDS)
+                .writeTimeout(60, TimeUnit.SECONDS)
                 .build()
         }
 
@@ -688,19 +706,37 @@ class HttpUtils {
             }
         }
 
-        /** 多图 + 用户文本 的 vision 请求(聊天多模态);images 至少一张 */
+        /**
+         * 多图 + 用户文本 的 vision 请求(聊天多模态);images 至少一张。
+         *
+         * 非流式识图要等服务端算完整段答案才吐首字节,偶发排队就会撞 readTimeout。
+         * 这里只对 [SocketTimeoutException] 自动重试一次(隔 800ms 让过服务端瞬时排队);
+         * 401/400/5xx 这类确定性失败不重试,避免白等一倍时间。
+         */
         @JvmStatic
         suspend fun sendImagesRequestResult(
             url: String, modelName: String, images: List<ByteArray>,
             apiKey: String?, systemPrompt: String, userText: String, endpointType: String
         ): ApiResult<String> = withContext(Dispatchers.IO) {
             if (images.isEmpty()) return@withContext ApiResult.OtherError("图片数据为空")
-            try {
-                ApiResult.Success(sendImagesSync(url, modelName, images, apiKey, systemPrompt, userText, endpointType))
-            } catch (e: Exception) {
-                recordLog(TAG, "sendImagesRequestResult 异常: model=$modelName, endpoint=$endpointType, url=$url", e)
-                ApiResult.fromException(e)
+            var lastTimeout: Exception? = null
+            for (attempt in 0..1) {
+                try {
+                    return@withContext ApiResult.Success(
+                        sendImagesSync(url, modelName, images, apiKey, systemPrompt, userText, endpointType)
+                    )
+                } catch (e: SocketTimeoutException) {
+                    lastTimeout = e
+                    recordLog(TAG, "识图超时(第 ${attempt + 1} 次): model=$modelName, endpoint=$endpointType", e)
+                    if (attempt == 0) delay(800)
+                } catch (e: Exception) {
+                    recordLog(TAG, "sendImagesRequestResult 异常: model=$modelName, endpoint=$endpointType, url=$url", e)
+                    return@withContext ApiResult.fromException(e)
+                }
             }
+            val cause = lastTimeout ?: SocketTimeoutException("timeout")
+            recordLog(TAG, "识图两次均超时,放弃: model=$modelName, endpoint=$endpointType, url=$url", cause)
+            ApiResult.NetworkError("识别超时(图片较大或服务繁忙),已自动重试仍失败,请重试或缩小框选范围", cause)
         }
 
         /** 嗅探图片 MIME(jpeg/png/webp),供 data URI 与 anthropic media_type 使用 */
@@ -730,7 +766,8 @@ class HttpUtils {
                 .applyAuth(endpointType, apiKey)
                 .build()
             recordLog(TAG, "发起识图请求: model=$modelName, endpoint=$endpointType, count=${images.size}, totalKB=${images.sumOf { it.size } / 1024}, url=$url")
-            httpClient.newCall(request).execute().use { resp ->
+            // 识图用长超时 client:非流式请求的 readTimeout 实际是在等模型生成
+            visionClient.newCall(request).execute().use { resp ->
                 if (resp.isSuccessful) {
                     val respStr = resp.body?.string() ?: ""
                     recordLog(TAG, "识图请求成功: HTTP ${resp.code}, len=${respStr.length}")
