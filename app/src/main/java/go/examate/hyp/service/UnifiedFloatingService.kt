@@ -156,7 +156,8 @@ class UnifiedFloatingService : Service() {
     // ═══ 截图模式(MediaProjection)字段 ═══
     private var statusBarHeight = 0
     private var mediaProjection: MediaProjection? = null
-    // 注:ImageReader/VirtualDisplay 改为按需创建、用完即弃,解决安卓高版本持续帧不刷新问题
+    private var virtualDisplay: VirtualDisplay? = null
+    private var mediaProjectionCallback: MediaProjection.Callback? = null
     private lateinit var selectionOverlay: SelectionOverlayView
     private var selectionButtons: View? = null
 
@@ -331,6 +332,10 @@ class UnifiedFloatingService : Service() {
             windowManager.removeView(btnView)
         }
         // 截图模式资源释放
+        virtualDisplay?.release()
+        virtualDisplay = null
+        mediaProjectionCallback?.let { mediaProjection?.unregisterCallback(it) }
+        mediaProjectionCallback = null
         mediaProjection?.stop()
         mediaProjection = null
         // 中断问问线程
@@ -648,6 +653,33 @@ class UnifiedFloatingService : Service() {
                     windowManager.updateViewLayout(askContainerView, askViewParams)
                     textView.text = "窗口标题已设置为" + askViewParams.title
                 }
+                return@setOnClickListener
+            }
+            else if (userInput == "/log") {
+                textView.text = "正在导出日志..."
+                Thread {
+                    val logText = HttpUtils.dumpLogs(true)
+                    val savedPath = try {
+                        val dir = getExternalFilesDir(null) ?: filesDir
+                        val file = java.io.File(dir, "examate_error_log.txt")
+                        file.writeText(logText)
+                        file.absolutePath
+                    } catch (e: Exception) {
+                        "保存文件失败: ${e.message}"
+                    }
+                    handler.post {
+                        try {
+                            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("examate_log", logText.takeLast(20000)))
+                            ToastUtil.show(this@UnifiedFloatingService, "日志已复制到剪贴板")
+                        } catch (_: Exception) {}
+                        textView.text = "【已复制到剪贴板】\n文件位置: $savedPath\n\n${logText.takeLast(4000)}"
+                    }
+                }.start()
+                return@setOnClickListener
+            } else if (userInput == "/clearlog") {
+                HttpUtils.clearLogs()
+                textView.text = "日志已清空"
                 return@setOnClickListener
             }
             // 截图模式:输入作为对「上次截图」的补充追问(图 + 文一起发)
@@ -1254,12 +1286,31 @@ class UnifiedFloatingService : Service() {
     @SuppressLint("WrongConstant")
     private fun setupMediaProjection(resultCode: Int, data: Intent) {
         try {
+            virtualDisplay?.release()
+            virtualDisplay = null
+            mediaProjectionCallback?.let { mediaProjection?.unregisterCallback(it) }
+            mediaProjection?.stop()
+
             val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            mediaProjection = mpm.getMediaProjection(resultCode, data)
-            Log.d(TAG, "MediaProjection 已就绪(按需截图模式)")
+            val projection = mpm.getMediaProjection(resultCode, data)
+            val callback = object : MediaProjection.Callback() {
+                override fun onStop() {
+                    handler.post {
+                        virtualDisplay?.release()
+                        virtualDisplay = null
+                        mediaProjection = null
+                        mediaProjectionCallback = null
+                        Log.d(TAG, "MediaProjection 已停止并释放资源")
+                    }
+                }
+            }
+            projection?.registerCallback(callback, handler)
+            mediaProjectionCallback = callback
+            mediaProjection = projection
+            Log.d(TAG, "MediaProjection 已就绪(已注册回调)")
         } catch (e: Exception) {
-            Log.e(TAG, "MediaProjection 初始化失败", e)
-            ToastUtil.show(this, "截屏初始化失败")
+            HttpUtils.recordLog(TAG, "MediaProjection 初始化失败", e)
+            ToastUtil.show(this, "截屏初始化失败: ${e.message}")
         }
     }
 
@@ -1271,7 +1322,6 @@ class UnifiedFloatingService : Service() {
     private fun captureRegion(rect: Rect): ByteArray? {
         val projection = mediaProjection ?: return null
         var reader: ImageReader? = null
-        var display: VirtualDisplay? = null
         var image: Image? = null
         try {
             reader = ImageReader.newInstance(
@@ -1287,18 +1337,23 @@ class UnifiedFloatingService : Service() {
                 }
             }, handler)
 
-            val dm = DisplayMetrics()
-            windowManager.defaultDisplay.getMetrics(dm)
-            display = projection.createVirtualDisplay(
-                "ScreenshotCapture",
-                screenWidth, screenHeight, dm.densityDpi,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                reader.surface, null, handler
-            )
+            if (virtualDisplay == null) {
+                val dm = DisplayMetrics()
+                windowManager.defaultDisplay.getMetrics(dm)
+                virtualDisplay = projection.createVirtualDisplay(
+                    "ScreenshotCapture",
+                    screenWidth, screenHeight, dm.densityDpi,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    reader.surface, null, handler
+                )
+            } else {
+                virtualDisplay?.surface = reader.surface
+            }
 
-            // 等待首帧到达(最多 3 秒)
+            lastCaptureError = null
             if (!latch.await(3, java.util.concurrent.TimeUnit.SECONDS)) {
-                Log.e(TAG, "captureRegion 超时:未收到帧")
+                lastCaptureError = "截屏超时(3秒内未收到画面帧)"
+                HttpUtils.recordLog(TAG, lastCaptureError!!)
                 return null
             }
 
@@ -1309,7 +1364,6 @@ class UnifiedFloatingService : Service() {
             val rowStride = planes[0].rowStride
             val rowPadding = rowStride - pixelStride * screenWidth
 
-            // 创建全屏 bitmap
             val fullBitmap = Bitmap.createBitmap(
                 screenWidth + rowPadding / pixelStride, screenHeight,
                 Bitmap.Config.ARGB_8888
@@ -1317,30 +1371,26 @@ class UnifiedFloatingService : Service() {
             buffer.rewind()
             fullBitmap.copyPixelsFromBuffer(buffer)
 
-            // 裁剪到选区(确保边界合法)
             val left = rect.left.coerceIn(0, screenWidth - 1)
             val top = rect.top.coerceIn(0, screenHeight - 1)
             val right = rect.right.coerceIn(left + 1, screenWidth)
             val bottom = rect.bottom.coerceIn(top + 1, screenHeight)
-            val w = right - left
-            val h = bottom - top
-            val cropped = Bitmap.createBitmap(fullBitmap, left, top, w, h)
+            val cropped = Bitmap.createBitmap(fullBitmap, left, top, right - left, bottom - top)
 
-            // 转 PNG
             val baos = ByteArrayOutputStream()
-            cropped.compress(Bitmap.CompressFormat.PNG, 100, baos)
+            cropped.compress(Bitmap.CompressFormat.JPEG, 85, baos)
             val bytes = baos.toByteArray()
             fullBitmap.recycle()
             if (cropped !== fullBitmap) cropped.recycle()
             return bytes
         } catch (e: Exception) {
-            Log.e(TAG, "captureRegion failed", e)
+            lastCaptureError = "${e.javaClass.simpleName}: ${e.message}"
+            HttpUtils.recordLog(TAG, "captureRegion 异常", e)
             return null
         } finally {
-            // 先摘除监听,阻止超时后监听器再取帧导致 Image 泄漏
             reader?.setOnImageAvailableListener(null, null)
+            virtualDisplay?.surface = null
             image?.close()
-            display?.release()
             reader?.close()
         }
     }
@@ -1350,6 +1400,8 @@ class UnifiedFloatingService : Service() {
      */
     /** 上次截图字节:供截图模式在问问窗输入框中对同一张图「补充追问」 */
     private var lastCaptureBytes: ByteArray? = null
+    @Volatile
+    private var lastCaptureError: String? = null
 
     /** 用「图 + 可选文字」向 vision 模型提问并把答案渲染到问问窗(截图识别/补充追问共用) */
     private fun askWithImage(imageBytes: ByteArray, userText: String) {
@@ -1364,6 +1416,7 @@ class UnifiedFloatingService : Service() {
         val current = modelProviders[modelIndex.coerceIn(0, modelProviders.size - 1)]
         val provider = if (current.hasCapability(go.examate.hyp.entity.ModelProvider.CAP_VISION)) current
             else MyConfig.providersFor(this, go.examate.hyp.entity.ModelProvider.CAP_VISION).firstOrNull() ?: current
+        HttpUtils.recordLog(TAG, "askWithImage: current=${current.displayName}(${current.modelId}) -> 实际使用=${provider.displayName}(${provider.modelId}, ${provider.endpointType}), imgKB=${imageBytes.size / 1024}")
         thread = Thread(Runnable {
             val result = kotlinx.coroutines.runBlocking {
                 HttpUtils.sendImagesRequestResult(
@@ -1376,14 +1429,16 @@ class UnifiedFloatingService : Service() {
                 if (result is go.examate.hyp.util.ApiResult.Success) {
                     val content = HttpUtils.extractContent(result.data, provider.endpointType)
                     if (content.isEmpty()) {
+                        HttpUtils.recordLog(TAG, "askWithImage 解析失败: ${result.data.take(500)}")
                         errorOutput.visibility = View.VISIBLE
                         errorOutput.text = "解析失败:\n${result.data}"
                     } else {
                         contentOutput.text = AnswerFormatter.format(content)
                     }
                 } else {
+                    HttpUtils.recordLog(TAG, "askWithImage 请求失败: $result")
                     errorOutput.visibility = View.VISIBLE
-                    errorOutput.text = "请求失败,请检查网络或 API 配置(确认模型支持视觉)"
+                    errorOutput.text = "请求失败: $result"
                 }
             }
         }).also { it.start() }
@@ -1442,7 +1497,7 @@ class UnifiedFloatingService : Service() {
                 if (imageBytes == null) {
                     handler.post {
                         errorOutput.visibility = View.VISIBLE
-                        errorOutput.text = "截图失败,请重试"
+                        errorOutput.text = "截图失败: ${lastCaptureError ?: "请重试"}"
                     }
                     return@Runnable
                 }
