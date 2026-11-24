@@ -51,6 +51,62 @@ class HttpUtils {
     companion object {
 
         private const val TAG = "HttpUtils"
+        private val debugLogs = ArrayList<String>()
+        private const val MAX_DEBUG_LOGS = 200
+
+        /** 记录运行/报错日志(自动带时间戳与堆栈,不记录 API Key) */
+        @JvmStatic
+        fun recordLog(tag: String, msg: String, throwable: Throwable? = null) {
+            val time = java.text.SimpleDateFormat("MM-dd HH:mm:ss.SSS", java.util.Locale.getDefault())
+                .format(java.util.Date())
+            val sb = StringBuilder("[$time][$tag] $msg")
+            if (throwable != null) {
+                val sw = java.io.StringWriter()
+                throwable.printStackTrace(java.io.PrintWriter(sw))
+                sb.append("\n").append(sw.toString().take(1500))
+            }
+            if (throwable != null) Log.e(tag, msg, throwable) else Log.d(tag, msg)
+            synchronized(debugLogs) {
+                debugLogs.add(sb.toString())
+                while (debugLogs.size > MAX_DEBUG_LOGS) {
+                    debugLogs.removeAt(0)
+                }
+            }
+        }
+
+        @JvmStatic
+        fun clearLogs() {
+            synchronized(debugLogs) { debugLogs.clear() }
+        }
+
+        /** 导出内存日志 + 当前进程最近 logcat */
+        @JvmStatic
+        fun dumpLogs(includeLogcat: Boolean = true): String {
+            val sb = StringBuilder()
+            sb.append("=== 应用内日志 ===\n")
+            synchronized(debugLogs) {
+                if (debugLogs.isEmpty()) {
+                    sb.append("(暂无记录)\n")
+                } else {
+                    debugLogs.forEach { sb.append(it).append("\n") }
+                }
+            }
+            if (includeLogcat) {
+                val logcatText = try {
+                    val p = Runtime.getRuntime().exec(arrayOf("logcat", "-d", "-v", "time", "-t", "80"))
+                    val out = p.inputStream.bufferedReader().use { it.readText() }
+                    p.destroy()
+                    out
+                } catch (e: Exception) {
+                    "(读取进程 logcat 失败: ${e.message})"
+                }
+                if (logcatText.isNotBlank()) {
+                    sb.append("\n=== 进程 Logcat (最近80行) ===\n")
+                    sb.append(logcatText)
+                }
+            }
+            return sb.toString()
+        }
 
         /** 共享 OkHttpClient(连接池复用,统一超时配置) */
         private val httpClient: OkHttpClient by lazy {
@@ -642,6 +698,7 @@ class HttpUtils {
             try {
                 ApiResult.Success(sendImagesSync(url, modelName, images, apiKey, systemPrompt, userText, endpointType))
             } catch (e: Exception) {
+                recordLog(TAG, "sendImagesRequestResult 异常: model=$modelName, endpoint=$endpointType, url=$url", e)
                 ApiResult.fromException(e)
             }
         }
@@ -672,12 +729,15 @@ class HttpUtils {
                 .post(body.toRequestBody(JSON_MEDIA_TYPE))
                 .applyAuth(endpointType, apiKey)
                 .build()
+            recordLog(TAG, "发起识图请求: model=$modelName, endpoint=$endpointType, count=${images.size}, totalKB=${images.sumOf { it.size } / 1024}, url=$url")
             httpClient.newCall(request).execute().use { resp ->
                 if (resp.isSuccessful) {
-                    return resp.body?.string() ?: ""
+                    val respStr = resp.body?.string() ?: ""
+                    recordLog(TAG, "识图请求成功: HTTP ${resp.code}, len=${respStr.length}")
+                    return respStr
                 } else {
                     val errBody = resp.body?.string()
-                    Log.e(TAG, "image request error: ${resp.code} $errBody")
+                    recordLog(TAG, "识图接口报错: HTTP ${resp.code}, body=${errBody?.take(500)}")
                     throw IOException("HTTP ${resp.code}: ${errBody?.take(200)}")
                 }
             }
