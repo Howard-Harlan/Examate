@@ -1417,28 +1417,42 @@ class UnifiedFloatingService : Service() {
         val provider = if (current.hasCapability(go.examate.hyp.entity.ModelProvider.CAP_VISION)) current
             else MyConfig.providersFor(this, go.examate.hyp.entity.ModelProvider.CAP_VISION).firstOrNull() ?: current
         HttpUtils.recordLog(TAG, "askWithImage: current=${current.displayName}(${current.modelId}) -> 实际使用=${provider.displayName}(${provider.modelId}, ${provider.endpointType}), imgKB=${imageBytes.size / 1024}")
+        // 单飞:上一次识图请求可能仍挂在 120s 的超时窗口里。先作废它,避免连点后多个长请求
+        // 叠加、旧答案盖掉新答案。interrupt 打断不了阻塞中的 socket 读(底层 OkHttp 调用仍会在
+        // visionClient 超时后自行释放),但能让 runBlocking 立刻退出,本次结果直接丢弃。
+        thread?.interrupt()
         thread = Thread(Runnable {
-            val result = kotlinx.coroutines.runBlocking {
-                HttpUtils.sendImagesRequestResult(
-                    provider.requestUrl, provider.modelId, listOf(imageBytes),
-                    provider.apiKey, MyConfig.SYSTEM_PROMPT, userText, provider.endpointType
-                )
+            var result: go.examate.hyp.util.ApiResult<String>? = null
+            try {
+                result = kotlinx.coroutines.runBlocking {
+                    HttpUtils.sendImagesRequestResult(
+                        provider.requestUrl, provider.modelId, listOf(imageBytes),
+                        provider.apiKey, MyConfig.SYSTEM_PROMPT, userText, provider.endpointType
+                    )
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // 已被新的识图请求顶掉:静默丢弃,按钮状态与文案由新请求负责
+            } catch (e: InterruptedException) {
+                // 同上
             }
-            handler.post {
-                setSubmitBtnStatus(true)
-                if (result is go.examate.hyp.util.ApiResult.Success) {
-                    val content = HttpUtils.extractContent(result.data, provider.endpointType)
-                    if (content.isEmpty()) {
-                        HttpUtils.recordLog(TAG, "askWithImage 解析失败: ${result.data.take(500)}")
-                        errorOutput.visibility = View.VISIBLE
-                        errorOutput.text = "解析失败:\n${result.data}"
+            val apiResult = result
+            if (apiResult != null) {
+                handler.post {
+                    setSubmitBtnStatus(true)
+                    if (apiResult is go.examate.hyp.util.ApiResult.Success) {
+                        val content = HttpUtils.extractContent(apiResult.data, provider.endpointType)
+                        if (content.isEmpty()) {
+                            HttpUtils.recordLog(TAG, "askWithImage 解析失败: ${apiResult.data.take(500)}")
+                            errorOutput.visibility = View.VISIBLE
+                            errorOutput.text = "解析失败:\n${apiResult.data}"
+                        } else {
+                            contentOutput.text = AnswerFormatter.format(content)
+                        }
                     } else {
-                        contentOutput.text = AnswerFormatter.format(content)
+                        HttpUtils.recordLog(TAG, "askWithImage 请求失败: $apiResult")
+                        errorOutput.visibility = View.VISIBLE
+                        errorOutput.text = "请求失败: ${apiResult.errorMessage()}"
                     }
-                } else {
-                    HttpUtils.recordLog(TAG, "askWithImage 请求失败: $result")
-                    errorOutput.visibility = View.VISIBLE
-                    errorOutput.text = "请求失败: $result"
                 }
             }
         }).also { it.start() }
